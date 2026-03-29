@@ -10,7 +10,7 @@ tracing = "0.1.44"
 tracing-appender = "0.2.4"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 serde_json = "1.0"
-tokio = { version = "1.43.0", features = ["rt-multi-thread", "macros", "signal", "time"] }
+tokio = { version = "1.43.0", features = ["rt-multi-thread", "macros", "signal", "time", "fs"] }
 tokio-util = "0.7"
 figment = { version = "0.10", features = ["toml", "env"] }
 serde = { version = "1.0", features = ["derive"] }

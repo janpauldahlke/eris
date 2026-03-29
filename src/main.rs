@@ -13,6 +13,7 @@ use crate::telemetry::logger::{init_tracing, LogTarget};
 pub mod executive;
 pub mod telemetry;
 pub mod config;
+pub mod workspace;
 
 #[tokio::main]
 async fn main() -> ExitCode {
