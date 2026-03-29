@@ -7,6 +7,10 @@ use super::error::{FcpError, Result};
 #[derive(Parser, Debug)]
 #[command(name = "fcp", version, about = "The Unified Dreadnought: Local SLM Orchestrator", disable_version_flag = true)]
 pub struct Cli {
+    /// Defines the active memory partition (isolates vector spaces)
+    #[arg(short = 'w', long, env = "FCP_WORKSPACE", default_value = "default")]
+    pub workspace: String,
+
     /// Overrides the AppConfig vault path
     #[arg(short = 'v', long, env = "FCP_VAULT")]
     pub vault: Option<PathBuf>,
@@ -30,7 +34,7 @@ pub enum Commands {
     /// Bypass Layer 1 entirely and manually invoke a Layer 2 tool
     Tool {
         name: String,
-        args: Vec<String>,
+        args: String,
     },
 }
 
@@ -51,6 +55,7 @@ mod tests {
         let args = vec!["fcp", "chat"];
         let cli = parse_from(args).unwrap();
         assert_eq!(cli.vault, None);
+        assert_eq!(cli.workspace, "default");
         assert_eq!(cli.command, Commands::Chat);
     }
 
@@ -67,11 +72,30 @@ mod tests {
 
     #[test]
     fn test_cli_tool_subcommand() {
-        let args = vec!["fcp", "tool", "memory:query", "some", "args"];
+        let args = vec!["fcp", "tool", "memory:query", r#"{"query": "test"}"#];
         let cli = parse_from(args).unwrap();
         if let Commands::Tool { name, args } = cli.command {
             assert_eq!(name, "memory:query");
-            assert_eq!(args, vec!["some", "args"]);
+            assert_eq!(args, r#"{"query": "test"}"#);
+        } else {
+            panic!("Expected Tool subcommand");
+        }
+    }
+
+    #[test]
+    fn test_cli_workspace_propagation() {
+        let args = vec!["fcp", "--workspace", "isolated_env", "chat"];
+        let cli = parse_from(args).unwrap();
+        assert_eq!(cli.workspace, "isolated_env");
+    }
+
+    #[test]
+    fn test_cli_tool_args_as_single_string() {
+        let args = vec!["fcp", "tool", "memory:query", r#"{"q": "test"}"#];
+        let cli = parse_from(args).unwrap();
+        if let Commands::Tool { name, args } = cli.command {
+            assert_eq!(name, "memory:query");
+            assert_eq!(args, r#"{"q": "test"}"#);
         } else {
             panic!("Expected Tool subcommand");
         }
