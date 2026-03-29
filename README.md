@@ -1,3 +1,3 @@
-#E.R.I.S
+# E.R.I.S
 
 > Episodic Reasoning & Inference System

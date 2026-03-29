@@ -42,4 +42,4 @@ Before starting a session, ensure your root directory contains these operational
 
 > @state.md @docs/architecture/S03_The Vault.md
 
-> "Read the state ledger to understand where this subsystem fits into the overarching E.R.I.S. architecture. Then, read the target spec. Generate a strict, step-by-step TODO roadmap for the S03 target block only. Define the Rust traits, function signatures, and failing unit tests we need to write first. Do not write the code yet. Stop and wait for my approval."
+> "Read the state ledger to understand where this subsystem fits into the overarching E.R.I.S. architecture. Then, read the target spec. Generate a strict, step-by-step TODO roadmap for the S00 target block only. Define the Rust traits, function signatures, and failing unit tests we need to write first. Do not write the code yet. Stop and wait for my approval."

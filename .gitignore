@@ -1,1 +1,4 @@
 /target
+.fcp/
+.DS_Store
+
