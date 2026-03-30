@@ -1,6 +1,7 @@
 pub mod state;
 pub mod context;
 
+use crate::executive::error::Result;
 use crate::engine::LlmEngine;
 use crate::tools::Gatekeeper;
 use crate::memory::ephemeral::EphemeralMemory;
@@ -54,6 +55,37 @@ impl<E: LlmEngine> Orchestrator<E> {
         }
     }
 
+    /// The main cognitive loop.
+    #[allow(clippy::never_loop)]
+    pub async fn step(&mut self, _user_input: Option<String>) -> Result<()> {
+        // TODO: Inject user_input into memory if provided
+
+        loop {
+            // 1. Bailout Checks
+            if self.recovery_count >= self.max_recovery_attempts {
+                self.state = AgentState::Idle;
+                return Ok(());
+            }
+            if self.tool_rounds >= self.max_tool_rounds {
+                self.state = AgentState::Idle;
+                return Ok(());
+            }
+
+            // 2. Context Assembly (Mocked for now)
+            // let prompt = self.context.assemble(&self.state, &self.ephemeral).await?;
+
+            // 3. Engine Generation (Mocked for now)
+            // let response = self.engine.generate(...).await?;
+
+            // 4. Directive Processing
+            // let directive = self.process_llm_response(&response);
+
+            // For Part 1, we just hard-break the loop to avoid infinite execution during tests.
+            break;
+        }
+        Ok(())
+    }
+
     pub fn process_llm_response(&mut self, response_json: &str) -> LoopDirective {
         let response: LlmResponse = match serde_json::from_str(response_json) {
             Ok(res) => res,
@@ -88,7 +120,33 @@ mod tests {
     use crate::executive::error::Result;
 
     #[derive(Clone)]
-    struct MockEngine;
+    struct MockEngine {
+        content: String,
+        fault: Option<String>,
+    }
+
+    impl MockEngine {
+        fn new() -> Self {
+            Self {
+                content: "mock".to_string(),
+                fault: None,
+            }
+        }
+
+        fn with_content(content: &str) -> Self {
+            Self {
+                content: content.to_string(),
+                fault: None,
+            }
+        }
+
+        fn with_network_fault(msg: &str) -> Self {
+            Self {
+                content: String::new(),
+                fault: Some(msg.to_string()),
+            }
+        }
+    }
 
     #[async_trait]
     impl LlmEngine for MockEngine {
@@ -98,8 +156,11 @@ mod tests {
             _available_tools_json: &str,
             _stream_tx: Option<mpsc::UnboundedSender<String>>
         ) -> Result<EngineResponse> {
+            if let Some(msg) = &self.fault {
+                return Err(crate::executive::error::FcpError::NetworkFault(msg.clone()));
+            }
             Ok(EngineResponse {
-                content: "mock".to_string(),
+                content: self.content.clone(),
                 prompt_tokens: 0,
                 generated_tokens: 0,
             })
@@ -108,7 +169,7 @@ mod tests {
 
     #[test]
     fn test_orchestrator_initialization() {
-        let engine = MockEngine;
+        let engine = MockEngine::new();
         let gatekeeper = Gatekeeper::new();
         let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
         let vault_root = Path::new("/tmp/vault");
@@ -135,7 +196,10 @@ mod tests {
     }
 
     fn setup_orchestrator() -> Orchestrator<MockEngine> {
-        let engine = MockEngine;
+        setup_orchestrator_with_engine(MockEngine::new())
+    }
+
+    fn setup_orchestrator_with_engine(engine: MockEngine) -> Orchestrator<MockEngine> {
         let gatekeeper = Gatekeeper::new();
         let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
         let vault_root = Path::new("/tmp/vault");
@@ -199,5 +263,61 @@ mod tests {
         let directive = orchestrator.process_llm_response(json);
         assert_eq!(directive, LoopDirective::ShiftToReflection);
         assert_eq!(orchestrator.state, AgentState::Reflect);
+    }
+
+    #[tokio::test]
+    async fn test_step_bails_out_on_max_recovery() {
+        let mut orchestrator = setup_orchestrator();
+        orchestrator.recovery_count = orchestrator.max_recovery_attempts;
+        orchestrator.state = AgentState::Chat;
+        
+        let result = orchestrator.step(None).await;
+        
+        assert!(result.is_ok());
+        assert_eq!(orchestrator.state, AgentState::Idle);
+    }
+
+    #[tokio::test]
+    async fn test_step_bails_out_on_max_tool_rounds() {
+        let mut orchestrator = setup_orchestrator();
+        orchestrator.tool_rounds = orchestrator.max_tool_rounds;
+        orchestrator.state = AgentState::Chat;
+        
+        let result = orchestrator.step(None).await;
+        
+        assert!(result.is_ok());
+        assert_eq!(orchestrator.state, AgentState::Idle);
+    }
+
+    #[tokio::test]
+    async fn test_step_system_fatality_aborts() {
+        let engine = MockEngine::with_network_fault("daemon offline");
+        let mut orchestrator = setup_orchestrator_with_engine(engine);
+        orchestrator.state = AgentState::Chat;
+        
+        let result = orchestrator.step(None).await;
+        
+        assert!(result.is_err());
+        assert_eq!(orchestrator.state, AgentState::Idle);
+    }
+
+    #[tokio::test]
+    async fn test_step_halt_directive_resets_state() {
+        let json = r#"{
+            "status": "WAIT_FOR_USER",
+            "message_to_user": "how can I help?"
+        }"#;
+        let engine = MockEngine::with_content(json);
+        let mut orchestrator = setup_orchestrator_with_engine(engine);
+        orchestrator.state = AgentState::Chat;
+        orchestrator.tool_rounds = 2;
+        orchestrator.recovery_count = 1;
+        
+        let result = orchestrator.step(None).await;
+        
+        assert!(result.is_ok());
+        assert_eq!(orchestrator.state, AgentState::Idle);
+        assert_eq!(orchestrator.tool_rounds, 0);
+        assert_eq!(orchestrator.recovery_count, 0);
     }
 }

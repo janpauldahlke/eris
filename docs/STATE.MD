@@ -14,3 +14,4 @@
 - [x] (S03): implement tool trait boundary and gatekeeper path firewall
 - [x] (S04): define orchestrator shell and agent state schemas
 - [x] (S04.1): implement context assembler and llm response router
+- [x] (S04.2): implement orchestrator cognitive loop and recovery matrix
