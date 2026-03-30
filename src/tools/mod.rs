@@ -56,6 +56,11 @@ impl Gatekeeper {
             }),
         }
     }
+
+    pub fn get_tool_schemas_json(&self) -> String {
+        let schemas: Vec<Value> = self.registry.values().map(|t| t.schema()).collect();
+        serde_json::to_string_pretty(&schemas).unwrap_or_else(|_| "[]".to_string())
+    }
 }
 
 #[cfg(test)]

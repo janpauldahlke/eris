@@ -13,3 +13,4 @@
 - [x] (S02.1): implement tier 2 ephemeral memory with moka and bincode snapshot daemon
 - [x] (S03): implement tool trait boundary and gatekeeper path firewall
 - [x] (S04): define orchestrator shell and agent state schemas
+- [x] (S04.1): implement context assembler and llm response router
