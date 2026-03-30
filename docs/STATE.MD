@@ -8,3 +8,4 @@
 30/03/2026
 
 - [x] (S01): implement asynchronous ollama engine and wiremock test harness
+- [x] (S01.1): integrate reasoning router FSM and token firewall

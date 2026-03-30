@@ -3,6 +3,7 @@ use tokio::sync::mpsc;
 use crate::executive::error::Result;
 
 pub mod ollama;
+pub mod router;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Message {
