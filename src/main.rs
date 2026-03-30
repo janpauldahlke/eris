@@ -16,6 +16,7 @@ pub mod config;
 pub mod workspace;
 pub mod engine;
 pub mod memory;
+pub mod tools;
 
 #[tokio::main]
 async fn main() -> ExitCode {
