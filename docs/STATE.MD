@@ -2,8 +2,8 @@
 
 - [x] (S00): establish foundation, error taxonomy, and telemetry
 - [x] (S00.1): implement async router, cancellation token, and extended error taxonomy
-- [x] feat(S00.2): implement hierarchical config resolution via figment
-- [x] feat(S00.3): implement async identity bootstrap and physical workspace seal"
+- [x] (S00.2): implement hierarchical config resolution via figment
+- [x] (S00.3): implement async identity bootstrap and physical workspace seal"
 
 30/03/2026
 
@@ -11,4 +11,5 @@
 - [x] (S01.1): integrate reasoning router FSM and token firewall
 - [ ] (S02): Subsystem Tier 1 is postponed, we need S04 (The Orchestrator) to make this work
 - [x] (S02.1): implement tier 2 ephemeral memory with moka and bincode snapshot daemon
-- [x] feat(S03): implement tool trait boundary and gatekeeper path firewall
+- [x] (S03): implement tool trait boundary and gatekeeper path firewall
+- [x] (S04): define orchestrator shell and agent state schemas
