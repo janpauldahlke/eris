@@ -1,5 +1,6 @@
 pub mod state;
 pub mod context;
+pub mod heartbeat;
 
 use crate::executive::error::Result;
 use crate::engine::LlmEngine;
@@ -26,6 +27,10 @@ pub struct Orchestrator<E: LlmEngine> {
     // Live Loop State
     pub recovery_count: u8,
     pub tool_rounds: u8,
+
+    pub chat_stack: Vec<crate::engine::Message>,
+    pub saved_chat_state: Option<Vec<crate::engine::Message>>,
+    pub interrupt_rx: tokio::sync::watch::Receiver<()>,
 }
 
 impl<E: LlmEngine> Orchestrator<E> {
@@ -39,6 +44,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         max_tool_rounds: u8,
         condensation_threshold: f32,
         num_ctx: usize,
+        interrupt_rx: tokio::sync::watch::Receiver<()>,
     ) -> Self {
         Self {
             state: AgentState::Idle,
@@ -52,6 +58,9 @@ impl<E: LlmEngine> Orchestrator<E> {
             num_ctx,
             recovery_count: 0,
             tool_rounds: 0,
+            chat_stack: Vec::new(),
+            saved_chat_state: None,
+            interrupt_rx,
         }
     }
 
@@ -75,10 +84,45 @@ impl<E: LlmEngine> Orchestrator<E> {
             // let prompt = self.context.assemble(&self.state, &self.ephemeral).await?;
 
             // 3. Engine Generation (Mocked for now)
-            // let response = self.engine.generate(...).await?;
+            let response_result = tokio::select! {
+                res = self.engine.generate(&self.chat_stack, "{}", None) => res,
+                _ = self.interrupt_rx.changed() => {
+                    // The heartbeat fired.
+                    self.saved_chat_state = Some(self.chat_stack.clone());
+                    self.chat_stack.clear();
+                    // Push IDLE_STATE prompt to chat_stack
+                    self.chat_stack.push(crate::engine::Message {
+                        role: "system".to_string(),
+                        content: "IDLE_STATE".to_string(),
+                    });
+                    self.state = AgentState::Idle;
+                    return Err(crate::executive::error::FcpError::Interrupted);
+                }
+            };
+
+            let response = match response_result {
+                Ok(res) => res,
+                Err(e) => {
+                    self.state = AgentState::Idle;
+                    return Err(e);
+                }
+            };
+
+            if (response.generated_tokens + response.prompt_tokens) > (self.num_ctx as f32 * self.condensation_threshold) as usize {
+                self.state = AgentState::Reflect;
+            }
 
             // 4. Directive Processing
-            // let directive = self.process_llm_response(&response);
+            let directive = self.process_llm_response(&response.content);
+
+            match directive {
+                LoopDirective::HaltAndAwaitInput(_) => {
+                    self.state = AgentState::Idle;
+                    self.tool_rounds = 0;
+                    self.recovery_count = 0;
+                }
+                _ => {}
+            }
 
             // For Part 1, we just hard-break the loop to avoid infinite execution during tests.
             break;
@@ -109,6 +153,35 @@ impl<E: LlmEngine> Orchestrator<E> {
             }
         }
     }
+
+    /// Forces the LLM to summarize the active chat stack, then replaces the stack with the summary.
+    pub async fn execute_condensation(&mut self) -> Result<()> {
+        // 1. Push a system message to `self.chat_stack` asking for a JSON summary.
+        self.chat_stack.push(crate::engine::Message {
+            role: "system".to_string(),
+            content: "Please summarize the current conversation as a JSON object.".to_string(),
+        });
+
+        // 2. Call `self.engine.generate(&self.chat_stack, ...)`.
+        let response = self.engine.generate(&self.chat_stack, "{}", None).await?;
+
+        // 3. Extract the summary text from the response.
+        let summary = response.content;
+
+        // 4. Clear `self.chat_stack`.
+        self.chat_stack.clear();
+
+        // 5. Push a single Message containing the summary back to `self.chat_stack`.
+        self.chat_stack.push(crate::engine::Message {
+            role: "system".to_string(),
+            content: summary,
+        });
+
+        // 6. Set `self.state = AgentState::Chat`.
+        self.state = AgentState::Chat;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -123,6 +196,8 @@ mod tests {
     struct MockEngine {
         content: String,
         fault: Option<String>,
+        prompt_tokens: usize,
+        generated_tokens: usize,
     }
 
     impl MockEngine {
@@ -130,6 +205,8 @@ mod tests {
             Self {
                 content: "mock".to_string(),
                 fault: None,
+                prompt_tokens: 0,
+                generated_tokens: 0,
             }
         }
 
@@ -137,6 +214,8 @@ mod tests {
             Self {
                 content: content.to_string(),
                 fault: None,
+                prompt_tokens: 0,
+                generated_tokens: 0,
             }
         }
 
@@ -144,7 +223,15 @@ mod tests {
             Self {
                 content: String::new(),
                 fault: Some(msg.to_string()),
+                prompt_tokens: 0,
+                generated_tokens: 0,
             }
+        }
+
+        fn with_tokens(mut self, prompt_tokens: usize, generated_tokens: usize) -> Self {
+            self.prompt_tokens = prompt_tokens;
+            self.generated_tokens = generated_tokens;
+            self
         }
     }
 
@@ -161,8 +248,8 @@ mod tests {
             }
             Ok(EngineResponse {
                 content: self.content.clone(),
-                prompt_tokens: 0,
-                generated_tokens: 0,
+                prompt_tokens: self.prompt_tokens,
+                generated_tokens: self.generated_tokens,
             })
         }
     }
@@ -173,6 +260,8 @@ mod tests {
         let gatekeeper = Gatekeeper::new();
         let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
         let vault_root = Path::new("/tmp/vault");
+        let (tx, rx) = tokio::sync::watch::channel(());
+        Box::leak(Box::new(tx));
 
         let orchestrator = Orchestrator::new(
             engine,
@@ -184,6 +273,7 @@ mod tests {
             5,
             0.8,
             4096,
+            rx,
         );
 
         assert_eq!(orchestrator.state, AgentState::Idle);
@@ -203,7 +293,9 @@ mod tests {
         let gatekeeper = Gatekeeper::new();
         let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
         let vault_root = Path::new("/tmp/vault");
-        Orchestrator::new(engine, gatekeeper, ephemeral, vault_root, "test_ws", 3, 5, 0.8, 4096)
+        let (tx, rx) = tokio::sync::watch::channel(());
+        Box::leak(Box::new(tx)); // Prevent sender from dropping, which would trigger `rx.changed()`
+        Orchestrator::new(engine, gatekeeper, ephemeral, vault_root, "test_ws", 3, 5, 0.8, 4096, rx)
     }
 
     #[test]
@@ -319,5 +411,103 @@ mod tests {
         assert_eq!(orchestrator.state, AgentState::Idle);
         assert_eq!(orchestrator.tool_rounds, 0);
         assert_eq!(orchestrator.recovery_count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_execute_condensation_replaces_stack() {
+        let json = r#"{
+            "status": "CONTINUE_TASK",
+            "tool_calls": []
+        }"#;
+        let engine = MockEngine::with_content(json);
+        let mut orchestrator = setup_orchestrator_with_engine(engine);
+        orchestrator.chat_stack.push(Message { role: "user".to_string(), content: "hello".to_string() });
+        orchestrator.chat_stack.push(Message { role: "assistant".to_string(), content: "world".to_string() });
+
+        let result = orchestrator.execute_condensation().await;
+        
+        assert!(result.is_ok());
+        assert_eq!(orchestrator.chat_stack.len(), 1);
+        assert_eq!(orchestrator.chat_stack[0].content, json);
+        assert_eq!(orchestrator.state, AgentState::Chat);
+    }
+
+    #[tokio::test]
+    async fn test_step_triggers_reflection_on_token_exhaustion() {
+        let json = r#"{
+            "status": "CONTINUE_TASK",
+            "tool_calls": [{ "name": "foo", "args": {} }]
+        }"#;
+        // With num_ctx = 4096 and threshold = 0.8, max tokens = 3276
+        let engine = MockEngine::with_content(json).with_tokens(2000, 1500);
+        let mut orchestrator = setup_orchestrator_with_engine(engine);
+        orchestrator.state = AgentState::Chat;
+        
+        let result = orchestrator.step(None).await;
+        
+        assert!(result.is_ok(), "Expected OK, got: {:?}", result.err());
+        assert_eq!(orchestrator.state, AgentState::Reflect);
+    }
+
+    #[tokio::test]
+    async fn test_async_guillotine_interrupts_generation() {
+        use std::time::Duration;
+        
+        #[derive(Clone)]
+        struct PendingEngine;
+        #[async_trait]
+        impl LlmEngine for PendingEngine {
+            async fn generate(
+                &self,
+                _stack: &[Message],
+                _available_tools_json: &str,
+                _stream_tx: Option<mpsc::UnboundedSender<String>>
+            ) -> Result<EngineResponse> {
+                // Hang forever
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                Ok(EngineResponse {
+                    content: "never".to_string(),
+                    prompt_tokens: 0,
+                    generated_tokens: 0,
+                })
+            }
+        }
+
+        let engine = PendingEngine;
+        let gatekeeper = Gatekeeper::new();
+        let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
+        let vault_root = Path::new("/tmp/vault");
+        let (tx, rx) = tokio::sync::watch::channel(());
+        
+        let mut orchestrator = Orchestrator::new(
+            engine,
+            gatekeeper,
+            ephemeral,
+            vault_root,
+            "test_ws",
+            3,
+            5,
+            0.8,
+            4096,
+            rx,
+        );
+
+        orchestrator.state = AgentState::Chat;
+        orchestrator.chat_stack.push(Message { role: "user".to_string(), content: "hello".to_string() });
+
+        // Fire the interrupt shortly after calling step
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let _ = tx.send(());
+        });
+
+        let result = orchestrator.step(None).await;
+        
+        assert!(matches!(result, Err(crate::executive::error::FcpError::Interrupted)));
+        assert_eq!(orchestrator.state, AgentState::Idle);
+        assert!(orchestrator.saved_chat_state.is_some());
+        assert_eq!(orchestrator.saved_chat_state.unwrap()[0].content, "hello");
+        assert_eq!(orchestrator.chat_stack.len(), 1);
+        assert_eq!(orchestrator.chat_stack[0].content, "IDLE_STATE");
     }
 }

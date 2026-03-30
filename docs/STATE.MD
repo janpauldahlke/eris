@@ -9,9 +9,11 @@
 
 - [x] (S01): implement asynchronous ollama engine and wiremock test harness
 - [x] (S01.1): integrate reasoning router FSM and token firewall
-- [ ] (S02): Subsystem Tier 1 is postponed, we need S04 (The Orchestrator) to make this work
+- [x] (S02): Subsystem Tier 1 is postponed, we need S04 (The Orchestrator) to make this work
 - [x] (S02.1): implement tier 2 ephemeral memory with moka and bincode snapshot daemon
 - [x] (S03): implement tool trait boundary and gatekeeper path firewall
 - [x] (S04): define orchestrator shell and agent state schemas
 - [x] (S04.1): implement context assembler and llm response router
 - [x] (S04.2): implement orchestrator cognitive loop and recovery matrix
+- [x] (S04.3): implement heartbeat monitor, async guillotine, and s02 condensation loop
+- [ ]

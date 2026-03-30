@@ -34,6 +34,9 @@ pub enum FcpError {
     
     #[error("Embedding Generation Failed: {0}")]
     EmbeddingFault(String),
+
+    #[error("Execution Interrupted")]
+    Interrupted,
 }
 
 pub type Result<T> = std::result::Result<T, FcpError>;
@@ -64,6 +67,9 @@ mod tests {
         let json_err: std::result::Result<serde_json::Value, _> = from_str("{invalid}");
         let err4 = FcpError::ParseFault(json_err.unwrap_err());
         assert!(err4.to_string().starts_with("JSON Parse Fault:"));
+
+        let err5 = FcpError::Interrupted;
+        assert_eq!(err5.to_string(), "Execution Interrupted");
     }
 
     #[test]
