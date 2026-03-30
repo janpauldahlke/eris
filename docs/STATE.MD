@@ -9,3 +9,4 @@
 
 - [x] (S01): implement asynchronous ollama engine and wiremock test harness
 - [x] (S01.1): integrate reasoning router FSM and token firewall
+- [x] (S02): implement tier 2 ephemeral memory with moka and bincode snapshot daemon
