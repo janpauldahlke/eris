@@ -15,7 +15,12 @@ tokio-util = "0.7"
 figment = { version = "0.10", features = ["toml", "env"] }
 serde = { version = "1.0", features = ["derive"] }
 dotenvy = "0.15"
+async-trait = "0.1"
+ollama-rs = { version = "0.2", features = ["stream"] }
+tokio-stream = "0.1.18"
 
 [dev-dependencies]
 tempfile = "3.27.0"
 figment = { version = "0.10", features = ["test"] }
+wiremock = "0.6"
+url = "2.5"

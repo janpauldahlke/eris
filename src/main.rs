@@ -14,6 +14,7 @@ pub mod executive;
 pub mod telemetry;
 pub mod config;
 pub mod workspace;
+pub mod engine;
 
 #[tokio::main]
 async fn main() -> ExitCode {

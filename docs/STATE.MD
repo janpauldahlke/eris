@@ -4,3 +4,7 @@
 - [x] (S00.1): implement async router, cancellation token, and extended error taxonomy
 - [x] feat(S00.2): implement hierarchical config resolution via figment
 - [x] feat(S00.3): implement async identity bootstrap and physical workspace seal"
+
+30/03/2026
+
+- [x] (S01): implement asynchronous ollama engine and wiremock test harness
