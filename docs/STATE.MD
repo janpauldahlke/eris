@@ -43,6 +43,7 @@
 - [x] REVIEW (Sxx) better tracing, connect the dots, even better UI,
 - [x] REVIEW (S01.1) move to pre-LLM routing approach
 - [x] ENHANCEMENT (S05:)add more semantics to tools catalogue, lower similarity for noemic-embed and acutal model
+- [x] patch (S02) connect ephemeral and physical layer to make it persist
 
 ---
 
