@@ -32,3 +32,9 @@ tempfile = "3.27.0"
 figment = { version = "0.10", features = ["test"] }
 wiremock = "0.6"
 url = "2.5"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"

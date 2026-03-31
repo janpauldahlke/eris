@@ -27,3 +27,4 @@
 - [x] (S06.3): implement web fetcher with panic-safe truncation and graceful 404 routing
 - [x] (S07): implement TUI raw
 - [x] (S07.1): implement neural link channels and wire orchestrator loop to tui app"
+- [x] (S08): implement pre-flight verification and non-blocking black box telemetry

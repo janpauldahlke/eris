@@ -8,7 +8,6 @@ use tokio_util::sync::CancellationToken;
 
 use crate::executive::cli::Cli;
 use crate::executive::router::execute_command;
-use crate::telemetry::logger::{init_tracing, LogTarget};
 
 pub mod executive;
 pub mod telemetry;
@@ -26,16 +25,27 @@ async fn main() -> ExitCode {
     // Uses clap's native parse() to properly handle --help and exit correctly
     let cli = Cli::parse();
 
-    // 2. Initialize Telemetry (Black Box)
-    // For now, always to Stderr, later we can add file appender logic
-    if let Err(e) = init_tracing(cli.verbose, LogTarget::Stderr) {
-        eprintln!("Failed to initialize telemetry: {}", e);
-        return ExitCode::FAILURE;
-    }
+    // 2. Resolve Workspace Root
+    let workspace_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+    // 3. Initialize Telemetry (Black Box)
+    let _guard = match crate::telemetry::logger::init_tracing(&workspace_root) {
+        Ok(guard) => guard,
+        Err(e) => {
+            eprintln!("Failed to initialize telemetry: {}", e);
+            return ExitCode::FAILURE;
+        }
+    };
 
     tracing::info!("Starting FCP Subconscious Orchestrator...");
 
-    // 3. Global Kill Switch (CancellationToken) setup
+    // 4. Pre-Flight Checks
+    if let Err(e) = crate::telemetry::preflight::run_preflight_checks().await {
+        eprintln!("{}", e);
+        return ExitCode::FAILURE;
+    }
+
+    // 5. Global Kill Switch (CancellationToken) setup
     let cancel_token = CancellationToken::new();
     let token_clone = cancel_token.clone();
 
