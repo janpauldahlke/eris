@@ -30,6 +30,7 @@ impl LlmEngine for OllamaClient {
         use tokio_stream::StreamExt;
         use std::time::Duration;
         use crate::executive::error::FcpError;
+        use ollama_rs::generation::parameters::FormatType;
 
         let mut chat_messages = Vec::new();
         let mut injected = false;
@@ -62,7 +63,7 @@ impl LlmEngine for OllamaClient {
         let request = ChatMessageRequest::new(
             self.config.model_name.clone(),
             chat_messages
-        );
+        ).format(FormatType::Json);
 
         let timeout = Duration::from_secs(self.config.generation_timeout_secs);
 

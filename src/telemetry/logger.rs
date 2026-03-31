@@ -15,7 +15,7 @@ pub fn init_tracing(workspace_root: &PathBuf) -> Result<WorkerGuard> {
     let (non_blocking_writer, guard) = tracing_appender::non_blocking(file_appender);
 
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+        .unwrap_or_else(|_| EnvFilter::new("eris=debug,fcp=debug"));
 
     let subscriber = fmt::Subscriber::builder()
         .with_env_filter(filter)

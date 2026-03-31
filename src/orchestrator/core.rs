@@ -245,7 +245,17 @@ impl<E: LlmEngine> Orchestrator<E> {
     }
 
     pub fn process_llm_response(&mut self, response_json: &str) -> LoopDirective {
-        let response: LlmResponse = match serde_json::from_str(response_json) {
+        let json_str = if let (Some(start), Some(end)) = (response_json.find('{'), response_json.rfind('}')) {
+            if start <= end {
+                &response_json[start..=end]
+            } else {
+                response_json
+            }
+        } else {
+            response_json
+        };
+
+        let response: LlmResponse = match serde_json::from_str(json_str) {
             Ok(res) => res,
             Err(e) => return LoopDirective::RecoverFromFuckup(e.to_string()),
         };
