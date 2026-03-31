@@ -34,5 +34,8 @@
 - [x] (S10.1) Vault Auto-Routing
 - [x] Patch (S10.1): The Smart Router / YAML Interception
 - [x] Patch (S11): The Cockpit Polish
+- [x] fix(S04.x): implement context assembler to dynamically inject identity and JSON schemas into system prompt
+
+---
+
 - [] Testing - report in ISSUES.md
-  x

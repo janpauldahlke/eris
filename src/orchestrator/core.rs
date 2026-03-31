@@ -96,8 +96,24 @@ impl<E: LlmEngine> Orchestrator<E> {
                 return Ok(());
             }
 
-            // 2. Context Assembly (Mocked for now)
-            // let prompt = self.context.assemble(&self.state, &self.ephemeral).await?;
+            // 2. Context Assembly
+            let system_prompt = self.context_assembler.assemble(&self.state, &self.ephemeral, &self.gatekeeper).await?;
+            
+            if let Some(first) = self.chat_stack.first_mut() {
+                if first.content.contains("You are operating within a strict programmatic state machine") {
+                    first.content = system_prompt;
+                } else {
+                    self.chat_stack.insert(0, crate::engine::Message {
+                        role: "system".to_string(),
+                        content: system_prompt,
+                    });
+                }
+            } else {
+                self.chat_stack.push(crate::engine::Message {
+                    role: "system".to_string(),
+                    content: system_prompt,
+                });
+            }
 
             // 3. Engine Generation (Mocked for now)
             let response_result = tokio::select! {
@@ -624,7 +640,7 @@ mod tests {
         assert!(matches!(result, Err(crate::executive::error::FcpError::Interrupted)));
         assert_eq!(orchestrator.state, AgentState::Idle);
         assert!(orchestrator.saved_chat_state.is_some());
-        assert_eq!(orchestrator.saved_chat_state.unwrap()[0].content, "hello");
+        assert_eq!(orchestrator.saved_chat_state.unwrap()[1].content, "hello");
         assert_eq!(orchestrator.chat_stack.len(), 1);
         assert!(orchestrator.chat_stack[0].content.contains("Test agenda task"));
         assert!(orchestrator.chat_stack[0].content.contains("agenda:complete"));
