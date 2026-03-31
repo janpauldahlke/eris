@@ -54,6 +54,7 @@ pub async fn execute_command(cmd: Commands, config: Arc<AppConfig>, cancel_token
             }));
             gatekeeper.register(Arc::new(crate::tools::vault::VaultWriteTool {
                 workspace_root: workspace_root.clone(),
+                max_content_chars: config.num_ctx * 3,
             }));
             gatekeeper.register(Arc::new(crate::tools::vault::VaultListTool {
                 workspace_root: workspace_root.clone(),
@@ -72,27 +73,49 @@ pub async fn execute_command(cmd: Commands, config: Arc<AppConfig>, cancel_token
                 config.web_fetch_max_bytes,
             )));
             gatekeeper.register(Arc::new(crate::tools::system::SystemHealthTool));
+
+            let max_content_chars = config.num_ctx * 3;
             gatekeeper.register(Arc::new(crate::tools::memory::MemoryStageTool {
                 ephemeral: ephemeral.clone(),
                 ttl_secs: config.ephemeral_ttl_secs,
+                max_content_chars,
             }));
 
             // Instantiate SemanticBrain and register memory tools
-            if let Ok(semantic_brain) = crate::memory::semantic::SemanticBrain::new(config.clone(), ollama_arc.clone()).await {
-                let semantic = Arc::new(semantic_brain);
-                tracing::info!("Semantic Brain online. Vector tools registered.");
-                gatekeeper.register(Arc::new(crate::tools::memory::MemoryCommitTool {
-                    workspace_root: workspace_root.clone(),
-                    semantic: semantic.clone(),
-                    ephemeral: ephemeral.clone(),
-                }));
-                gatekeeper.register(Arc::new(crate::tools::memory::MemoryQueryTool {
-                    workspace: config.workspace.clone(),
-                    semantic: semantic.clone(),
-                }));
-            } else {
-                tracing::warn!("Semantic Brain offline. Vector tools will be unavailable.");
-            }
+            let semantic_arc: Option<Arc<crate::memory::semantic::SemanticBrain>> =
+                match crate::memory::semantic::SemanticBrain::new(config.clone(), ollama_arc.clone()).await {
+                    Ok(semantic_brain) => {
+                        let semantic = Arc::new(semantic_brain);
+                        tracing::info!("Semantic Brain online. Vector tools registered.");
+
+                        match semantic.ingest_vault(&workspace_root).await {
+                            Ok(count) if count > 0 => {
+                                tracing::info!(files = count, "Boot-time vault ingestion complete");
+                            }
+                            Ok(_) => {
+                                tracing::debug!("No vault files to ingest at boot");
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, "Boot-time vault ingestion failed");
+                            }
+                        }
+
+                        gatekeeper.register(Arc::new(crate::tools::memory::MemoryCommitTool {
+                            workspace_root: workspace_root.clone(),
+                            semantic: semantic.clone(),
+                            ephemeral: ephemeral.clone(),
+                        }));
+                        gatekeeper.register(Arc::new(crate::tools::memory::MemoryQueryTool {
+                            workspace: config.workspace.clone(),
+                            semantic: semantic.clone(),
+                        }));
+                        Some(semantic)
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Semantic Brain offline. Vector tools will be unavailable.");
+                        None
+                    }
+                };
 
             // 5b. Build ToolRouter (semantic tool gating via nomic embeddings)
             let tool_router = match crate::orchestrator::tool_router::ToolRouter::new(
@@ -129,10 +152,11 @@ pub async fn execute_command(cmd: Commands, config: Arc<AppConfig>, cancel_token
                 cancel_token.clone(),
             );
 
-            // 7. Snapshot daemon
+            // 7. Snapshot + promotion daemon
             crate::memory::ephemeral::spawn_snapshot_daemon(
                 ephemeral.clone(),
                 workspace_root.clone(),
+                semantic_arc,
                 config.snapshot_interval_secs,
                 cancel_token.clone(),
             );

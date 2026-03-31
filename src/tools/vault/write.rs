@@ -27,6 +27,7 @@ pub struct VaultWriteArgs {
 
 pub struct VaultWriteTool {
     pub workspace_root: PathBuf,
+    pub max_content_chars: usize,
 }
 
 #[async_trait]
@@ -46,6 +47,17 @@ impl Tool for VaultWriteTool {
     async fn execute(&self, args: Value) -> Result<String> {
         let args: VaultWriteArgs = serde_json::from_value(args)
             .map_err(FcpError::ParseFault)?;
+
+        if args.content.len() > self.max_content_chars {
+            return Err(FcpError::ToolFault {
+                tool_name: self.name().into(),
+                reason: format!(
+                    "Content exceeds max size ({} chars > {} limit). Split into smaller files.",
+                    args.content.len(),
+                    self.max_content_chars,
+                ),
+            });
+        }
 
         let mut path = PathBuf::from(&args.relative_path);
 
@@ -117,7 +129,7 @@ mod tests {
     #[tokio::test]
     async fn test_vault_write_overwrite() -> Result<()> {
         let dir = tempdir().unwrap();
-        let tool = VaultWriteTool { workspace_root: dir.path().to_path_buf() };
+        let tool = VaultWriteTool { workspace_root: dir.path().to_path_buf(), max_content_chars: 100_000 };
         
         let args = serde_json::json!({
             "relative_path": "test.md",
@@ -136,7 +148,7 @@ mod tests {
     #[tokio::test]
     async fn test_vault_write_gatekeeper_block() -> Result<()> {
         let dir = tempdir().unwrap();
-        let tool = VaultWriteTool { workspace_root: dir.path().to_path_buf() };
+        let tool = VaultWriteTool { workspace_root: dir.path().to_path_buf(), max_content_chars: 100_000 };
         
         let args = serde_json::json!({
             "relative_path": "00_Core/Identity.md",
@@ -152,7 +164,7 @@ mod tests {
     #[tokio::test]
     async fn test_vault_write_yaml_frontmatter_override() -> Result<()> {
         let dir = tempdir().unwrap();
-        let tool = VaultWriteTool { workspace_root: dir.path().to_path_buf() };
+        let tool = VaultWriteTool { workspace_root: dir.path().to_path_buf(), max_content_chars: 100_000 };
         
         let args = serde_json::json!({
             "relative_path": "test_image.png",

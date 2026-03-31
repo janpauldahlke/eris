@@ -116,7 +116,9 @@ impl<E: LlmEngine> Orchestrator<E> {
     /// exactly one LLM generation per user turn.
     #[allow(clippy::never_loop)]
     pub async fn step(&mut self, _user_input: Option<String>) -> Result<()> {
-        tracing::info!(state = ?self.state, tool_rounds = self.tool_rounds, recovery_count = self.recovery_count, chat_stack_len = self.chat_stack.len(), "step() entered");
+        self.recovery_count = 0;
+        self.tool_rounds = 0;
+        tracing::info!(state = ?self.state, chat_stack_len = self.chat_stack.len(), "step() entered");
         self.broadcast_state().await;
 
         // ── Pre-LLM semantic routing ─────────────────────────────────
@@ -443,7 +445,14 @@ impl<E: LlmEngine> Orchestrator<E> {
         match status {
             LoopAction::Reflect => {
                 if response.tool_calls.is_empty() {
-                    LoopDirective::RecoverFromFuckup("Reflect requires tool_calls".to_string())
+                    if let Some(msg) = response.message_to_user {
+                        if !msg.trim().is_empty() {
+                            return LoopDirective::HaltAndAwaitInput(Some(msg));
+                        }
+                    }
+                    tracing::debug!("Reflect with empty tool_calls — treating as Task");
+                    self.state = AgentState::Chat;
+                    LoopDirective::ShiftToReflection
                 } else {
                     LoopDirective::ExecuteTools(response.tool_calls)
                 }
@@ -629,7 +638,7 @@ mod tests {
     }
 
     #[test]
-    fn test_router_missing_tools_yields_fuckup() {
+    fn test_router_reflect_empty_tools_shifts_to_reflection() {
         let mut orchestrator = setup_orchestrator();
         let json = r#"{
             "thought": "test",
@@ -638,9 +647,26 @@ mod tests {
         }"#;
 
         let directive = orchestrator.process_llm_response(json);
+        assert_eq!(directive, LoopDirective::ShiftToReflection);
+        assert_eq!(orchestrator.state, AgentState::Chat);
+    }
+
+    #[test]
+    fn test_router_reflect_empty_tools_with_message_halts() {
+        let mut orchestrator = setup_orchestrator();
+        let json = r#"{
+            "thought": "done",
+            "status": "Reflect",
+            "message_to_user": "Here are your results.",
+            "tool_calls": []
+        }"#;
+
+        let directive = orchestrator.process_llm_response(json);
         match directive {
-            LoopDirective::RecoverFromFuckup(_) => {}
-            _ => panic!("Expected RecoverFromFuckup"),
+            LoopDirective::HaltAndAwaitInput(Some(msg)) => {
+                assert!(msg.contains("results"));
+            }
+            _ => panic!("Expected HaltAndAwaitInput, got {:?}", directive),
         }
     }
 
@@ -673,26 +699,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_step_bails_out_on_max_recovery() {
-        let mut orchestrator = setup_orchestrator();
-        orchestrator.recovery_count = orchestrator.max_recovery_attempts;
+    async fn test_step_resets_counters_on_entry() {
+        let json = r#"{
+            "thought": "done",
+            "status": "Idle",
+            "message_to_user": "hi"
+        }"#;
+        let engine = MockEngine::with_content(json);
+        let mut orchestrator = setup_orchestrator_with_engine(engine);
+        orchestrator.recovery_count = 99;
+        orchestrator.tool_rounds = 99;
         orchestrator.state = AgentState::Chat;
         
         let result = orchestrator.step(None).await;
         
         assert!(result.is_ok());
-        assert_eq!(orchestrator.state, AgentState::Idle);
-    }
-
-    #[tokio::test]
-    async fn test_step_bails_out_on_max_tool_rounds() {
-        let mut orchestrator = setup_orchestrator();
-        orchestrator.tool_rounds = orchestrator.max_tool_rounds;
-        orchestrator.state = AgentState::Chat;
-        
-        let result = orchestrator.step(None).await;
-        
-        assert!(result.is_ok());
+        assert_eq!(orchestrator.recovery_count, 0);
+        assert_eq!(orchestrator.tool_rounds, 0);
         assert_eq!(orchestrator.state, AgentState::Idle);
     }
 

@@ -79,6 +79,50 @@ impl SemanticBrain {
         Ok(())
     }
 
+    pub async fn ingest_vault(&self, vault_root: &std::path::Path) -> Result<usize> {
+        let subdirs = ["10_Episodic", "20_Semantic", "30_Persons", "40_User"];
+        let mut count = 0usize;
+
+        for subdir in &subdirs {
+            let dir = vault_root.join(subdir);
+            if !dir.exists() {
+                continue;
+            }
+
+            let mut entries = match tokio::fs::read_dir(&dir).await {
+                Ok(e) => e,
+                Err(e) => {
+                    tracing::warn!(dir = %dir.display(), error = %e, "Failed to read vault subdir");
+                    continue;
+                }
+            };
+
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let path = entry.path();
+                if path.extension().is_some_and(|e| e == "md") {
+                    match tokio::fs::read_to_string(&path).await {
+                        Ok(raw) => {
+                            let (tags, content) = parse_vault_md(&raw);
+                            if content.trim().is_empty() {
+                                continue;
+                            }
+                            if let Err(e) = self.upsert(&content, tags).await {
+                                tracing::warn!(path = %path.display(), error = %e, "Failed to ingest vault file");
+                            } else {
+                                count += 1;
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(path = %path.display(), error = %e, "Failed to read vault file");
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(count)
+    }
+
     pub async fn search(&self, query: &str, limit: u64) -> Result<String> {
         let embedding = self.generate_embedding(query).await?;
 
@@ -98,6 +142,43 @@ impl SemanticBrain {
 
         Ok(markdown)
     }
+}
+
+fn parse_vault_md(raw: &str) -> (Vec<String>, String) {
+    if !raw.starts_with("---") {
+        return (vec![], raw.to_string());
+    }
+
+    let after_first = &raw[3..];
+    let Some(end) = after_first.find("---") else {
+        return (vec![], raw.to_string());
+    };
+
+    let frontmatter = &after_first[..end];
+    let content = &after_first[end + 3..];
+
+    let mut tags = Vec::new();
+    let mut in_tags = false;
+    for line in frontmatter.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("tags:") {
+            in_tags = true;
+            let inline = trimmed.strip_prefix("tags:").unwrap_or("").trim();
+            if !inline.is_empty() {
+                tags.push(inline.to_string());
+            }
+            continue;
+        }
+        if in_tags {
+            if let Some(tag) = trimmed.strip_prefix("- ") {
+                tags.push(tag.trim().to_string());
+            } else {
+                in_tags = false;
+            }
+        }
+    }
+
+    (tags, content.trim().to_string())
 }
 
 #[cfg(test)]

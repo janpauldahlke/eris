@@ -42,7 +42,7 @@ impl ToolRouter {
             "vault:list" => "listing files, what files do I have, show directory, browse vault, what is in my folder, list notes",
             "memory:query" => "remembering, recalling, do you remember, what did I say, past conversations, search memory, who am I, what is my name, recall, recognize me, history",
             "memory:commit" => "saving to long-term memory, remember this permanently, store in memory, commit knowledge, learn this",
-            "memory:stage" => "temporary storage, stage for later, hold this thought, short-term cache, keep in mind briefly",
+            "memory:stage" => "remember this, note this down, store this fact, stage for later, hold this thought, keep in mind, save this information, learn my name, remember me",
             "agenda:push" => "adding tasks, to-do list, remind me to, schedule, plan, add to agenda, new task, I need to",
             "agenda:list" => "show tasks, what is on my list, pending items, show agenda, my schedule, what do I have to do",
             "agenda:complete" => "finishing tasks, mark done, complete task, check off, task finished, I did it",

@@ -67,7 +67,13 @@ impl ContextAssembler {
               \"message_to_user\": \"I found the note and summarized it above.\",\n\
               \"tool_calls\": []\n\
             }}\n\n\
-            Available tools for current state:\n{tools}",
+            Available tools for current state:\n{tools}\n\n\
+            Vault taxonomy — when using memory:stage, include tags from the correct category:\n\
+            - person, contact, people → stored in 30_Persons/\n\
+            - user, preference, about_me → stored in 40_User/\n\
+            - semantic, knowledge, api, reference, concept → stored in 20_Semantic/\n\
+            - Everything else → stored in 10_Episodic/\n\
+            The tags you provide at stage time determine where content is physically stored on disk.",
             identity = identity_content,
             tools = tools_schema_string
         );
@@ -125,7 +131,7 @@ mod tests {
         let assembler = ContextAssembler::new(vault_root, workspace);
         let ephemeral = EphemeralMemory::new(workspace.to_string());
         
-        ephemeral.insert("test_key", "test_value_data", 60).await.unwrap();
+        ephemeral.insert("test_key", "test_value_data", vec![], 60).await.unwrap();
         
         let state = AgentState::Idle;
         let gatekeeper = crate::tools::gatekeeper::Gatekeeper::new();
