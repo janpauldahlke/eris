@@ -16,4 +16,5 @@
 - [x] (S04.1): implement context assembler and llm response router
 - [x] (S04.2): implement orchestrator cognitive loop and recovery matrix
 - [x] (S04.3): implement heartbeat monitor, async guillotine, and s02 condensation loop
-- [ ]
+- [x] (S05): implement semantic guards, schemars validation, and gatekeeper state routing
+- [x] (REFACTORING): refactor: enforce idiomatic module boundaries for engine and orchestrator
