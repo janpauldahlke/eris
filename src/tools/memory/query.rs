@@ -38,6 +38,13 @@ impl Tool for MemoryQueryTool {
         let args: MemoryQueryArgs = serde_json::from_value(args)
             .map_err(FcpError::ParseFault)?;
 
+        if args.query.trim().is_empty() {
+            return Err(FcpError::ToolFault {
+                tool_name: self.name().into(),
+                reason: "Query cannot be empty".to_string(),
+            });
+        }
+
         let results = self.semantic.search(&args.query, 5).await?;
         
         if results.is_empty() {

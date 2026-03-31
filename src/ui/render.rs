@@ -2,6 +2,7 @@ use ratatui::{
     layout::{Layout, Constraint, Direction},
     widgets::{Block, Borders, Paragraph, Wrap},
     style::{Style, Color, Modifier},
+    text::{Line, Span, Text},
     Frame,
 };
 use crate::ui::TuiApp;
@@ -9,6 +10,9 @@ use crate::orchestrator::state::AgentState;
 use crate::ui::app::ActivePane;
 
 pub fn draw(f: &mut Frame, app: &TuiApp) {
+    let background = Block::default().style(Style::default().bg(Color::Rgb(8, 10, 18)));
+    f.render_widget(background, f.size());
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -25,19 +29,46 @@ pub fn draw(f: &mut Frame, app: &TuiApp) {
 
     let get_border_style = |pane: ActivePane| {
         if app.active_pane == pane {
-            Style::default().fg(Color::Yellow)
+            Style::default().fg(Color::Rgb(92, 229, 190))
         } else {
-            Style::default()
+            Style::default().fg(Color::Rgb(63, 70, 95))
         }
     };
 
+    let stars = ["* .  .  *", ".  *  .  ", "  .  *  .", ".  .  *  "];
+    let star_idx = (app.tick_count as usize / 2) % stars.len();
+    let title = format!(" ERIS Console {} ", stars[star_idx]);
+
     // Zone 1: Main Viewport
-    let chat_text = app.chat_stack.join("\n");
-    let chat = Paragraph::new(chat_text)
+    let mut chat_lines: Vec<Line> = Vec::new();
+    for msg in &app.chat_stack {
+        if let Some(rest) = msg.strip_prefix("You: ") {
+            chat_lines.push(Line::from(vec![
+                Span::styled("You: ", Style::default().fg(Color::Rgb(120, 180, 255)).add_modifier(Modifier::BOLD)),
+                Span::styled(rest.to_string(), Style::default().fg(Color::Rgb(214, 223, 255))),
+            ]));
+        } else if msg.starts_with('[') && msg.contains("]: ") {
+            let split_idx = msg.find("]: ").unwrap_or(0);
+            let (name_part, rest_part) = msg.split_at(split_idx + 3);
+            chat_lines.push(Line::from(vec![
+                Span::styled(name_part.to_string(), Style::default().fg(Color::Rgb(92, 229, 190)).add_modifier(Modifier::BOLD)),
+                Span::styled(rest_part.to_string(), Style::default().fg(Color::Rgb(220, 255, 242))),
+            ]));
+        } else {
+            chat_lines.push(Line::from(Span::styled(
+                msg.clone(),
+                Style::default().fg(Color::Rgb(180, 186, 212)),
+            )));
+        }
+        chat_lines.push(Line::default());
+    }
+
+    let chat = Paragraph::new(Text::from(chat_lines))
+        .style(Style::default().bg(Color::Rgb(10, 13, 24)))
         .block(Block::default()
             .borders(Borders::ALL)
             .border_style(get_border_style(ActivePane::Main))
-            .title(" Primary Viewport (Tab to switch pane) "))
+            .title(title))
         .wrap(Wrap { trim: true })
         .scroll((app.chat_scroll, 0));
     f.render_widget(chat, top_chunks[0]);
@@ -51,10 +82,10 @@ pub fn draw(f: &mut Frame, app: &TuiApp) {
     };
     
     let color = match app.state.state {
-        AgentState::Idle => Color::Blue,
-        AgentState::Chat => Color::Green,
-        AgentState::Reflect => Color::Yellow,
-        AgentState::Recover => Color::Red,
+        AgentState::Idle => Color::Rgb(120, 180, 255),
+        AgentState::Chat => Color::Rgb(92, 229, 190),
+        AgentState::Reflect => Color::Rgb(255, 209, 102),
+        AgentState::Recover => Color::Rgb(255, 107, 129),
     };
 
     let telemetry = format!(
@@ -62,7 +93,7 @@ pub fn draw(f: &mut Frame, app: &TuiApp) {
         pulse_str, app.state.tool_rounds, app.state.recovery_count
     );
     let sidebar = Paragraph::new(telemetry)
-        .style(Style::default().fg(color).add_modifier(Modifier::BOLD))
+        .style(Style::default().fg(color).bg(Color::Rgb(14, 16, 28)).add_modifier(Modifier::BOLD))
         .block(Block::default()
             .borders(Borders::ALL)
             .border_style(get_border_style(ActivePane::Telemetry))
@@ -73,7 +104,7 @@ pub fn draw(f: &mut Frame, app: &TuiApp) {
     // Zone 3.5: System Errors
     let sys_errors_text = app.system_messages.join("\n");
     let sys_errors = Paragraph::new(sys_errors_text)
-        .style(Style::default().fg(Color::Red))
+        .style(Style::default().fg(Color::Rgb(255, 132, 132)).bg(Color::Rgb(14, 16, 28)))
         .block(Block::default()
             .borders(Borders::ALL)
             .border_style(get_border_style(ActivePane::SystemErrors))
@@ -84,7 +115,11 @@ pub fn draw(f: &mut Frame, app: &TuiApp) {
 
     // Zone 4: Input / Command Deck
     let input = Paragraph::new(app.input.as_str())
-        .block(Block::default().borders(Borders::ALL).title(" Command Deck "));
+        .style(Style::default().fg(Color::Rgb(214, 223, 255)).bg(Color::Rgb(8, 10, 18)))
+        .block(Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Rgb(120, 180, 255)))
+            .title(" Command Deck "));
     f.render_widget(input, chunks[2]);
 
     let input_chunk = chunks[2];

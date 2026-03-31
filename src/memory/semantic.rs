@@ -41,6 +41,10 @@ impl SemanticBrain {
     }
 
     pub async fn generate_embedding(&self, text: &str) -> Result<Vec<f32>> {
+        if text.trim().is_empty() {
+            return Err(FcpError::EmbeddingFault("Cannot generate embedding for empty query".to_string()));
+        }
+
         let request = GenerateEmbeddingsRequest::new(
             self.config.embed_model_name.clone(),
             text.to_string().into(),
@@ -49,7 +53,11 @@ impl SemanticBrain {
         let response = self.ollama.generate_embeddings(request).await
             .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
 
-        Ok(response.embeddings[0].clone())
+        response
+            .embeddings
+            .into_iter()
+            .next()
+            .ok_or_else(|| FcpError::EmbeddingFault("Embedding model returned no vectors".to_string()))
     }
 
     pub async fn upsert(&self, text: &str, tags: Vec<String>) -> Result<()> {

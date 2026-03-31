@@ -5,9 +5,7 @@ pub enum TuiEvent {
     Tick,
     Input(KeyEvent),
     StateUpdate(AgentStateUpdate),
-    IncomingMessage(String), // Stream of assistant messages
-    AssistantStreamStart,
-    IncomingMessageChunk(String),
+    IncomingMessage(String),
     SystemError(String),     // System Errors / Telemetry
 }
 

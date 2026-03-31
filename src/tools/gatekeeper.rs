@@ -18,15 +18,28 @@ impl Default for Gatekeeper {
 
 impl Gatekeeper {
     pub fn new() -> Self { Self { registry: HashMap::new() } }
-    pub fn register(&mut self, tool: Arc<dyn Tool>) { self.registry.insert(tool.name().to_string(), tool); }
+    pub fn register(&mut self, tool: Arc<dyn Tool>) {
+        let name = tool.name();
+        if !Self::is_tool_allowed_in_any_state(name) {
+            tracing::warn!(tool = name, "Registered tool is not allowed in any state");
+        }
+        self.registry.insert(name.to_string(), tool);
+    }
 
     fn state_allows_tool(state: &AgentState, tool_name: &str) -> bool {
         match state {
             AgentState::Chat => !matches!(tool_name, "agenda:complete"),
-            AgentState::Reflect => matches!(tool_name, "memory:stage" | "memory:commit" | "memory:query" | "vault:read" | "vault:list" | "agenda:push" | "agenda:list"),
-            AgentState::Idle => matches!(tool_name, "memory:commit" | "memory:query" | "vault:read" | "vault:write" | "vault:list" | "agenda:list" | "agenda:complete" | "web:fetch"),
+            AgentState::Reflect => matches!(tool_name, "memory:stage" | "memory:commit" | "memory:query" | "vault:read" | "vault:list" | "agenda:push" | "agenda:list" | "system:health"),
+            AgentState::Idle => matches!(tool_name, "memory:commit" | "memory:query" | "vault:read" | "vault:write" | "vault:list" | "agenda:list" | "agenda:complete" | "web:fetch" | "system:health"),
             AgentState::Recover => true,
         }
+    }
+
+    pub fn is_tool_allowed_in_any_state(tool_name: &str) -> bool {
+        Self::state_allows_tool(&AgentState::Chat, tool_name)
+            || Self::state_allows_tool(&AgentState::Reflect, tool_name)
+            || Self::state_allows_tool(&AgentState::Idle, tool_name)
+            || Self::state_allows_tool(&AgentState::Recover, tool_name)
     }
 
     pub fn get_allowed_tools(&self, state: &AgentState) -> Vec<Value> {
@@ -239,6 +252,31 @@ mod tests {
                 assert!(msg.contains("not authorized"));
             }
             _ => panic!("Expected SchemaViolation"),
+        }
+    }
+
+    #[test]
+    fn test_policy_covers_all_current_tools() {
+        let known_tools = [
+            "vault:read",
+            "vault:write",
+            "vault:list",
+            "agenda:push",
+            "agenda:list",
+            "agenda:complete",
+            "web:fetch",
+            "memory:stage",
+            "memory:commit",
+            "memory:query",
+            "system:health",
+        ];
+
+        for tool in known_tools {
+            assert!(
+                Gatekeeper::is_tool_allowed_in_any_state(tool),
+                "tool should be allowed in at least one state: {}",
+                tool
+            );
         }
     }
 }

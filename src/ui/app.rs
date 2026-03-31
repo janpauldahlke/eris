@@ -27,6 +27,7 @@ pub struct TuiApp {
     pub telemetry_scroll: u16,
     pub system_errors_scroll: u16,
     pub active_pane: ActivePane,
+    pub tick_count: u64,
 }
 
 impl TuiApp {
@@ -48,6 +49,7 @@ impl TuiApp {
             telemetry_scroll: 0,
             system_errors_scroll: 0,
             active_pane: ActivePane::Main,
+            tick_count: 0,
         }
     }
 
@@ -58,6 +60,7 @@ impl TuiApp {
         while self.running {
             tokio::select! {
                 _ = tick_interval.tick() => {
+                    self.tick_count = self.tick_count.wrapping_add(1);
                     terminal.draw(|f| crate::ui::render::draw(f, self))
                         .map_err(|e| FcpError::Config(format!("Draw failed: {}", e)))?;
                 }
@@ -76,14 +79,6 @@ impl TuiApp {
                     match evt {
                         TuiEvent::StateUpdate(update) => self.state = update,
                         TuiEvent::IncomingMessage(msg) => self.chat_stack.push(msg),
-                        TuiEvent::AssistantStreamStart => self.chat_stack.push(String::new()),
-                        TuiEvent::IncomingMessageChunk(chunk) => {
-                            if let Some(last) = self.chat_stack.last_mut() {
-                                last.push_str(&chunk);
-                            } else {
-                                self.chat_stack.push(chunk);
-                            }
-                        }
                         TuiEvent::SystemError(err) => self.system_messages.push(err),
                         _ => {}
                     }
@@ -107,7 +102,8 @@ impl TuiApp {
                         self.running = false;
                         return;
                     }
-                    
+
+                    self.chat_stack.push(format!("You: {}", trimmed));
                     let _ = self.action_tx.send(msg).await;
                 }
             }

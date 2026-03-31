@@ -32,6 +32,20 @@ pub struct Orchestrator<E: LlmEngine> {
 }
 
 impl<E: LlmEngine> Orchestrator<E> {
+    fn agent_name(&self) -> String {
+        let workspace_root = self
+            .context_assembler
+            .core_dir
+            .parent()
+            .unwrap_or(&self.context_assembler.core_dir);
+        workspace_root
+            .file_name()
+            .and_then(|s| s.to_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("ERIS")
+            .to_string()
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         engine: E,
@@ -122,23 +136,8 @@ impl<E: LlmEngine> Orchestrator<E> {
             tracing::info!(chat_stack_len = self.chat_stack.len(), "Sending to LLM engine");
 
             // 3. Engine Generation
-            let mut stream_forwarder = None;
-            let stream_tx = if let Some(tui_tx) = self.tui_tx.clone() {
-                let _ = tui_tx.send(crate::ui::events::TuiEvent::AssistantStreamStart).await;
-                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-                let forward_tx = tui_tx.clone();
-                stream_forwarder = Some(tokio::spawn(async move {
-                    while let Some(chunk) = rx.recv().await {
-                        let _ = forward_tx.send(crate::ui::events::TuiEvent::IncomingMessageChunk(chunk)).await;
-                    }
-                }));
-                Some(tx)
-            } else {
-                None
-            };
-
             let response_result = tokio::select! {
-                res = self.engine.generate(&self.chat_stack, "", stream_tx) => res,
+                res = self.engine.generate(&self.chat_stack, "", None) => res,
                 _ = self.interrupt_rx.changed() => {
                     // The heartbeat fired.
                     self.saved_chat_state = Some(self.chat_stack.clone());
@@ -170,10 +169,6 @@ impl<E: LlmEngine> Orchestrator<E> {
                     return Err(crate::executive::error::FcpError::Interrupted);
                 }
             };
-
-            if let Some(handle) = stream_forwarder.take() {
-                let _ = handle.await;
-            }
 
             let response = match response_result {
                 Ok(res) => {
@@ -213,8 +208,9 @@ impl<E: LlmEngine> Orchestrator<E> {
                     if let Some(ref user_msg) = msg {
                         tracing::info!(msg_len = user_msg.len(), "Agent responding to user");
                         if let Some(tx) = &self.tui_tx {
+                            let agent_name = self.agent_name();
                             let _ = tx.send(crate::ui::events::TuiEvent::IncomingMessage(
-                                format!("[ERIS]: {}", user_msg)
+                                format!("[{}]: {}", agent_name, user_msg)
                             )).await;
                         }
                     }
@@ -254,7 +250,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                                     content: msg.clone(),
                                 });
                                 if let Some(tx) = &self.tui_tx {
-                                    let _ = tx.send(crate::ui::events::TuiEvent::IncomingMessage(msg)).await;
+                                    let _ = tx.send(crate::ui::events::TuiEvent::SystemError(msg)).await;
                                 }
                                 self.broadcast_state().await;
                             }
@@ -290,7 +286,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                             content: msg.clone(),
                         });
                         if let Some(tx) = &self.tui_tx {
-                            let _ = tx.send(crate::ui::events::TuiEvent::IncomingMessage(msg)).await;
+                            let _ = tx.send(crate::ui::events::TuiEvent::SystemError(msg)).await;
                         }
                         self.broadcast_state().await;
                     }
@@ -305,7 +301,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                         content: msg.clone(),
                     });
                     if let Some(tx) = &self.tui_tx {
-                        let _ = tx.send(crate::ui::events::TuiEvent::IncomingMessage(msg)).await;
+                        let _ = tx.send(crate::ui::events::TuiEvent::SystemError(msg)).await;
                     }
                     self.broadcast_state().await;
                 }
