@@ -10,9 +10,13 @@ use crate::tools::traits::Tool;
 
 #[derive(Deserialize, JsonSchema)]
 pub struct MemoryStageArgs {
-    pub title: String,
-    pub content: String,
-    pub tags: Vec<String>,
+    /// A short descriptive title (e.g. "hagbard_profile", "weather_api"). Required.
+    pub title: Option<String>,
+    /// The text content to remember. Required.
+    pub content: Option<String>,
+    /// Taxonomy tags for vault routing. Use: person/contact → 30_Persons, user/preference → 40_User, semantic/knowledge/api → 20_Semantic. Required, at least one tag.
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
 }
 
 pub struct MemoryStageTool {
@@ -39,35 +43,39 @@ impl Tool for MemoryStageTool {
         let args: MemoryStageArgs = serde_json::from_value(args)
             .map_err(FcpError::ParseFault)?;
 
-        if args.title.trim().is_empty() {
-            return Err(FcpError::ToolFault {
+        let title = args.title.filter(|t| !t.trim().is_empty())
+            .ok_or_else(|| FcpError::ToolFault {
                 tool_name: self.name().into(),
-                reason: "Title cannot be empty".into(),
-            });
-        }
+                reason: "title is required — provide a short descriptive title (e.g. \"hagbard_profile\", \"weather_api\")".into(),
+            })?;
 
-        if args.content.trim().is_empty() {
-            return Err(FcpError::ToolFault {
+        let content = args.content.filter(|c| !c.trim().is_empty())
+            .ok_or_else(|| FcpError::ToolFault {
                 tool_name: self.name().into(),
-                reason: "Content cannot be empty".into(),
-            });
-        }
+                reason: "content is required — provide the actual text to remember".into(),
+            })?;
 
-        if args.content.len() > self.max_content_chars {
+        let tags = args.tags.filter(|t| !t.is_empty())
+            .ok_or_else(|| FcpError::ToolFault {
+                tool_name: self.name().into(),
+                reason: "tags is required — provide at least one tag for vault routing (e.g. [\"person\",\"hagbard\"] or [\"api\",\"weather\"])".into(),
+            })?;
+
+        if content.len() > self.max_content_chars {
             return Err(FcpError::ToolFault {
                 tool_name: self.name().into(),
                 reason: format!(
                     "Content exceeds max size ({} chars > {} limit)",
-                    args.content.len(),
+                    content.len(),
                     self.max_content_chars,
                 ),
             });
         }
 
-        self.ephemeral.insert(&args.title, &args.content, args.tags.clone(), self.ttl_secs).await?;
+        self.ephemeral.insert(&title, &content, tags.clone(), self.ttl_secs).await?;
         Ok(format!(
             "Staged '{}' with tags {:?} (ttl={}s, auto-promotes on expiry)",
-            args.title, args.tags, self.ttl_secs
+            title, tags, self.ttl_secs
         ))
     }
 }
@@ -98,6 +106,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_memory_stage_rejects_null_title() {
+        let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
+        let tool = MemoryStageTool {
+            ephemeral: ephemeral.clone(),
+            ttl_secs: 60,
+            max_content_chars: 10_000,
+        };
+        let args = serde_json::json!({
+            "title": null,
+            "content": "Hagbard is the primary user",
+            "tags": ["person"]
+        });
+
+        let result = tool.execute(args).await;
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(err.contains("title is required"));
+    }
+
+    #[tokio::test]
+    async fn test_memory_stage_rejects_null_tags() {
+        let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
+        let tool = MemoryStageTool {
+            ephemeral: ephemeral.clone(),
+            ttl_secs: 60,
+            max_content_chars: 10_000,
+        };
+        let args = serde_json::json!({
+            "title": "hagbard",
+            "content": "Hagbard is the primary user",
+            "tags": null
+        });
+
+        let result = tool.execute(args).await;
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(err.contains("tags is required"));
+    }
+
+    #[tokio::test]
     async fn test_memory_stage_rejects_oversized_content() {
         let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
         let tool = MemoryStageTool {
@@ -109,6 +157,24 @@ mod tests {
             "title": "big",
             "content": "This content is way too long for the limit",
             "tags": ["test"]
+        });
+
+        let result = tool.execute(args).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_memory_stage_rejects_empty_content() {
+        let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
+        let tool = MemoryStageTool {
+            ephemeral: ephemeral.clone(),
+            ttl_secs: 60,
+            max_content_chars: 10_000,
+        };
+        let args = serde_json::json!({
+            "title": null,
+            "content": "",
+            "tags": null
         });
 
         let result = tool.execute(args).await;
