@@ -16,6 +16,7 @@ pub struct TuiApp {
     pub system_messages: Vec<String>,
     pub state: AgentStateUpdate,
     pub running: bool,
+    pub viewport_scroll: u16,
 }
 
 impl TuiApp {
@@ -33,6 +34,7 @@ impl TuiApp {
                 active_task: None,
             },
             running: true,
+            viewport_scroll: 0,
         }
     }
 
@@ -90,6 +92,12 @@ impl TuiApp {
             }
             KeyCode::Char(c) => self.input.push(c),
             KeyCode::Backspace => { self.input.pop(); }
+            KeyCode::Up | KeyCode::PageUp => {
+                self.viewport_scroll = self.viewport_scroll.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::PageDown => {
+                self.viewport_scroll = self.viewport_scroll.saturating_add(1);
+            }
             _ => {}
         }
     }

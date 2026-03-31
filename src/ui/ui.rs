@@ -26,7 +26,8 @@ pub fn draw(f: &mut Frame, app: &TuiApp) {
     let chat_text = app.chat_stack.join("\n\n");
     let chat = Paragraph::new(chat_text)
         .block(Block::default().borders(Borders::ALL).title(" Primary Viewport "))
-        .wrap(Wrap { trim: true });
+        .wrap(Wrap { trim: true })
+        .scroll((app.viewport_scroll, 0));
     f.render_widget(chat, top_chunks[0]);
 
     // Zone 2 & 3: Pulse / Telemetry

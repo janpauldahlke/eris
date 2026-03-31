@@ -7,3 +7,7 @@ You asked for a ruthless assessment of our current stack. Here is exactly where 
     Fatal Flaw B: The UX Freeze (No Streaming). Because we force the LLM to output strict JSON ({"thought": "...", "tool_calls": [...]}), your reqwest client is waiting for the final } before it hands the payload to serde_json. If Adam decides to write a 2,000-word file using vault:write, the TUI will sit completely frozen for 15 seconds while the tokens generate in the background. Addition needed: A partial JSON streaming parser that updates the TUI viewport token-by-token so you aren't staring at a dead screen.
 
     Missing Capability: Parallel Execution. Right now, if Adam needs to search the web for three different things, he does it sequentially: Search -> Wait -> Search -> Wait. Standard APIs (like OpenAI) support parallel tool calling. Qwen is smart enough to output an array of three tools at once. We need to refactor the Gatekeeper to use tokio::join! to execute tool arrays simultaneously.
+
+### tui
+
+- note , the viewport window need to be scrollable,
