@@ -26,6 +26,8 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 htmd = "0.1"
 ratatui = "0.26"
 crossterm = { version = "0.27", features = ["event-stream"] }
+inquire = "0.7"
+toml = "0.8"
 
 [dev-dependencies]
 tempfile = "3.27.0"

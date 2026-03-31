@@ -1,0 +1,91 @@
+use crate::config::AppConfig;
+use crate::executive::error::{FcpError, Result};
+use std::path::PathBuf;
+use tokio::fs;
+use inquire::{Select, Text};
+use ollama_rs::Ollama;
+
+pub async fn run_ignition_sequence(workspace_root: &PathBuf) -> Result<AppConfig> {
+    // 1. Fetch available models first to keep async cleanly separated
+    let host = "http://localhost".to_string();
+    let port = 11434;
+    let client = Ollama::new(host, port);
+    
+    let local_models = client.list_local_models().await.ok().unwrap_or_default();
+    let model_names: Vec<String> = local_models.into_iter().map(|m| m.name).collect();
+
+    // 2. Interactive Prompts (blocking task)
+    let (agent_name, model_name) = tokio::task::spawn_blocking(move || -> Result<(String, String)> {
+        let agent_name = Text::new("Agent Name:")
+            .with_default("ERIS")
+            .prompt()
+            .map_err(|e| match e {
+                inquire::InquireError::OperationCanceled | inquire::InquireError::OperationInterrupted => {
+                    FcpError::Cancellation("Ignition cancelled by user".into())
+                }
+                _ => FcpError::Config(format!("Prompt error: {}", e)),
+            })?;
+
+        let model_name = if !model_names.is_empty() {
+            // Find if default qwen2.5:14b is in the list
+            let default_idx = model_names.iter().position(|m| m.contains("qwen2.5:14b")).unwrap_or(0);
+            
+            Select::new("Ollama Model:", model_names.clone())
+                .with_starting_cursor(default_idx)
+                .prompt()
+                .map_err(|e| match e {
+                    inquire::InquireError::OperationCanceled | inquire::InquireError::OperationInterrupted => {
+                        FcpError::Cancellation("Ignition cancelled by user".into())
+                    }
+                    _ => FcpError::Config(format!("Prompt error: {}", e)),
+                })?
+        } else {
+            Text::new("Ollama Model:")
+                .with_default("qwen2.5:14b")
+                .prompt()
+                .map_err(|e| match e {
+                    inquire::InquireError::OperationCanceled | inquire::InquireError::OperationInterrupted => {
+                        FcpError::Cancellation("Ignition cancelled by user".into())
+                    }
+                    _ => FcpError::Config(format!("Prompt error: {}", e)),
+                })?
+        };
+
+        Ok((agent_name, model_name))
+    }).await.map_err(|e| FcpError::Config(format!("Spawn blocking failed: {}", e)))??;
+
+    // 3. The Scaffold
+    let dirs_to_create = [
+        workspace_root.join(".fcp/logs"),
+        workspace_root.join("00_Core"),
+        workspace_root.join("10_Episodic"),
+    ];
+
+    for dir in &dirs_to_create {
+        if !dir.exists() {
+            fs::create_dir_all(dir).await?;
+        }
+    }
+
+    // 4. The Cure (Identity Generation)
+    let identity_path = workspace_root.join("00_Core/Identity.md");
+    let identity_content = format!(
+        "You are an autonomous AI operating in a strict state machine. You MUST communicate EXCLUSIVELY in JSON format matching the schemas provided. Never output plain conversational text.\n\nAgent Name: {}",
+        agent_name
+    );
+    fs::write(&identity_path, identity_content).await?;
+
+    // 5. The Seal
+    let mut config = AppConfig::default();
+    config.model_name = model_name;
+    
+    // Note: Writing to fcp.toml instead of config.toml because config.rs relies on fcp.toml
+    let config_toml = toml::to_string(&config).map_err(|e| FcpError::Config(format!("Failed to serialize config: {}", e)))?;
+    let config_path = workspace_root.join("fcp.toml");
+    fs::write(&config_path, config_toml).await?;
+
+    let seal_path = workspace_root.join(".fcp_seal");
+    fs::write(&seal_path, "").await?;
+
+    Ok(config)
+}

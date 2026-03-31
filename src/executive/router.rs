@@ -19,6 +19,14 @@ pub async fn execute_command(cmd: Commands, cancel_token: CancellationToken) -> 
             use std::path::PathBuf;
             use ollama_rs::Ollama;
 
+            let vault_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+            // 0. Ignition Sequence
+            let seal_path = vault_root.join(".fcp_seal");
+            if !seal_path.exists() {
+                crate::executive::ignition::run_ignition_sequence(&vault_root).await?;
+            }
+
             // 1. Setup channels
             let (tui_tx, tui_rx) = mpsc::channel(100);
             let (action_tx, mut action_rx) = mpsc::channel(100);

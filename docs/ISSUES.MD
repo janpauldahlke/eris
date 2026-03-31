@@ -61,8 +61,3 @@
 - we should align the lenght of one block with the max context-window \* 0.75
 - by this we shoudl achieve that each file in markdown maps the context size
 - is there a mechanisam in place to move files into the proper folder, like episodic, sematinc, user, ..... we need to check on the vault structure again
-
-### 1.5 Patch S06.x: The Dynamic Context Guillotine
-
-- **Goal:** Remove the hardcoded 3000-token limit in `vault:read`.
-- **Tasks:** Add `llm_context_window` and `vault_read_ratio` to `AppConfig`. Inject the dynamically calculated limit into the tool upon initialization.

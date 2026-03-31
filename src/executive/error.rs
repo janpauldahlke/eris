@@ -23,6 +23,9 @@ pub enum FcpError {
     #[error("Gatekeeper Validation Failed: {0}")]
     SchemaViolation(String),
     
+    #[error("User Cancellation: {0}")]
+    Cancellation(String),
+    
     #[error("Tool Execution Failed [{tool_name}]: {reason}")]
     ToolFault { tool_name: String, reason: String },
 
