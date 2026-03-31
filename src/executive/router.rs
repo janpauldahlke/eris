@@ -70,6 +70,10 @@ pub async fn execute_command(cmd: Commands, config: Arc<AppConfig>, cancel_token
                 config.web_fetch_timeout_secs,
                 config.web_fetch_max_bytes,
             )));
+            gatekeeper.register(Arc::new(crate::tools::memory::MemoryStageTool {
+                ephemeral: ephemeral.clone(),
+                ttl_secs: config.ephemeral_ttl_secs,
+            }));
 
             // Instantiate SemanticBrain and register memory tools
             if let Ok(semantic_brain) = crate::memory::semantic::SemanticBrain::new(config.clone(), Arc::new(client)).await {

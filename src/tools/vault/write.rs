@@ -72,8 +72,6 @@ impl Tool for VaultWriteTool {
 
                 if ["png", "jpg", "jpeg", "gif", "pdf", "csv", "json"].contains(&extension.as_str()) {
                     "30_Assets"
-                } else if filename.starts_with("sys_") || filename.starts_with("core_") || filename.starts_with("identity") {
-                    "00_Core"
                 } else if filename.starts_with("user_") || filename.starts_with("pref_") {
                     "40_User"
                 } else {
@@ -141,7 +139,7 @@ mod tests {
         let tool = VaultWriteTool { workspace_root: dir.path().to_path_buf() };
         
         let args = serde_json::json!({
-            "relative_path": "core_Identity.md",
+            "relative_path": "00_Core/Identity.md",
             "content": "Malicious",
             "mode": "overwrite"
         });

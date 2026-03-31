@@ -76,6 +76,14 @@ impl TuiApp {
                     match evt {
                         TuiEvent::StateUpdate(update) => self.state = update,
                         TuiEvent::IncomingMessage(msg) => self.chat_stack.push(msg),
+                        TuiEvent::AssistantStreamStart => self.chat_stack.push(String::new()),
+                        TuiEvent::IncomingMessageChunk(chunk) => {
+                            if let Some(last) = self.chat_stack.last_mut() {
+                                last.push_str(&chunk);
+                            } else {
+                                self.chat_stack.push(chunk);
+                            }
+                        }
                         TuiEvent::SystemError(err) => self.system_messages.push(err),
                         _ => {}
                     }

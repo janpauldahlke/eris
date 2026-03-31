@@ -646,6 +646,7 @@ dependencies = [
  "crossterm 0.27.0",
  "dotenvy",
  "figment",
+ "futures",
  "htmd",
  "inquire",
  "jsonschema",

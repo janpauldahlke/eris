@@ -4,6 +4,7 @@ use crate::tools::Gatekeeper;
 use crate::memory::ephemeral::EphemeralMemory;
 use crate::orchestrator::state::{AgentState, LoopDirective, LlmResponse, LoopAction};
 use crate::orchestrator::context::ContextAssembler;
+use futures::future;
 use std::sync::Arc;
 use std::path::Path;
 
@@ -121,8 +122,23 @@ impl<E: LlmEngine> Orchestrator<E> {
             tracing::info!(chat_stack_len = self.chat_stack.len(), "Sending to LLM engine");
 
             // 3. Engine Generation
+            let mut stream_forwarder = None;
+            let stream_tx = if let Some(tui_tx) = self.tui_tx.clone() {
+                let _ = tui_tx.send(crate::ui::events::TuiEvent::AssistantStreamStart).await;
+                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+                let forward_tx = tui_tx.clone();
+                stream_forwarder = Some(tokio::spawn(async move {
+                    while let Some(chunk) = rx.recv().await {
+                        let _ = forward_tx.send(crate::ui::events::TuiEvent::IncomingMessageChunk(chunk)).await;
+                    }
+                }));
+                Some(tx)
+            } else {
+                None
+            };
+
             let response_result = tokio::select! {
-                res = self.engine.generate(&self.chat_stack, "{}", None) => res,
+                res = self.engine.generate(&self.chat_stack, "", stream_tx) => res,
                 _ = self.interrupt_rx.changed() => {
                     // The heartbeat fired.
                     self.saved_chat_state = Some(self.chat_stack.clone());
@@ -155,6 +171,10 @@ impl<E: LlmEngine> Orchestrator<E> {
                 }
             };
 
+            if let Some(handle) = stream_forwarder.take() {
+                let _ = handle.await;
+            }
+
             let response = match response_result {
                 Ok(res) => {
                     tracing::info!(prompt_tokens = res.prompt_tokens, generated_tokens = res.generated_tokens, content_len = res.content.len(), "LLM response received");
@@ -175,14 +195,11 @@ impl<E: LlmEngine> Orchestrator<E> {
                 content: response.content.clone(),
             });
 
-            if let Some(tx) = &self.tui_tx {
-                let _ = tx.send(crate::ui::events::TuiEvent::IncomingMessage(response.content.clone())).await;
-            }
-
             let total_tokens = response.generated_tokens + response.prompt_tokens;
             let threshold = (self.num_ctx as f32 * self.condensation_threshold) as usize;
             if total_tokens > threshold {
-                tracing::warn!(total_tokens, threshold, "Token usage exceeds condensation threshold, shifting to Reflect");
+                tracing::warn!(total_tokens, threshold, "Token usage exceeds condensation threshold, running condenser");
+                self.execute_condensation().await?;
                 self.state = AgentState::Reflect;
                 self.broadcast_state().await;
             }
@@ -209,14 +226,29 @@ impl<E: LlmEngine> Orchestrator<E> {
                 }
                 LoopDirective::ExecuteTools(tools) => {
                     tracing::info!(tool_count = tools.len(), "Executing tool calls");
-                    for tool_call in tools {
-                        tracing::info!(tool = %tool_call.name, args = %tool_call.args, state = ?self.state, "Dispatching tool");
-                        match self.gatekeeper.execute_tool(&self.state, &tool_call.name, tool_call.args).await {
+                    let current_state = self.state;
+                    let exec_futures = tools.into_iter().map(|tool_call| {
+                        let gatekeeper = &self.gatekeeper;
+                        async move {
+                            tracing::info!(tool = %tool_call.name, args = %tool_call.args, state = ?current_state, "Dispatching tool");
+                            let name = tool_call.name;
+                            let args = tool_call.args;
+                            let result = gatekeeper.execute_tool(&current_state, &name, args).await;
+                            (name, result)
+                        }
+                    });
+
+                    let results = future::join_all(exec_futures).await;
+                    let mut recoverable_msg: Option<String> = None;
+                    let mut fatal_error = None;
+
+                    for (tool_name, result) in results {
+                        match result {
                             Ok(result) => {
                                 self.tool_rounds += 1;
                                 self.recovery_count = 0;
-                                tracing::info!(tool = %tool_call.name, result_len = result.len(), round = self.tool_rounds, "Tool succeeded");
-                                let msg = format!("Tool '{}' succeeded: {}", tool_call.name, result);
+                                tracing::info!(tool = %tool_name, result_len = result.len(), round = self.tool_rounds, "Tool succeeded");
+                                let msg = format!("Tool '{}' succeeded: {}", tool_name, result);
                                 self.chat_stack.push(crate::engine::Message {
                                     role: "system".to_string(),
                                     content: msg.clone(),
@@ -227,28 +259,40 @@ impl<E: LlmEngine> Orchestrator<E> {
                                 self.broadcast_state().await;
                             }
                             Err(e) => {
-                                tracing::error!(tool = %tool_call.name, error = %e, error_type = ?std::mem::discriminant(&e), "Tool execution failed");
-                                // Cognitive Fault: recoverable errors from tool logic
+                                tracing::error!(tool = %tool_name, error = %e, error_type = ?std::mem::discriminant(&e), "Tool execution failed");
                                 if Self::is_recoverable_tool_error(&e) {
-                                    self.recovery_count += 1;
-                                    self.state = AgentState::Recover;
-                                    let msg = format!("[SYSTEM OVERRIDE: FUCKUP DETECTED] Tool execution failed: {}", e);
-                                    self.chat_stack.push(crate::engine::Message {
-                                        role: "system".to_string(),
-                                        content: msg.clone(),
-                                    });
-                                    if let Some(tx) = &self.tui_tx {
-                                        let _ = tx.send(crate::ui::events::TuiEvent::IncomingMessage(msg)).await;
+                                    if recoverable_msg.is_none() {
+                                        recoverable_msg = Some(e.to_string());
                                     }
-                                    self.broadcast_state().await;
-                                    break;
                                 } else {
-                                    tracing::error!(error = %e, "System fatality - aborting orchestrator");
-                                    self.state = AgentState::Idle;
-                                    return Err(e);
+                                    tracing::error!(error = %e, "System fatality detected during parallel tool execution");
+                                    if fatal_error.is_none() {
+                                        fatal_error = Some(e);
+                                    }
                                 }
                             }
                         }
+                    }
+
+                    if let Some(e) = fatal_error {
+                        tracing::error!(error = %e, "System fatality - aborting orchestrator");
+                        self.state = AgentState::Idle;
+                        self.broadcast_state().await;
+                        return Err(e);
+                    }
+
+                    if let Some(reason) = recoverable_msg {
+                        self.recovery_count += 1;
+                        self.state = AgentState::Recover;
+                        let msg = format!("[SYSTEM OVERRIDE: FUCKUP DETECTED] Tool execution failed: {}", reason);
+                        self.chat_stack.push(crate::engine::Message {
+                            role: "system".to_string(),
+                            content: msg.clone(),
+                        });
+                        if let Some(tx) = &self.tui_tx {
+                            let _ = tx.send(crate::ui::events::TuiEvent::IncomingMessage(msg)).await;
+                        }
+                        self.broadcast_state().await;
                     }
                 }
                 LoopDirective::RecoverFromFuckup(msg) => {
@@ -344,7 +388,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         });
 
         // 2. Call `self.engine.generate(&self.chat_stack, ...)`.
-        let response = self.engine.generate(&self.chat_stack, "{}", None).await?;
+        let response = self.engine.generate(&self.chat_stack, "", None).await?;
 
         // 3. Extract the summary text from the response.
         let summary = response.content;

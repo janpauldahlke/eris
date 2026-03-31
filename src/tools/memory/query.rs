@@ -50,6 +50,5 @@ impl Tool for MemoryQueryTool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    // Testing requires SemanticBrain, which needs network. Testing omitted here to avoid network calls.
+    // Testing requires SemanticBrain, which needs a live Qdrant instance.
 }

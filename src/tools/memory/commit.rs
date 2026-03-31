@@ -79,8 +79,5 @@ impl Tool for MemoryCommitTool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::path::PathBuf;
-    // Note: To test this properly, you need mock for SemanticBrain, which is tricky without a live Qdrant.
-    // For now, we rely on the type checking and orchestrator integration tests.
+    // Testing requires SemanticBrain, which needs a live Qdrant instance.
 }

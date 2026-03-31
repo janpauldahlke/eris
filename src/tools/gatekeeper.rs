@@ -23,8 +23,8 @@ impl Gatekeeper {
     fn state_allows_tool(state: &AgentState, tool_name: &str) -> bool {
         match state {
             AgentState::Chat => !matches!(tool_name, "agenda:complete"),
-            AgentState::Reflect => matches!(tool_name, "memory:stage" | "memory:commit" | "vault:read" | "agenda:push" | "agenda:list"),
-            AgentState::Idle => matches!(tool_name, "memory:commit" | "vault:read" | "agenda:list" | "agenda:complete" | "web:fetch"),
+            AgentState::Reflect => matches!(tool_name, "memory:stage" | "memory:commit" | "memory:query" | "vault:read" | "vault:list" | "agenda:push" | "agenda:list"),
+            AgentState::Idle => matches!(tool_name, "memory:commit" | "memory:query" | "vault:read" | "vault:write" | "vault:list" | "agenda:list" | "agenda:complete" | "web:fetch"),
             AgentState::Recover => true,
         }
     }

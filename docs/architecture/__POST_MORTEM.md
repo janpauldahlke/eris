@@ -184,3 +184,23 @@ src/tools/web/fetch.rs - expect("Failed to build reqwest client") replaced with 
 src/executive/cli.rs - Added Clone derive to Cli and Commands
 Cargo.toml - url = "2.5" moved from dev-dependencies to main dependencies
 Test results: 69/69 pass, clippy clean.
+
+---
+
+What will actually make ERIS talk properly (next session priorities)
+
+1. The system prompt needs surgery for qwen models. The current prompt in context.rs is a wall of text with inline JSON schema notation. Qwen 2.5/3.5 does much better with:
+
+A concrete few-shot example of the expected JSON output rather than a schema description
+The status field explanation is ambiguous - "Reflect: Use this if you called tools and are waiting for their output" reads like the LLM should output Reflect AFTER tools run. But the orchestrator expects Reflect to CARRY tool_calls. This semantic mismatch is why the LLM keeps outputting {"status": "Reflect", "tool_calls": []} and hitting recovery. Renaming or rewording would help.
+The tool schemas from schemars are verbose JSON Schema objects. Qwen responds better to compact OpenAI-style function signatures. 2. memory:stage is a live landmine. It's not registered (I deliberately skipped it), but the LLM could hallucinate the name since the gatekeeper allows it in Reflect state. If you plan to implement it, wire it to the ephemeral cache. If not, consider removing it from state_allows_tool.
+
+3. No streaming to TUI. You noted this in ISSUES.md already. The FormatType::Json constraint forces the client to wait for the complete response before the TUI updates. On a 27B model, that's 10-30 seconds of frozen screen. The streaming path exists in the OllamaClient but the orchestrator never passes a stream_tx. This is the single biggest UX issue once the agent actually works.
+
+4. No episodic condenser. Also in ISSUES.md. After ~15 turns, the chat_stack will blow past the context window. Now that assistant messages ARE pushed to the stack (our fix), this will happen faster. The execute_condensation method exists but is never called. It needs a trigger in the step loop when total_tokens > threshold.
+
+5. scratch.rs / scratch_test.rs - dead files in src/engine/. Harmless but messy. Delete when convenient.
+
+6. Qwen 3.5 27B specific note - that model has strong <think> tag support. Your ReasoningRouter FSM is built for this, but the enable_reasoning_fsm config flag is never read or wired. The router exists but isn't used in the pipeline. When you move to the 27B rig, you'll want to wire it into the OllamaClient streaming path so thought tokens are separated from content tokens before JSON parsing. Right now the JSON parser would choke on <think>reasoning</think>{"thought": ...}.
+
+The architecture is genuinely solid. The trait boundaries, the error taxonomy, the gatekeeper pattern, the state machine - all correct designs. The Gemini sessions built good bones but left the wiring half-done. What you have now should at least not crash on the first message. The next wall you'll hit is prompt engineering for qwen's JSON mode behavior.

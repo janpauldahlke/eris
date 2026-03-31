@@ -35,19 +35,40 @@ impl ContextAssembler {
             .unwrap_or_else(|_| "[]".to_string());
 
         let system_prompt = format!(
-            "{}\n\n\
-            You are operating within a strict programmatic state machine. \n\
-            You MUST communicate EXCLUSIVELY in valid JSON format. \n\
-            Do NOT output conversational text, pleasantries, or markdown blocks outside of the JSON structure. \n\
-            Your output MUST strictly adhere to this schema: \n\
-            {{ \"thought\": \"your internal reasoning\", \"status\": \"Reflect|Idle|Task\", \"tool_calls\": [ {{ \"name\": \"tool_name\", \"args\": {{...}} }} ] }}\n\n\
-            Status Values:\n\
-            - Reflect: Use this if you called tools and are waiting for their output.\n\
-            - Idle: Use this if you are completely finished with the task.\n\
-            - Task: Use this if you are actively working but not calling tools.\n\n\
-            Available Tools:\n{}",
-            identity_content, // From Step A
-            tools_schema_string // From Step B
+            "{identity}\n\n\
+            You are inside a strict agent loop. Reply with ONE valid JSON object only.\n\
+            No markdown. No prose outside JSON. No code fences.\n\n\
+            Required JSON shape:\n\
+            {{\n\
+              \"thought\": \"internal reasoning for the agent runtime only; never user-facing\",\n\
+              \"status\": \"Task|Reflect|Idle\",\n\
+              \"message_to_user\": \"optional plain-language assistant reply\",\n\
+              \"tool_calls\": [{{\"name\": \"tool:name\", \"args\": {{}} }}]\n\
+            }}\n\n\
+            Status rules (follow exactly):\n\
+            1) Task: use when continuing internal work/planning. tool_calls MUST be [].\n\
+            2) Reflect: use ONLY when calling one or more tools now. tool_calls MUST be non-empty.\n\
+            3) Idle: use when done and waiting for user input. tool_calls MUST be [].\n\
+            4) If no tool is needed, NEVER choose Reflect.\n\n\
+            Example (tool invocation):\n\
+            {{\n\
+              \"thought\": \"Need to read a vault note before answering.\",\n\
+              \"status\": \"Reflect\",\n\
+              \"message_to_user\": null,\n\
+              \"tool_calls\": [\n\
+                {{\"name\": \"vault:read\", \"args\": {{\"path\": \"notes/today.md\"}}}}\n\
+              ]\n\
+            }}\n\n\
+            Example (final reply):\n\
+            {{\n\
+              \"thought\": \"Sufficient context gathered; ready to answer user.\",\n\
+              \"status\": \"Idle\",\n\
+              \"message_to_user\": \"I found the note and summarized it above.\",\n\
+              \"tool_calls\": []\n\
+            }}\n\n\
+            Available tools for current state:\n{tools}",
+            identity = identity_content,
+            tools = tools_schema_string
         );
 
         Ok(system_prompt)
@@ -82,7 +103,8 @@ mod tests {
         let assembled = assembler.assemble(&state, &ephemeral, &gatekeeper).await.unwrap();
         
         assert!(assembled.contains("I am the test agent."));
-        assert!(assembled.contains("strict programmatic state machine"));
+        assert!(assembled.contains("Reply with ONE valid JSON object only"));
+        assert!(assembled.contains("\"status\": \"Task|Reflect|Idle\""));
     }
 
     #[tokio::test]
