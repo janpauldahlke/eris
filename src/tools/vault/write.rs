@@ -18,6 +18,7 @@ pub enum WriteMode {
 }
 
 #[derive(Deserialize, JsonSchema)]
+#[schemars(description = "The system will automatically route raw filenames to the correct taxonomy folder (e.g., 10_Episodic).")]
 pub struct VaultWriteArgs {
     pub relative_path: String,
     pub content: String,
@@ -35,7 +36,7 @@ impl Tool for VaultWriteTool {
     }
 
     fn description(&self) -> &'static str {
-        "Writes strings directly to the physical disk inside the workspace. Banned from 00_Core/."
+        "Writes strings directly to the physical disk inside the workspace. The system will automatically route raw filenames to the correct taxonomy folder (e.g., 10_Episodic)."
     }
 
     fn parameters_schema(&self) -> schemars::schema::RootSchema {
@@ -46,10 +47,29 @@ impl Tool for VaultWriteTool {
         let args: VaultWriteArgs = serde_json::from_value(args)
             .map_err(|e| FcpError::ParseFault(e))?;
 
-        // S06 rule: Caught by the Gatekeeper path firewall prior to execution
-        validate_path_is_mutable(&args.relative_path)?;
+        let mut path = PathBuf::from(&args.relative_path);
 
-        let target_path = self.workspace_root.join(&args.relative_path);
+        if path.parent().map_or(true, |p| p.as_os_str().is_empty()) {
+            let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let extension = path.extension().unwrap_or_default().to_string_lossy().to_lowercase();
+
+            let target_dir = if ["png", "jpg", "jpeg", "gif", "pdf", "csv", "json"].contains(&extension.as_str()) {
+                "30_Assets"
+            } else if filename.starts_with("sys_") || filename.starts_with("core_") || filename.starts_with("identity") {
+                "00_Core"
+            } else if filename.starts_with("user_") || filename.starts_with("pref_") {
+                "40_User"
+            } else {
+                "10_Episodic"
+            };
+            path = PathBuf::from(target_dir).join(path);
+        }
+
+        let final_relative_path_string = path.to_string_lossy().to_string();
+
+        validate_path_is_mutable(&final_relative_path_string)?;
+
+        let target_path = self.workspace_root.join(&path);
         
         // Ensure parent directories exist
         if let Some(parent) = target_path.parent() {
@@ -68,7 +88,7 @@ impl Tool for VaultWriteTool {
         file.write_all(args.content.as_bytes()).await.map_err(|e| FcpError::Io(e))?;
         file.flush().await.map_err(|e| FcpError::Io(e))?;
 
-        Ok(format!("SUCCESS: Wrote to {}.", args.relative_path))
+        Ok(format!("SUCCESS: File written and routed to {}", final_relative_path_string))
     }
 }
 
@@ -83,15 +103,15 @@ mod tests {
         let tool = VaultWriteTool { workspace_root: dir.path().to_path_buf() };
         
         let args = serde_json::json!({
-            "relative_path": "10_Projects/test.md",
+            "relative_path": "test.md",
             "content": "Initial",
             "mode": "overwrite"
         });
         
         let result = tool.execute(args.clone()).await?;
-        assert_eq!(result, "SUCCESS: Wrote to 10_Projects/test.md.");
+        assert_eq!(result, "SUCCESS: File written and routed to 10_Episodic/test.md");
         
-        let written = fs::read_to_string(dir.path().join("10_Projects/test.md")).await.unwrap();
+        let written = fs::read_to_string(dir.path().join("10_Episodic/test.md")).await.unwrap();
         assert_eq!(written, "Initial");
         Ok(())
     }
@@ -102,7 +122,7 @@ mod tests {
         let tool = VaultWriteTool { workspace_root: dir.path().to_path_buf() };
         
         let args = serde_json::json!({
-            "relative_path": "00_Core/Identity.md",
+            "relative_path": "core_Identity.md",
             "content": "Malicious",
             "mode": "overwrite"
         });

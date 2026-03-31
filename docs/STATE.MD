@@ -31,5 +31,4 @@
 - [x] (REFACTORING) (S06.x): replace hardcoded vault read limit with dynamic config ratio
 - [x] (S09): ignation wizard for fresh system start
 - [x] (S10): Semantic Memory / Vector Brain implemented via Qdrant
-- []
-- []
+- [] (S10.1) Vault Auto-Routing
