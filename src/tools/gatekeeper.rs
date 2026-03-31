@@ -24,7 +24,7 @@ impl Gatekeeper {
         match state {
             AgentState::Chat => !matches!(tool_name, "agenda:complete"),
             AgentState::Reflect => matches!(tool_name, "memory:stage" | "memory:commit" | "vault:read" | "agenda:push" | "agenda:list"),
-            AgentState::Idle => matches!(tool_name, "memory:commit" | "vault:read" | "agenda:list" | "agenda:complete"),
+            AgentState::Idle => matches!(tool_name, "memory:commit" | "vault:read" | "agenda:list" | "agenda:complete" | "web:fetch"),
             AgentState::Recover => true,
         }
     }

@@ -22,6 +22,8 @@ pub struct AppConfig {
     pub snapshot_interval_secs: u64,
     pub embed_model_name: String,
     pub idle_timeout_secs: u64,
+    pub web_fetch_timeout_secs: u64,
+    pub web_fetch_max_bytes: usize,
 }
 
 impl Default for AppConfig {
@@ -45,6 +47,8 @@ impl Default for AppConfig {
             snapshot_interval_secs: 300,
             embed_model_name: "nomic-embed-text".into(),
             idle_timeout_secs: 900,
+            web_fetch_timeout_secs: 10,
+            web_fetch_max_bytes: 20480,
         }
     }
 }
@@ -155,7 +159,9 @@ mod tests {
             "qdrant_url": "http://localhost:6334",
             "snapshot_interval_secs": 600,
             "embed_model_name": "nomic-embed-text",
-            "idle_timeout_secs": 42
+            "idle_timeout_secs": 42,
+            "web_fetch_timeout_secs": 15,
+            "web_fetch_max_bytes": 10240
         }"#;
 
         let parsed_config: AppConfig = serde_json::from_str(json_data).expect("Failed to parse JSON");
@@ -179,5 +185,7 @@ mod tests {
         assert_eq!(parsed_config.snapshot_interval_secs, 600);
         assert_eq!(parsed_config.embed_model_name, "nomic-embed-text");
         assert_eq!(parsed_config.idle_timeout_secs, 42);
+        assert_eq!(parsed_config.web_fetch_timeout_secs, 15);
+        assert_eq!(parsed_config.web_fetch_max_bytes, 10240);
     }
 }

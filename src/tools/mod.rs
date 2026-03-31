@@ -5,6 +5,7 @@ pub mod vault;
 pub mod memory;
 pub mod system;
 pub mod agenda;
+pub mod web;
 
 pub use traits::Tool;
 pub use gatekeeper::Gatekeeper;
