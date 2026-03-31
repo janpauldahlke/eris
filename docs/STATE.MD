@@ -32,4 +32,6 @@
 - [x] (S09): ignation wizard for fresh system start
 - [x] (S10): Semantic Memory / Vector Brain implemented via Qdrant
 - [x] (S10.1) Vault Auto-Routing
-- [x] Patch (S10.1) (The Smart Router / YAML Interception)
+- [x] Patch (S10.1): The Smart Router / YAML Interception
+- [x] (S11): The Cockpit Polish
+- [] Testing - report in ISSUES.md

@@ -93,7 +93,7 @@ pub async fn execute_command(cmd: Commands, cancel_token: CancellationToken) -> 
                             orchestrator.state = crate::orchestrator::state::AgentState::Chat;
                             if let Err(e) = orchestrator.step(None).await {
                                 let err_msg = format!("[FATAL ERROR] Orchestrator halted: {}", e);
-                                let _ = tui_tx_err.send(crate::ui::events::TuiEvent::IncomingMessage(err_msg)).await;
+                                let _ = tui_tx_err.send(crate::ui::events::TuiEvent::SystemError(err_msg)).await;
                                 break;
                             }
                         }

@@ -6,6 +6,7 @@ pub enum TuiEvent {
     Input(KeyEvent),
     StateUpdate(AgentStateUpdate),
     IncomingMessage(String), // Stream of assistant messages
+    SystemError(String),     // System Errors / Telemetry
 }
 
 #[derive(Clone)]
