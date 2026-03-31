@@ -27,7 +27,7 @@ impl EphemeralMemory {
     }
 
     pub async fn insert(&self, key: &str, value: &str, ttl_secs: u64) -> Result<()> {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards");
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
         let expires_at = now.as_secs() + ttl_secs;
         
         let cache_value = CacheValue {
@@ -44,7 +44,7 @@ impl EphemeralMemory {
         
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
+            .unwrap_or_default()
             .as_secs();
             
         if now >= val.expires_at {
@@ -56,7 +56,7 @@ impl EphemeralMemory {
     }
 
     pub async fn snapshot_to_disk(&self, vault_root: &std::path::Path) -> Result<()> {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
         
         let mut entries = Vec::new();
         for (k, v) in self.cache.iter() {
@@ -118,7 +118,7 @@ impl EphemeralMemory {
                         reason: e.to_string(),
                     })?;
                 
-                let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs();
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
                 for (k, v) in entries {
                     if v.expires_at > now {
                         cache.insert(k, v).await;

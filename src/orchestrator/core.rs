@@ -80,17 +80,19 @@ impl<E: LlmEngine> Orchestrator<E> {
     /// The main cognitive loop.
     #[allow(clippy::never_loop)]
     pub async fn step(&mut self, _user_input: Option<String>) -> Result<()> {
-        // TODO: Inject user_input into memory if provided
+        tracing::info!(state = ?self.state, tool_rounds = self.tool_rounds, recovery_count = self.recovery_count, chat_stack_len = self.chat_stack.len(), "step() entered");
         self.broadcast_state().await;
 
         loop {
             // 1. Bailout Checks
             if self.recovery_count >= self.max_recovery_attempts {
+                tracing::warn!(recovery_count = self.recovery_count, max = self.max_recovery_attempts, "Max recovery attempts reached, bailing out");
                 self.state = AgentState::Idle;
                 self.broadcast_state().await;
                 return Ok(());
             }
             if self.tool_rounds >= self.max_tool_rounds {
+                tracing::warn!(tool_rounds = self.tool_rounds, max = self.max_tool_rounds, "Max tool rounds reached, bailing out");
                 self.state = AgentState::Idle;
                 self.broadcast_state().await;
                 return Ok(());
@@ -98,6 +100,7 @@ impl<E: LlmEngine> Orchestrator<E> {
 
             // 2. Context Assembly
             let system_prompt = self.context_assembler.assemble(&self.state, &self.ephemeral, &self.gatekeeper).await?;
+            tracing::debug!(prompt_len = system_prompt.len(), "System prompt assembled");
             
             if let Some(first) = self.chat_stack.first_mut() {
                 if first.content.contains("You are operating within a strict programmatic state machine") {
@@ -115,7 +118,9 @@ impl<E: LlmEngine> Orchestrator<E> {
                 });
             }
 
-            // 3. Engine Generation (Mocked for now)
+            tracing::info!(chat_stack_len = self.chat_stack.len(), "Sending to LLM engine");
+
+            // 3. Engine Generation
             let response_result = tokio::select! {
                 res = self.engine.generate(&self.chat_stack, "{}", None) => res,
                 _ = self.interrupt_rx.changed() => {
@@ -151,28 +156,51 @@ impl<E: LlmEngine> Orchestrator<E> {
             };
 
             let response = match response_result {
-                Ok(res) => res,
+                Ok(res) => {
+                    tracing::info!(prompt_tokens = res.prompt_tokens, generated_tokens = res.generated_tokens, content_len = res.content.len(), "LLM response received");
+                    tracing::debug!(raw_content = %res.content, "LLM raw output");
+                    res
+                }
                 Err(e) => {
+                    tracing::error!(error = %e, "LLM engine generation failed");
                     self.state = AgentState::Idle;
                     self.broadcast_state().await;
                     return Err(e);
                 }
             };
 
+            // Push assistant response into chat_stack so the LLM retains context across turns
+            self.chat_stack.push(crate::engine::Message {
+                role: "assistant".to_string(),
+                content: response.content.clone(),
+            });
+
             if let Some(tx) = &self.tui_tx {
                 let _ = tx.send(crate::ui::events::TuiEvent::IncomingMessage(response.content.clone())).await;
             }
 
-            if (response.generated_tokens + response.prompt_tokens) > (self.num_ctx as f32 * self.condensation_threshold) as usize {
+            let total_tokens = response.generated_tokens + response.prompt_tokens;
+            let threshold = (self.num_ctx as f32 * self.condensation_threshold) as usize;
+            if total_tokens > threshold {
+                tracing::warn!(total_tokens, threshold, "Token usage exceeds condensation threshold, shifting to Reflect");
                 self.state = AgentState::Reflect;
                 self.broadcast_state().await;
             }
 
             // 4. Directive Processing
             let directive = self.process_llm_response(&response.content);
+            tracing::info!(directive = ?directive, "Directive from LLM response");
 
             match directive {
-                LoopDirective::HaltAndAwaitInput(_msg) => {
+                LoopDirective::HaltAndAwaitInput(msg) => {
+                    if let Some(ref user_msg) = msg {
+                        tracing::info!(msg_len = user_msg.len(), "Agent responding to user");
+                        if let Some(tx) = &self.tui_tx {
+                            let _ = tx.send(crate::ui::events::TuiEvent::IncomingMessage(
+                                format!("[ERIS]: {}", user_msg)
+                            )).await;
+                        }
+                    }
                     self.state = AgentState::Idle;
                     self.tool_rounds = 0;
                     self.recovery_count = 0;
@@ -180,11 +208,14 @@ impl<E: LlmEngine> Orchestrator<E> {
                     return Ok(());
                 }
                 LoopDirective::ExecuteTools(tools) => {
+                    tracing::info!(tool_count = tools.len(), "Executing tool calls");
                     for tool_call in tools {
+                        tracing::info!(tool = %tool_call.name, args = %tool_call.args, state = ?self.state, "Dispatching tool");
                         match self.gatekeeper.execute_tool(&self.state, &tool_call.name, tool_call.args).await {
                             Ok(result) => {
                                 self.tool_rounds += 1;
                                 self.recovery_count = 0;
+                                tracing::info!(tool = %tool_call.name, result_len = result.len(), round = self.tool_rounds, "Tool succeeded");
                                 let msg = format!("Tool '{}' succeeded: {}", tool_call.name, result);
                                 self.chat_stack.push(crate::engine::Message {
                                     role: "system".to_string(),
@@ -196,8 +227,9 @@ impl<E: LlmEngine> Orchestrator<E> {
                                 self.broadcast_state().await;
                             }
                             Err(e) => {
-                                // Cognitive Fault: Catch Schema/Tool errors and force recovery
-                                if matches!(e, crate::executive::error::FcpError::ToolFault { .. } | crate::executive::error::FcpError::SchemaViolation(_)) {
+                                tracing::error!(tool = %tool_call.name, error = %e, error_type = ?std::mem::discriminant(&e), "Tool execution failed");
+                                // Cognitive Fault: recoverable errors from tool logic
+                                if Self::is_recoverable_tool_error(&e) {
                                     self.recovery_count += 1;
                                     self.state = AgentState::Recover;
                                     let msg = format!("[SYSTEM OVERRIDE: FUCKUP DETECTED] Tool execution failed: {}", e);
@@ -209,9 +241,9 @@ impl<E: LlmEngine> Orchestrator<E> {
                                         let _ = tx.send(crate::ui::events::TuiEvent::IncomingMessage(msg)).await;
                                     }
                                     self.broadcast_state().await;
-                                    break; // Break the inner tool loop to restart the outer cognitive loop
+                                    break;
                                 } else {
-                                    // System Fatality (e.g., Network offline): Abort entirely
+                                    tracing::error!(error = %e, "System fatality - aborting orchestrator");
                                     self.state = AgentState::Idle;
                                     return Err(e);
                                 }
@@ -221,6 +253,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                 }
                 LoopDirective::RecoverFromFuckup(msg) => {
                     self.recovery_count += 1;
+                    tracing::warn!(recovery_count = self.recovery_count, reason = %msg, "Recovery triggered from bad LLM output");
                     self.state = AgentState::Recover;
                     let msg = format!("[SYSTEM OVERRIDE: FUCKUP DETECTED] Invalid LLM Output: {}", msg);
                     self.chat_stack.push(crate::engine::Message {
@@ -233,11 +266,22 @@ impl<E: LlmEngine> Orchestrator<E> {
                     self.broadcast_state().await;
                 }
                 LoopDirective::ShiftToReflection => {
+                    tracing::info!("Shifting to Reflect state");
                     self.state = AgentState::Reflect;
                     self.broadcast_state().await;
                 }
             }
         }
+    }
+
+    fn is_recoverable_tool_error(e: &crate::executive::error::FcpError) -> bool {
+        matches!(
+            e,
+            crate::executive::error::FcpError::ToolFault { .. }
+                | crate::executive::error::FcpError::SchemaViolation(_)
+                | crate::executive::error::FcpError::Io(_)
+                | crate::executive::error::FcpError::ParseFault(_)
+        )
     }
 
     pub fn process_llm_response(&mut self, response_json: &str) -> LoopDirective {
@@ -251,10 +295,23 @@ impl<E: LlmEngine> Orchestrator<E> {
             response_json
         };
 
+        tracing::debug!(extracted_json_len = json_str.len(), "Parsing LLM JSON response");
+
         let response: LlmResponse = match serde_json::from_str(json_str) {
             Ok(res) => res,
-            Err(e) => return LoopDirective::RecoverFromFuckup(e.to_string()),
+            Err(e) => {
+                tracing::warn!(error = %e, raw_snippet = &json_str[..json_str.len().min(200)], "Failed to parse LLM response as JSON");
+                return LoopDirective::RecoverFromFuckup(e.to_string());
+            }
         };
+
+        tracing::info!(
+            status = ?response.status,
+            thought_len = response.thought.len(),
+            tool_count = response.tool_calls.len(),
+            has_message = response.message_to_user.is_some(),
+            "Parsed LLM response"
+        );
 
         match response.status {
             LoopAction::Reflect => {

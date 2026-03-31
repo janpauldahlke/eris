@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use super::error::{FcpError, Result};
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(name = "fcp", version, about = "The Unified Dreadnought: Local SLM Orchestrator", disable_version_flag = true)]
 pub struct Cli {
     /// Defines the active memory partition (isolates vector spaces)
@@ -23,7 +23,7 @@ pub struct Cli {
     pub command: Commands,
 }
 
-#[derive(Subcommand, Debug, PartialEq)]
+#[derive(Subcommand, Debug, PartialEq, Clone)]
 pub enum Commands {
     /// Boot the Layer 2 Subconscious and enter the interactive loop
     Chat,

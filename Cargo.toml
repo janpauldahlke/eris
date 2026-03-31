@@ -30,6 +30,7 @@ inquire = "0.7"
 toml = "0.8"
 qdrant-client = "1.7.0"
 uuid = { version = "1.7.0", features = ["v4"] }
+url = "2.5"
 
 [dev-dependencies]
 tempfile = "3.27.0"

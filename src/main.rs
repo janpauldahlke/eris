@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::executive::cli::Cli;
 use crate::executive::router::execute_command;
+use crate::config::AppConfig;
 
 pub mod executive;
 pub mod telemetry;
@@ -39,17 +40,29 @@ async fn main() -> ExitCode {
 
     tracing::info!("Starting FCP Subconscious Orchestrator...");
 
-    // 4. Pre-Flight Checks
+    // 4. Load Configuration
+    let config = match AppConfig::load(cli.clone()) {
+        Ok(c) => {
+            tracing::info!(model = %c.model_name, workspace = %c.workspace, vault = %c.vault_root.display(), "Configuration loaded");
+            std::sync::Arc::new(c)
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to load configuration");
+            eprintln!("Configuration error: {}", e);
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // 5. Pre-Flight Checks
     if let Err(e) = crate::telemetry::preflight::run_preflight_checks().await {
         eprintln!("{}", e);
         return ExitCode::FAILURE;
     }
 
-    // 5. Global Kill Switch (CancellationToken) setup
+    // 6. Global Kill Switch (CancellationToken) setup
     let cancel_token = CancellationToken::new();
     let token_clone = cancel_token.clone();
 
-    // Set up the ctrl_c signal trap
     tokio::spawn(async move {
         if let Ok(()) = tokio::signal::ctrl_c().await {
             tracing::warn!("SIGINT received, triggering global shutdown...");
@@ -57,9 +70,8 @@ async fn main() -> ExitCode {
         }
     });
 
-    // 4. Route Execution
-    // Pass the cancel_token down to the router so long-running processes can yield when it is cancelled.
-    if let Err(e) = execute_command(cli.command, cancel_token).await {
+    // 7. Route Execution
+    if let Err(e) = execute_command(cli.command, config, cancel_token).await {
         tracing::error!("{}", e);
         // It's also printed to stderr as a structured error trace
         eprintln!("{}", e);

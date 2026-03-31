@@ -45,10 +45,14 @@ impl Gatekeeper {
     }
 
     pub async fn execute_tool(&self, state: &AgentState, name: &str, args: Value) -> Result<String> {
+        tracing::info!(tool = name, state = ?state, "Gatekeeper: checking tool authorization");
+
         if !Self::state_allows_tool(state, name) {
+            tracing::warn!(tool = name, state = ?state, "Gatekeeper: tool not authorized in current state");
             return Err(FcpError::SchemaViolation(format!("Tool '{}' not authorized in state {:?}", name, state)));
         }
         let tool = self.registry.get(name).ok_or_else(|| {
+            tracing::warn!(tool = name, registered_tools = ?self.registry.keys().collect::<Vec<_>>(), "Gatekeeper: tool not found in registry");
             FcpError::ToolFault { tool_name: name.to_string(), reason: "Tool not found".to_string() }
         })?;
 
@@ -58,12 +62,16 @@ impl Gatekeeper {
 
         if let Err(errors) = compiled_schema.validate(&args) {
             let msg = errors.map(|e| e.to_string()).collect::<Vec<_>>().join("; ");
+            tracing::warn!(tool = name, validation_error = %msg, args = %args, "Gatekeeper: schema validation failed");
             return Err(FcpError::SchemaViolation(format!("JSON Schema Validation Failed: {}", msg)));
         }
 
+        tracing::debug!(tool = name, args = %args, "Gatekeeper: executing tool");
         let result = tool.execute(args).await?;
+        tracing::debug!(tool = name, result_len = result.len(), "Gatekeeper: tool execution complete");
 
         if state == &AgentState::Recover && result.trim().is_empty() {
+            tracing::warn!(tool = name, "Gatekeeper: semantic guard triggered (empty result in Recover)");
             return Err(FcpError::ToolFault {
                 tool_name: name.to_string(),
                 reason: "Semantic Guard: Tool returned zero logic results during recovery".to_string()

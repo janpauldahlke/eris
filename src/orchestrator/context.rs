@@ -17,12 +17,20 @@ impl ContextAssembler {
     /// CRITICAL: `ephemeral.cache` is an async moka cache. You must iterate it safely.
     pub async fn assemble(&self, state: &AgentState, _ephemeral: &EphemeralMemory, gatekeeper: &Gatekeeper) -> Result<String> {
         let identity_path = self.core_dir.join("Identity.md");
+        tracing::debug!(path = %identity_path.display(), "Loading identity file");
         let identity_content = match tokio::fs::read_to_string(&identity_path).await {
-            Ok(content) => content,
-            Err(_) => "You are E.R.I.S., an autonomous AI agent.".to_string(), // Hardcoded fallback
+            Ok(content) => {
+                tracing::info!(len = content.len(), "Identity loaded from vault");
+                content
+            }
+            Err(e) => {
+                tracing::warn!(path = %identity_path.display(), error = %e, "Identity file not found, using hardcoded fallback");
+                "You are E.R.I.S., an autonomous AI agent.".to_string()
+            }
         };
 
         let allowed_tools = gatekeeper.get_allowed_tools(state);
+        tracing::info!(state = ?state, tool_count = allowed_tools.len(), "Tools available for current state");
         let tools_schema_string = serde_json::to_string_pretty(&allowed_tools)
             .unwrap_or_else(|_| "[]".to_string());
 

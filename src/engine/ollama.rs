@@ -60,10 +60,25 @@ impl LlmEngine for OllamaClient {
             ));
         }
 
+        tracing::info!(
+            model = %self.config.model_name,
+            message_count = chat_messages.len(),
+            timeout_secs = self.config.generation_timeout_secs,
+            streaming = stream_tx.is_some(),
+            "Sending chat request to Ollama"
+        );
+
+        use ollama_rs::generation::options::GenerationOptions;
+
+        let gen_options = GenerationOptions::default()
+            .num_ctx(self.config.num_ctx as u64);
+
         let request = ChatMessageRequest::new(
             self.config.model_name.clone(),
             chat_messages
-        ).format(FormatType::Json);
+        )
+        .format(FormatType::Json)
+        .options(gen_options);
 
         let timeout = Duration::from_secs(self.config.generation_timeout_secs);
 
@@ -71,8 +86,14 @@ impl LlmEngine for OllamaClient {
             let stream_future = self.client.send_chat_messages_stream(request);
             let mut stream = match tokio::time::timeout(timeout, stream_future).await {
                 Ok(Ok(s)) => s,
-                Ok(Err(e)) => return Err(FcpError::NetworkFault(e.to_string())),
-                Err(_) => return Err(FcpError::EngineFault("Generation timed out".to_string())),
+                Ok(Err(e)) => {
+                    tracing::error!(error = %e, "Ollama stream connection failed");
+                    return Err(FcpError::NetworkFault(e.to_string()));
+                }
+                Err(_) => {
+                    tracing::error!(timeout_secs = self.config.generation_timeout_secs, "Ollama stream timed out on connect");
+                    return Err(FcpError::EngineFault("Generation timed out".to_string()));
+                }
             };
 
             let mut full_content = String::new();
@@ -117,14 +138,21 @@ impl LlmEngine for OllamaClient {
                     } else {
                         (0, 0)
                     };
+                    tracing::info!(prompt_tokens, generated_tokens, content_len = content.len(), "Ollama non-stream response received");
                     Ok(EngineResponse {
                         content,
                         prompt_tokens,
                         generated_tokens,
                     })
                 }
-                Ok(Err(e)) => Err(FcpError::NetworkFault(e.to_string())),
-                Err(_) => Err(FcpError::EngineFault("Generation timed out".to_string())),
+                Ok(Err(e)) => {
+                    tracing::error!(error = %e, "Ollama request failed");
+                    Err(FcpError::NetworkFault(e.to_string()))
+                }
+                Err(_) => {
+                    tracing::error!(timeout_secs = self.config.generation_timeout_secs, "Ollama request timed out");
+                    Err(FcpError::EngineFault("Generation timed out".to_string()))
+                }
             }
         }
     }
