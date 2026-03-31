@@ -26,7 +26,7 @@ impl Tool for AgendaCompleteTool {
     fn parameters_schema(&self) -> schemars::schema::RootSchema { schemars::schema_for!(AgendaCompleteArgs) }
 
     async fn execute(&self, args: Value) -> Result<String> {
-        let args: AgendaCompleteArgs = serde_json::from_value(args).map_err(|e| FcpError::ParseFault(e))?;
+        let args: AgendaCompleteArgs = serde_json::from_value(args).map_err(FcpError::ParseFault)?;
         let agenda_path = self.workspace_root.join(".fcp_agenda.json");
         
         if !agenda_path.exists() {
@@ -34,7 +34,7 @@ impl Tool for AgendaCompleteTool {
         }
 
         let content = fs::read_to_string(&agenda_path).await.map_err(FcpError::Io)?;
-        let mut tasks: Vec<AgendaTask> = serde_json::from_str(&content).map_err(|e| FcpError::ParseFault(e))?;
+        let mut tasks: Vec<AgendaTask> = serde_json::from_str(&content).map_err(FcpError::ParseFault)?;
         
         let initial_len = tasks.len();
         tasks.retain(|t| t.id != args.task_id);

@@ -68,7 +68,7 @@ impl<E: LlmEngine> Orchestrator<E> {
     pub async fn broadcast_state(&self) {
         if let Some(tx) = &self.tui_tx {
             let update = crate::ui::events::AgentStateUpdate {
-                state: self.state.clone(),
+                state: self.state,
                 tool_rounds: self.tool_rounds,
                 recovery_count: self.recovery_count,
                 active_task: None,
@@ -124,19 +124,15 @@ impl<E: LlmEngine> Orchestrator<E> {
                     self.chat_stack.clear();
 
                     // Read .fcp_agenda.json to inject oldest task if present
-                    let workspace_root = self.context_assembler.core_dir.parent().unwrap();
+                    let workspace_root = self.context_assembler.core_dir.parent().unwrap_or(&self.context_assembler.core_dir);
                     let agenda_path = workspace_root.join(".fcp_agenda.json");
                     
                     let mut active_task = None;
-                    if let Ok(content) = tokio::fs::read_to_string(&agenda_path).await {
-                        if let Ok(tasks) = serde_json::from_str::<Vec<serde_json::Value>>(&content) {
-                            if let Some(first) = tasks.first() {
-                                if let Some(desc) = first.get("description").and_then(|d| d.as_str()) {
-                                    active_task = Some(desc.to_string());
-                                }
+                    if let Ok(content) = tokio::fs::read_to_string(&agenda_path).await
+                        && let Ok(tasks) = serde_json::from_str::<Vec<serde_json::Value>>(&content)
+                            && let Some(desc) = tasks.first().and_then(|first| first.get("description")).and_then(|d| d.as_str()) {
+                                active_task = Some(desc.to_string());
                             }
-                        }
-                    }
 
                     let prompt = if let Some(task) = active_task {
                         format!("You are operating autonomously. Execute this task: {}. When finished, use agenda:complete.", task)

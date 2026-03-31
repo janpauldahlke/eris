@@ -36,7 +36,7 @@ impl Tool for MemoryQueryTool {
 
     async fn execute(&self, args: Value) -> Result<String> {
         let args: MemoryQueryArgs = serde_json::from_value(args)
-            .map_err(|e| FcpError::ParseFault(e))?;
+            .map_err(FcpError::ParseFault)?;
 
         let results = self.semantic.search(&args.query, 5).await?;
         

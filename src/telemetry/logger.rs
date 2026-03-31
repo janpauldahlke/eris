@@ -1,11 +1,11 @@
-use std::path::PathBuf;
+use std::path::Path;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling;
 use tracing_subscriber::{fmt, EnvFilter};
 
 use crate::executive::error::Result;
 
-pub fn init_tracing(workspace_root: &PathBuf) -> Result<WorkerGuard> {
+pub fn init_tracing(workspace_root: &Path) -> Result<WorkerGuard> {
     let log_dir = workspace_root.join(".fcp").join("logs");
     
     // Explicitly create the directory before initializing the appender

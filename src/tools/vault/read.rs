@@ -35,7 +35,7 @@ impl Tool for VaultReadTool {
 
     async fn execute(&self, args: Value) -> Result<String> {
         let args: VaultReadArgs = serde_json::from_value(args)
-            .map_err(|e| FcpError::ParseFault(e))?;
+            .map_err(FcpError::ParseFault)?;
 
         // Gatekeeper path firewall is optional for read, but we should prevent absolute traversal
         let target_path = self.workspace_root.join(&args.relative_path);
@@ -47,7 +47,7 @@ impl Tool for VaultReadTool {
         }
 
         let mut content = fs::read_to_string(&target_path).await
-            .map_err(|e| FcpError::Io(e))?;
+            .map_err(FcpError::Io)?;
 
         let max_bytes = self.read_limit * 4;
         

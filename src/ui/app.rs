@@ -45,7 +45,7 @@ impl TuiApp {
         while self.running {
             tokio::select! {
                 _ = tick_interval.tick() => {
-                    terminal.draw(|f| crate::ui::ui::draw(f, self))
+                    terminal.draw(|f| crate::ui::render::draw(f, self))
                         .map_err(|e| FcpError::Config(format!("Draw failed: {}", e)))?;
                 }
                 Some(Ok(evt)) = reader.next() => {

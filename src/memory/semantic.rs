@@ -82,13 +82,10 @@ impl SemanticBrain {
         let mut markdown = String::new();
         for point in search_result.result {
             let payload = point.payload;
-            if let Some(text_val) = payload.get("text") {
-                if let Some(kind) = &text_val.kind {
-                    if let qdrant_client::qdrant::value::Kind::StringValue(text) = kind {
-                        markdown.push_str(&format!("- {}\n", text));
-                    }
+            if let Some(text_val) = payload.get("text")
+                && let Some(qdrant_client::qdrant::value::Kind::StringValue(text)) = &text_val.kind {
+                    markdown.push_str(&format!("- {}\n", text));
                 }
-            }
         }
 
         Ok(markdown)

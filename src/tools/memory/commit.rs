@@ -44,7 +44,7 @@ impl Tool for MemoryCommitTool {
 
     async fn execute(&self, args: Value) -> Result<String> {
         let args: MemoryCommitArgs = serde_json::from_value(args)
-            .map_err(|e| FcpError::ParseFault(e))?;
+            .map_err(FcpError::ParseFault)?;
 
         let content = self.ephemeral.get(&args.tag).await
             .ok_or_else(|| FcpError::ToolFault {

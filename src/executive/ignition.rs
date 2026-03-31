@@ -1,11 +1,11 @@
 use crate::config::AppConfig;
 use crate::executive::error::{FcpError, Result};
-use std::path::PathBuf;
+use std::path::Path;
 use tokio::fs;
 use inquire::{Select, Text};
 use ollama_rs::Ollama;
 
-pub async fn run_ignition_sequence(workspace_root: &PathBuf) -> Result<AppConfig> {
+pub async fn run_ignition_sequence(workspace_root: &Path) -> Result<AppConfig> {
     // 1. Fetch available models first to keep async cleanly separated
     let host = "http://localhost".to_string();
     let port = 11434;
@@ -76,8 +76,10 @@ pub async fn run_ignition_sequence(workspace_root: &PathBuf) -> Result<AppConfig
     fs::write(&identity_path, identity_content).await?;
 
     // 5. The Seal
-    let mut config = AppConfig::default();
-    config.model_name = model_name;
+    let config = AppConfig {
+        model_name,
+        ..Default::default()
+    };
     
     // Note: Writing to fcp.toml instead of config.toml because config.rs relies on fcp.toml
     let config_toml = toml::to_string(&config).map_err(|e| FcpError::Config(format!("Failed to serialize config: {}", e)))?;

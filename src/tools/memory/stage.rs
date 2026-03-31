@@ -30,7 +30,7 @@ impl Tool for MemoryStageTool {
 
     async fn execute(&self, args: Value) -> Result<String> {
         let _args: MemoryStageArgs = serde_json::from_value(args)
-            .map_err(|e| FcpError::ParseFault(e))?;
+            .map_err(FcpError::ParseFault)?;
 
         // Structural stub: Fails correctly to satisfy TDD cycle
         Err(FcpError::ToolFault {

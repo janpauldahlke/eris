@@ -45,15 +45,15 @@ impl Tool for VaultWriteTool {
 
     async fn execute(&self, args: Value) -> Result<String> {
         let args: VaultWriteArgs = serde_json::from_value(args)
-            .map_err(|e| FcpError::ParseFault(e))?;
+            .map_err(FcpError::ParseFault)?;
 
         let mut path = PathBuf::from(&args.relative_path);
 
-        if path.parent().map_or(true, |p| p.as_os_str().is_empty()) {
+        if path.parent().is_none_or(|p| p.as_os_str().is_empty()) {
             let mut target_dir = None;
 
-            if args.content.starts_with("---") {
-                if let Some(end_idx) = args.content[3..].find("---") {
+            if args.content.starts_with("---")
+                && let Some(end_idx) = args.content[3..].find("---") {
                     let frontmatter = &args.content[..3 + end_idx + 3];
                     if frontmatter.contains("00_Core") {
                         target_dir = Some("00_Core");
@@ -65,7 +65,6 @@ impl Tool for VaultWriteTool {
                         target_dir = Some("40_User");
                     }
                 }
-            }
 
             let target_dir = target_dir.unwrap_or_else(|| {
                 let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
@@ -93,7 +92,7 @@ impl Tool for VaultWriteTool {
         
         // Ensure parent directories exist
         if let Some(parent) = target_path.parent() {
-            fs::create_dir_all(parent).await.map_err(|e| FcpError::Io(e))?;
+            fs::create_dir_all(parent).await.map_err(FcpError::Io)?;
         }
 
         let mut file = OpenOptions::new()
@@ -103,10 +102,10 @@ impl Tool for VaultWriteTool {
             .append(args.mode == WriteMode::Append)
             .open(&target_path)
             .await
-            .map_err(|e| FcpError::Io(e))?;
+            .map_err(FcpError::Io)?;
 
-        file.write_all(args.content.as_bytes()).await.map_err(|e| FcpError::Io(e))?;
-        file.flush().await.map_err(|e| FcpError::Io(e))?;
+        file.write_all(args.content.as_bytes()).await.map_err(FcpError::Io)?;
+        file.flush().await.map_err(FcpError::Io)?;
 
         Ok(format!("SUCCESS: File written and routed to {}", final_relative_path_string))
     }

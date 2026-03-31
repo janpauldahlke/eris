@@ -33,7 +33,7 @@ impl Tool for AgendaListTool {
             return Ok("No pending tasks.".to_string());
         }
 
-        let tasks: Vec<AgendaTask> = serde_json::from_str(&content).map_err(|e| FcpError::ParseFault(e))?;
+        let tasks: Vec<AgendaTask> = serde_json::from_str(&content).map_err(FcpError::ParseFault)?;
         if tasks.is_empty() {
             return Ok("No pending tasks.".to_string());
         }

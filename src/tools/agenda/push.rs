@@ -26,7 +26,7 @@ impl Tool for AgendaPushTool {
     fn parameters_schema(&self) -> schemars::schema::RootSchema { schemars::schema_for!(AgendaPushArgs) }
 
     async fn execute(&self, args: Value) -> Result<String> {
-        let args: AgendaPushArgs = serde_json::from_value(args).map_err(|e| FcpError::ParseFault(e))?;
+        let args: AgendaPushArgs = serde_json::from_value(args).map_err(FcpError::ParseFault)?;
         if args.description.len() > 200 {
             return Err(FcpError::SchemaViolation("Description must be <= 200 chars".to_string()));
         }
@@ -37,7 +37,7 @@ impl Tool for AgendaPushTool {
         if agenda_path.exists() {
             let content = fs::read_to_string(&agenda_path).await.map_err(FcpError::Io)?;
             if !content.trim().is_empty() {
-                tasks = serde_json::from_str(&content).map_err(|e| FcpError::ParseFault(e))?;
+                tasks = serde_json::from_str(&content).map_err(FcpError::ParseFault)?;
             }
         }
 

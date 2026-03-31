@@ -33,7 +33,7 @@ impl Tool for VaultListTool {
 
     async fn execute(&self, args: Value) -> Result<String> {
         let args: VaultListArgs = serde_json::from_value(args)
-            .map_err(|e| FcpError::ParseFault(e))?;
+            .map_err(FcpError::ParseFault)?;
 
         let target_dir = self.workspace_root.join(&args.directory);
 
@@ -50,7 +50,7 @@ impl Tool for VaultListTool {
         };
 
         let mut files = Vec::new();
-        while let Some(entry) = entries.next_entry().await.map_err(|e| FcpError::Io(e))? {
+        while let Some(entry) = entries.next_entry().await.map_err(FcpError::Io)? {
             if let Some(name) = entry.file_name().to_str() {
                 // Return relative path elements for density
                 files.push(name.to_string());
