@@ -59,6 +59,9 @@ pub async fn run_ignition_sequence(workspace_root: &Path) -> Result<AppConfig> {
         workspace_root.join(".fcp/logs"),
         workspace_root.join("00_Core"),
         workspace_root.join("10_Episodic"),
+        workspace_root.join("20_Semantic"),
+        workspace_root.join("30_Persons"),
+        workspace_root.join("40_User"),
     ];
 
     for dir in &dirs_to_create {
@@ -87,7 +90,16 @@ pub async fn run_ignition_sequence(workspace_root: &Path) -> Result<AppConfig> {
     fs::write(&config_path, config_toml).await?;
 
     let seal_path = workspace_root.join(".fcp_seal");
-    fs::write(&seal_path, "").await?;
+    let seal_content = format!(
+        "agent={}\nmodel={}\nsealed_at={}",
+        agent_name,
+        config.model_name,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    );
+    fs::write(&seal_path, seal_content).await?;
 
     Ok(config)
 }

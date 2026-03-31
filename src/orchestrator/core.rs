@@ -431,15 +431,16 @@ impl<E: LlmEngine> Orchestrator<E> {
             }
         };
 
+        let status = response.status();
         tracing::info!(
-            status = ?response.status,
+            status = ?status,
             thought_len = response.thought.len(),
             tool_count = response.tool_calls.len(),
             has_message = response.message_to_user.is_some(),
             "Parsed LLM response"
         );
 
-        match response.status {
+        match status {
             LoopAction::Reflect => {
                 if response.tool_calls.is_empty() {
                     LoopDirective::RecoverFromFuckup("Reflect requires tool_calls".to_string())

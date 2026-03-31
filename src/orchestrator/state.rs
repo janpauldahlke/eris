@@ -24,10 +24,28 @@ pub struct ToolCall {
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct LlmResponse {
     pub thought: String,
-    pub status: LoopAction,
+    status: Option<LoopAction>,
     pub message_to_user: Option<String>,
     #[serde(default)]
     pub tool_calls: Vec<ToolCall>,
+}
+
+impl LlmResponse {
+    /// If the LLM omitted `status`, infer it from the other fields:
+    ///   - tool_calls non-empty → Reflect
+    ///   - message_to_user present → Idle
+    ///   - otherwise → Task
+    pub fn status(&self) -> LoopAction {
+        self.status.unwrap_or_else(|| {
+            if !self.tool_calls.is_empty() {
+                LoopAction::Reflect
+            } else if self.message_to_user.as_ref().is_some_and(|m| !m.trim().is_empty()) {
+                LoopAction::Idle
+            } else {
+                LoopAction::Task
+            }
+        })
+    }
 }
 
 /// Lightweight response shape for the conversational pre-check (no tools).
@@ -65,7 +83,7 @@ mod tests {
         let response: LlmResponse = serde_json::from_str(raw_json).unwrap();
 
         assert_eq!(response.thought, "I need to write a file");
-        assert_eq!(response.status, LoopAction::Task);
+        assert_eq!(response.status(), LoopAction::Task);
         assert_eq!(response.tool_calls.len(), 1);
         assert_eq!(response.tool_calls[0].name, "vault:write");
         
@@ -74,5 +92,33 @@ mod tests {
         });
         assert_eq!(response.tool_calls[0].args, expected_args);
         assert_eq!(response.message_to_user, None);
+    }
+
+    #[test]
+    fn test_llm_response_missing_status_with_message() {
+        let json = r#"{
+            "thought": "Done thinking",
+            "message_to_user": "Here is your answer.",
+            "tool_calls": []
+        }"#;
+        let response: LlmResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.status(), LoopAction::Idle);
+    }
+
+    #[test]
+    fn test_llm_response_missing_status_with_tools() {
+        let json = r#"{
+            "thought": "Need vault",
+            "tool_calls": [{"name": "vault:read", "args": {"path": "x.md"}}]
+        }"#;
+        let response: LlmResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.status(), LoopAction::Reflect);
+    }
+
+    #[test]
+    fn test_llm_response_missing_status_bare() {
+        let json = r#"{"thought": "planning"}"#;
+        let response: LlmResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.status(), LoopAction::Task);
     }
 }

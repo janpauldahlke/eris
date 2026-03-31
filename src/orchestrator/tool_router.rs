@@ -20,7 +20,7 @@ impl ToolRouter {
         let mut tool_embeddings = Vec::with_capacity(tool_descriptions.len());
 
         for (name, description) in &tool_descriptions {
-            let text = format!("{}: {}", name, description);
+            let text = Self::enrich_for_routing(&name, &description);
             let embedding = Self::embed(&ollama, &embed_model, &text).await?;
             tool_embeddings.push((name.clone(), embedding));
             tracing::debug!(tool = %name, "Pre-computed tool embedding");
@@ -33,6 +33,28 @@ impl ToolRouter {
         );
 
         Ok(Self { ollama, embed_model, tool_embeddings, threshold })
+    }
+
+    fn enrich_for_routing(name: &str, description: &str) -> String {
+        let hints = match name {
+            "vault:read" => "reading files, checking notes, looking at documents, show me, what is in my vault, review notes, open file, read my notes",
+            "vault:write" => "writing files, saving notes, creating documents, write this down, save to vault, take a note, jot down, record",
+            "vault:list" => "listing files, what files do I have, show directory, browse vault, what is in my folder, list notes",
+            "memory:query" => "remembering, recalling, do you remember, what did I say, past conversations, search memory, who am I, what is my name, recall, recognize me, history",
+            "memory:commit" => "saving to long-term memory, remember this permanently, store in memory, commit knowledge, learn this",
+            "memory:stage" => "temporary storage, stage for later, hold this thought, short-term cache, keep in mind briefly",
+            "agenda:push" => "adding tasks, to-do list, remind me to, schedule, plan, add to agenda, new task, I need to",
+            "agenda:list" => "show tasks, what is on my list, pending items, show agenda, my schedule, what do I have to do",
+            "agenda:complete" => "finishing tasks, mark done, complete task, check off, task finished, I did it",
+            "web:fetch" => "fetching URLs, web search, look up online, check website, browse internet, search the web, what is happening, news, look this up",
+            "system:health" => "system status, CPU usage, memory usage, disk space, health check, diagnostics, how is the system, performance, resources",
+            _ => "",
+        };
+        if hints.is_empty() {
+            format!("{}: {}", name, description)
+        } else {
+            format!("{}: {}. Common triggers: {}", name, description, hints)
+        }
     }
 
     async fn embed(ollama: &Ollama, model: &str, text: &str) -> Result<Vec<f32>> {

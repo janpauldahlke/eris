@@ -16,16 +16,16 @@ pub fn draw(f: &mut Frame, app: &TuiApp) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(0), // Main
-            Constraint::Percentage(20), // System Errors
-            Constraint::Min(3), // Input
+            Constraint::Min(0),        // Chat (full width)
+            Constraint::Length(8),     // Telemetry + Status bar
+            Constraint::Min(3),        // Input
         ])
         .split(f.size());
 
-    let top_chunks = Layout::default()
+    let bottom_bar = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
-        .split(chunks[0]);
+        .constraints([Constraint::Percentage(75), Constraint::Percentage(25)])
+        .split(chunks[1]);
 
     let get_border_style = |pane: ActivePane| {
         if app.active_pane == pane {
@@ -39,7 +39,7 @@ pub fn draw(f: &mut Frame, app: &TuiApp) {
     let star_idx = (app.tick_count as usize / 2) % stars.len();
     let title = format!(" ERIS Console {} ", stars[star_idx]);
 
-    // Zone 1: Main Viewport
+    // ── Chat viewport (full width) ───────────────────────────────
     let mut chat_lines: Vec<Line> = Vec::new();
     for msg in &app.chat_stack {
         if let Some(rest) = msg.strip_prefix("You: ") {
@@ -71,62 +71,73 @@ pub fn draw(f: &mut Frame, app: &TuiApp) {
             .title(title))
         .wrap(Wrap { trim: true })
         .scroll((app.chat_scroll, 0));
-    f.render_widget(chat, top_chunks[0]);
+    f.render_widget(chat, chunks[0]);
 
-    // Zone 2 & 3: Pulse / Telemetry
+    // ── Telemetry / System log (75%) ─────────────────────────────
+    let sys_text = if app.system_messages.is_empty() {
+        String::from("No system events.")
+    } else {
+        app.system_messages.join("\n")
+    };
+    let telemetry = Paragraph::new(sys_text)
+        .style(Style::default().fg(Color::Rgb(180, 186, 212)).bg(Color::Rgb(14, 16, 28)))
+        .block(Block::default()
+            .borders(Borders::ALL)
+            .border_style(get_border_style(ActivePane::Telemetry))
+            .title(" Telemetry "))
+        .wrap(Wrap { trim: true })
+        .scroll((app.telemetry_scroll, 0));
+    f.render_widget(telemetry, bottom_bar[0]);
+
+    // ── Status / Pulse (25%) ─────────────────────────────────────
     let phase = (app.tick_count as usize / 2) % 4;
     let pulse_str = match app.state.state {
         AgentState::Idle => {
-            let frames = ["[ - _ - ] (Idle)", "[ . _ . ] (Idle)", "[ - _ - ] (Idle)", "[ . _ . ] (Idle)"];
+            let frames = ["[ - _ - ]", "[ . _ . ]", "[ - _ - ]", "[ . _ . ]"];
             frames[phase]
         }
         AgentState::Chat => {
-            let frames = ["[ ^ _ ^ ] (Chat)", "[ ^ o ^ ] (Chat)", "[ ^ _ ^ ] (Chat)", "[ ^ o ^ ] (Chat)"];
+            let frames = ["[ ^ _ ^ ]", "[ ^ o ^ ]", "[ ^ _ ^ ]", "[ ^ o ^ ]"];
             frames[phase]
         }
         AgentState::Reflect => {
-            let frames = ["[ ~ _ ~ ] (Reflect)", "[ * _ * ] (Reflect)", "[ ~ _ ~ ] (Reflect)", "[ * _ * ] (Reflect)"];
+            let frames = ["[ ~ _ ~ ]", "[ * _ * ]", "[ ~ _ ~ ]", "[ * _ * ]"];
             frames[phase]
         }
         AgentState::Recover => {
-            let frames = ["[ O _ O ] (Recover)", "[ X _ X ] (Recover)", "[ O _ O ] (Recover)", "[ X _ X ] (Recover)"];
+            let frames = ["[ O _ O ]", "[ X _ X ]", "[ O _ O ]", "[ X _ X ]"];
             frames[phase]
         }
     };
-    
-    let color = match app.state.state {
+
+    let state_color = match app.state.state {
         AgentState::Idle => Color::Rgb(120, 180, 255),
         AgentState::Chat => Color::Rgb(92, 229, 190),
         AgentState::Reflect => Color::Rgb(255, 209, 102),
         AgentState::Recover => Color::Rgb(255, 107, 129),
     };
 
-    let telemetry = format!(
-        "{}\n\nTool Rounds: {}/5\nRecoveries: {}/3",
-        pulse_str, app.state.tool_rounds, app.state.recovery_count
-    );
-    let sidebar = Paragraph::new(telemetry)
-        .style(Style::default().fg(color).bg(Color::Rgb(14, 16, 28)).add_modifier(Modifier::BOLD))
-        .block(Block::default()
-            .borders(Borders::ALL)
-            .border_style(get_border_style(ActivePane::Telemetry))
-            .title(" Pulse & Telemetry "))
-        .scroll((app.telemetry_scroll, 0));
-    f.render_widget(sidebar, top_chunks[1]);
+    let state_label = match app.state.state {
+        AgentState::Idle => "Idle",
+        AgentState::Chat => "Chat",
+        AgentState::Reflect => "Reflect",
+        AgentState::Recover => "Recover",
+    };
 
-    // Zone 3.5: System Errors
-    let sys_errors_text = app.system_messages.join("\n");
-    let sys_errors = Paragraph::new(sys_errors_text)
-        .style(Style::default().fg(Color::Rgb(255, 132, 132)).bg(Color::Rgb(14, 16, 28)))
+    let status_text = format!(
+        "{}\n{}\nT:{}/5 R:{}/3",
+        pulse_str, state_label,
+        app.state.tool_rounds, app.state.recovery_count
+    );
+    let status = Paragraph::new(status_text)
+        .style(Style::default().fg(state_color).bg(Color::Rgb(14, 16, 28)).add_modifier(Modifier::BOLD))
         .block(Block::default()
             .borders(Borders::ALL)
             .border_style(get_border_style(ActivePane::SystemErrors))
-            .title(" System Errors / Telemetry "))
-        .wrap(Wrap { trim: true })
-        .scroll((app.system_errors_scroll, 0));
-    f.render_widget(sys_errors, chunks[1]);
+            .title(" Status "));
+    f.render_widget(status, bottom_bar[1]);
 
-    // Zone 4: Input / Command Deck
+    // ── Input / Command Deck ─────────────────────────────────────
     let input = Paragraph::new(app.input.as_str())
         .style(Style::default().fg(Color::Rgb(214, 223, 255)).bg(Color::Rgb(8, 10, 18)))
         .block(Block::default()

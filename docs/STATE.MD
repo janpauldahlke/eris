@@ -40,6 +40,8 @@
 - [x] fix: clippy issues
 - [x] patch (s04.\_) add status field to JSON structure
 - [x] fix (S07): scrollabel viewports inside the windows II
+- [x] REVIEW (Sxx) better tracing, connect the dots, even better UI,
+- [x] REVIEW (S01.1) move to pre-LLM routing approach
 
 ---
 

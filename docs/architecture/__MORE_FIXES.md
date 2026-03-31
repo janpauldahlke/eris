@@ -63,3 +63,13 @@ Test command: cargo test from project root. Currently 69/69 pass.
 The docs/\_POST_MORTEM.md file contains the full forensic analysis from the previous session. Read it for additional context on design decisions and remaining issues.
 
 That's everything they need to hit the ground running without re-reading 30+ source files.
+
+---
+
+User sends message
+→ embed user input with nomic (~50-100ms, cheap)
+→ cosine similarity against tool descriptions
+→ match? YES → assemble prompt WITH tool schemas (existing assemble())
+→ match? NO → assemble prompt WITHOUT tools (assemble_conversational())
+→ single LLM call
+→ process normally

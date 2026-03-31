@@ -39,6 +39,10 @@ pub async fn init_workspace(
     let core_dir = workspace_dir.join("00_Core");
     tokio::fs::create_dir_all(&core_dir).await?;
 
+    for sub in ["10_Episodic", "20_Semantic", "30_Persons", "40_User"] {
+        tokio::fs::create_dir_all(workspace_dir.join(sub)).await?;
+    }
+
     let identity_file = core_dir.join("Identity.md");
     tokio::fs::write(&identity_file, DEFAULT_IDENTITY).await?;
 
