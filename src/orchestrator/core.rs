@@ -30,6 +30,7 @@ pub struct Orchestrator<E: LlmEngine> {
 }
 
 impl<E: LlmEngine> Orchestrator<E> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         engine: E,
         gatekeeper: Gatekeeper,
