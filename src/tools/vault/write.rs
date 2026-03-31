@@ -50,18 +50,38 @@ impl Tool for VaultWriteTool {
         let mut path = PathBuf::from(&args.relative_path);
 
         if path.parent().map_or(true, |p| p.as_os_str().is_empty()) {
-            let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-            let extension = path.extension().unwrap_or_default().to_string_lossy().to_lowercase();
+            let mut target_dir = None;
 
-            let target_dir = if ["png", "jpg", "jpeg", "gif", "pdf", "csv", "json"].contains(&extension.as_str()) {
-                "30_Assets"
-            } else if filename.starts_with("sys_") || filename.starts_with("core_") || filename.starts_with("identity") {
-                "00_Core"
-            } else if filename.starts_with("user_") || filename.starts_with("pref_") {
-                "40_User"
-            } else {
-                "10_Episodic"
-            };
+            if args.content.starts_with("---") {
+                if let Some(end_idx) = args.content[3..].find("---") {
+                    let frontmatter = &args.content[..3 + end_idx + 3];
+                    if frontmatter.contains("00_Core") {
+                        target_dir = Some("00_Core");
+                    } else if frontmatter.contains("10_Episodic") {
+                        target_dir = Some("10_Episodic");
+                    } else if frontmatter.contains("30_Assets") {
+                        target_dir = Some("30_Assets");
+                    } else if frontmatter.contains("40_User") {
+                        target_dir = Some("40_User");
+                    }
+                }
+            }
+
+            let target_dir = target_dir.unwrap_or_else(|| {
+                let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                let extension = path.extension().unwrap_or_default().to_string_lossy().to_lowercase();
+
+                if ["png", "jpg", "jpeg", "gif", "pdf", "csv", "json"].contains(&extension.as_str()) {
+                    "30_Assets"
+                } else if filename.starts_with("sys_") || filename.starts_with("core_") || filename.starts_with("identity") {
+                    "00_Core"
+                } else if filename.starts_with("user_") || filename.starts_with("pref_") {
+                    "40_User"
+                } else {
+                    "10_Episodic"
+                }
+            });
+
             path = PathBuf::from(target_dir).join(path);
         }
 
@@ -129,6 +149,25 @@ mod tests {
         
         let result = tool.execute(args).await;
         assert!(result.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_vault_write_yaml_frontmatter_override() -> Result<()> {
+        let dir = tempdir().unwrap();
+        let tool = VaultWriteTool { workspace_root: dir.path().to_path_buf() };
+        
+        let args = serde_json::json!({
+            "relative_path": "test_image.png",
+            "content": "---\ntags:\n  - 10_Episodic/visuals\n---\n...",
+            "mode": "overwrite"
+        });
+        
+        let result = tool.execute(args.clone()).await?;
+        assert_eq!(result, "SUCCESS: File written and routed to 10_Episodic/test_image.png");
+        
+        let written = fs::read_to_string(dir.path().join("10_Episodic/test_image.png")).await.unwrap();
+        assert_eq!(written, "---\ntags:\n  - 10_Episodic/visuals\n---\n...");
         Ok(())
     }
 }
