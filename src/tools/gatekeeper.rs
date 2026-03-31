@@ -22,9 +22,9 @@ impl Gatekeeper {
 
     fn state_allows_tool(state: &AgentState, tool_name: &str) -> bool {
         match state {
-            AgentState::Chat => true,
-            AgentState::Reflect => matches!(tool_name, "memory:stage" | "memory:commit" | "vault:read"),
-            AgentState::Idle => matches!(tool_name, "memory:commit" | "vault:read"),
+            AgentState::Chat => !matches!(tool_name, "agenda:complete"),
+            AgentState::Reflect => matches!(tool_name, "memory:stage" | "memory:commit" | "vault:read" | "agenda:push" | "agenda:list"),
+            AgentState::Idle => matches!(tool_name, "memory:commit" | "vault:read" | "agenda:list" | "agenda:complete"),
             AgentState::Recover => true,
         }
     }
@@ -206,6 +206,31 @@ mod tests {
                 assert!(reason.contains("Semantic Guard"));
             }
             _ => panic!("Expected ToolFault"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_gatekeeper_blocks_agenda_complete_in_chat() {
+        let mut gatekeeper = Gatekeeper::new();
+        
+        struct MockAgendaComplete;
+        #[async_trait]
+        impl Tool for MockAgendaComplete {
+            fn name(&self) -> &'static str { "agenda:complete" }
+            fn description(&self) -> &'static str { "complete" }
+            fn parameters_schema(&self) -> RootSchema { schemars::schema_for!(EmptyArgs) }
+            async fn execute(&self, _args: Value) -> Result<String> { Ok("done".to_string()) }
+        }
+        
+        gatekeeper.register(Arc::new(MockAgendaComplete));
+
+        let res = gatekeeper.execute_tool(&AgentState::Chat, "agenda:complete", json!({})).await;
+        assert!(res.is_err());
+        match res {
+            Err(FcpError::SchemaViolation(msg)) => {
+                assert!(msg.contains("not authorized"));
+            }
+            _ => panic!("Expected SchemaViolation"),
         }
     }
 }

@@ -20,3 +20,4 @@
 - [x] (REFACTORING): refactor: enforce idiomatic module boundaries for engine and orchestrator
 - [x] (S06): implement physical vault tools (read, write, list) and path firewalls
 - [x] (S06.1): implement memory and system tool stubs with strict schema generation
+- [x] (S06.2): implement temporal memory agenda queue and heartbeat consumer

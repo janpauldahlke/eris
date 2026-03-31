@@ -87,10 +87,31 @@ impl<E: LlmEngine> Orchestrator<E> {
                     // The heartbeat fired.
                     self.saved_chat_state = Some(self.chat_stack.clone());
                     self.chat_stack.clear();
-                    // Push IDLE_STATE prompt to chat_stack
+
+                    // Read .fcp_agenda.json to inject oldest task if present
+                    let workspace_root = self.context_assembler.core_dir.parent().unwrap();
+                    let agenda_path = workspace_root.join(".fcp_agenda.json");
+                    
+                    let mut active_task = None;
+                    if let Ok(content) = tokio::fs::read_to_string(&agenda_path).await {
+                        if let Ok(tasks) = serde_json::from_str::<Vec<serde_json::Value>>(&content) {
+                            if let Some(first) = tasks.first() {
+                                if let Some(desc) = first.get("description").and_then(|d| d.as_str()) {
+                                    active_task = Some(desc.to_string());
+                                }
+                            }
+                        }
+                    }
+
+                    let prompt = if let Some(task) = active_task {
+                        format!("You are operating autonomously. Execute this task: {}. When finished, use agenda:complete.", task)
+                    } else {
+                        "IDLE_STATE".to_string()
+                    };
+
                     self.chat_stack.push(crate::engine::Message {
                         role: "system".to_string(),
-                        content: "IDLE_STATE".to_string(),
+                        content: prompt,
                     });
                     self.state = AgentState::Idle;
                     return Err(crate::executive::error::FcpError::Interrupted);
@@ -516,7 +537,19 @@ mod tests {
         let engine = PendingEngine;
         let gatekeeper = Gatekeeper::new();
         let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
-        let vault_root = Path::new("/tmp/vault");
+        let temp_dir = tempfile::tempdir().unwrap();
+        let vault_root = temp_dir.path();
+        let workspace = "test_ws";
+        
+        // Create the core dir so context_assembler has a valid parent
+        let core_dir = vault_root.join(workspace).join("00_Core");
+        tokio::fs::create_dir_all(&core_dir).await.unwrap();
+
+        // Write a mock agenda file
+        let agenda_path = vault_root.join(workspace).join(".fcp_agenda.json");
+        let agenda_content = r#"[{"id": "1234", "created_at": 123456, "description": "Test agenda task", "status": "pending"}]"#;
+        tokio::fs::write(&agenda_path, agenda_content).await.unwrap();
+
         let (tx, rx) = tokio::sync::watch::channel(());
         
         let mut orchestrator = Orchestrator::new(
@@ -524,7 +557,7 @@ mod tests {
             gatekeeper,
             ephemeral,
             vault_root,
-            "test_ws",
+            workspace,
             3,
             5,
             0.8,
@@ -548,6 +581,7 @@ mod tests {
         assert!(orchestrator.saved_chat_state.is_some());
         assert_eq!(orchestrator.saved_chat_state.unwrap()[0].content, "hello");
         assert_eq!(orchestrator.chat_stack.len(), 1);
-        assert_eq!(orchestrator.chat_stack[0].content, "IDLE_STATE");
+        assert!(orchestrator.chat_stack[0].content.contains("Test agenda task"));
+        assert!(orchestrator.chat_stack[0].content.contains("agenda:complete"));
     }
 }
