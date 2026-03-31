@@ -4,7 +4,7 @@
 
 ### The Unified Dreadnought: Local SLM Orchestrator
 
-#### Usage: eris [OPTIONS] <COMMAND>
+#### Usage: eris [OPTIONS] 
 
 ##### Commands:
 
@@ -15,7 +15,7 @@
 
 ##### Options:
 
--w, --workspace <WORKSPACE> Defines the active memory partition (isolates vector spaces) [env: FCP_WORKSPACE=] [default: default]
--v, --vault <VAULT> Overrides the AppConfig vault path [env: FCP_VAULT=]
+-w, --workspace  Defines the active memory partition (isolates vector spaces) [env: FCP_WORKSPACE=] [default: default]
+-v, --vault  Overrides the AppConfig vault path [env: FCP_VAULT=]
 -V, --verbose... Increases telemetry verbosity (e.g., -V, -VV)
 -h, --help Print help

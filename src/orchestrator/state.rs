@@ -9,11 +9,10 @@ pub enum AgentState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum LoopAction {
-    ContinueTask,
-    WaitForUser,
-    InitiateReflection,
+    Reflect,
+    Idle,
+    Task,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -24,6 +23,7 @@ pub struct ToolCall {
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct LlmResponse {
+    pub thought: String,
     pub status: LoopAction,
     pub message_to_user: Option<String>,
     #[serde(default)]
@@ -45,7 +45,8 @@ mod tests {
     #[test]
     fn test_llm_response_deserialization() {
         let raw_json = r#"{
-            "status": "CONTINUE_TASK",
+            "thought": "I need to write a file",
+            "status": "Task",
             "tool_calls": [{
                 "name": "vault:write",
                 "args": {
@@ -56,7 +57,8 @@ mod tests {
 
         let response: LlmResponse = serde_json::from_str(raw_json).unwrap();
 
-        assert_eq!(response.status, LoopAction::ContinueTask);
+        assert_eq!(response.thought, "I need to write a file");
+        assert_eq!(response.status, LoopAction::Task);
         assert_eq!(response.tool_calls.len(), 1);
         assert_eq!(response.tool_calls[0].name, "vault:write");
         

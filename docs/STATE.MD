@@ -37,6 +37,8 @@
 - [x] fix(S04.\_1): implement context assembler to dynamically inject identity and JSON schemas into system prompt
 - [x] Patch (S04.\_) JSON Lockdown
 - [x] fix (S07): scrollabel viewports inside the windows
+- [x] fix: clippy issues
+- [x] patch (s04.\_) add status field to JSON structure
 
 ---
 

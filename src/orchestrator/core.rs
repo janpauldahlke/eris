@@ -257,19 +257,23 @@ impl<E: LlmEngine> Orchestrator<E> {
         };
 
         match response.status {
-            LoopAction::ContinueTask => {
+            LoopAction::Reflect => {
                 if response.tool_calls.is_empty() {
-                    LoopDirective::RecoverFromFuckup("CONTINUE_TASK requires tool_calls".to_string())
+                    LoopDirective::RecoverFromFuckup("Reflect requires tool_calls".to_string())
                 } else {
                     LoopDirective::ExecuteTools(response.tool_calls)
                 }
             }
-            LoopAction::WaitForUser => {
+            LoopAction::Idle => {
                 LoopDirective::HaltAndAwaitInput(response.message_to_user)
             }
-            LoopAction::InitiateReflection => {
-                self.state = AgentState::Reflect;
-                LoopDirective::ShiftToReflection
+            LoopAction::Task => {
+                if !response.tool_calls.is_empty() {
+                    LoopDirective::ExecuteTools(response.tool_calls)
+                } else {
+                    self.state = AgentState::Chat;
+                    LoopDirective::ShiftToReflection
+                }
             }
         }
     }
@@ -424,7 +428,8 @@ mod tests {
     fn test_router_valid_tool_call() {
         let mut orchestrator = setup_orchestrator();
         let json = r#"{
-            "status": "CONTINUE_TASK",
+            "thought": "test",
+            "status": "Reflect",
             "tool_calls": [{ "name": "foo", "args": {} }]
         }"#;
         
@@ -442,7 +447,8 @@ mod tests {
     fn test_router_missing_tools_yields_fuckup() {
         let mut orchestrator = setup_orchestrator();
         let json = r#"{
-            "status": "CONTINUE_TASK",
+            "thought": "test",
+            "status": "Reflect",
             "tool_calls": []
         }"#;
 
@@ -471,12 +477,14 @@ mod tests {
     fn test_router_initiate_reflection_mutates_state() {
         let mut orchestrator = setup_orchestrator();
         let json = r#"{
-            "status": "INITIATE_REFLECTION"
+            "thought": "test",
+            "status": "Task",
+            "tool_calls": []
         }"#;
         
         let directive = orchestrator.process_llm_response(json);
         assert_eq!(directive, LoopDirective::ShiftToReflection);
-        assert_eq!(orchestrator.state, AgentState::Reflect);
+        assert_eq!(orchestrator.state, AgentState::Chat);
     }
 
     #[tokio::test]
@@ -518,7 +526,8 @@ mod tests {
     #[tokio::test]
     async fn test_step_halt_directive_resets_state() {
         let json = r#"{
-            "status": "WAIT_FOR_USER",
+            "thought": "I'm done",
+            "status": "Idle",
             "message_to_user": "how can I help?"
         }"#;
         let engine = MockEngine::with_content(json);
@@ -538,7 +547,8 @@ mod tests {
     #[tokio::test]
     async fn test_execute_condensation_replaces_stack() {
         let json = r#"{
-            "status": "CONTINUE_TASK",
+            "thought": "Summarizing",
+            "status": "Task",
             "tool_calls": []
         }"#;
         let engine = MockEngine::with_content(json);
@@ -557,7 +567,8 @@ mod tests {
     #[tokio::test]
     async fn test_step_triggers_reflection_on_token_exhaustion() {
         let json = r#"{
-            "status": "WAIT_FOR_USER",
+            "thought": "I'm done",
+            "status": "Idle",
             "message_to_user": "hello"
         }"#;
         // Wait, wait, if the engine returns WAIT_FOR_USER, loop will exit gracefully.

@@ -32,7 +32,11 @@ impl ContextAssembler {
             You MUST communicate EXCLUSIVELY in valid JSON format. \n\
             Do NOT output conversational text, pleasantries, or markdown blocks outside of the JSON structure. \n\
             Your output MUST strictly adhere to this schema: \n\
-            {{ \"thought\": \"your internal reasoning\", \"tool_calls\": [ {{ \"name\": \"tool_name\", \"args\": {{...}} }} ] }}\n\n\
+            {{ \"thought\": \"your internal reasoning\", \"status\": \"Reflect|Idle|Task\", \"tool_calls\": [ {{ \"name\": \"tool_name\", \"args\": {{...}} }} ] }}\n\n\
+            Status Values:\n\
+            - Reflect: Use this if you called tools and are waiting for their output.\n\
+            - Idle: Use this if you are completely finished with the task.\n\
+            - Task: Use this if you are actively working but not calling tools.\n\n\
             Available Tools:\n{}",
             identity_content, // From Step A
             tools_schema_string // From Step B
