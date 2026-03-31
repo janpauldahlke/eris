@@ -29,7 +29,7 @@
 - [x] (S07.1): implement neural link channels and wire orchestrator loop to tui app
 - [x] (S08): implement pre-flight verification and non-blocking black box telemetry
 - [x] (REFACTORING) (S06.x): replace hardcoded vault read limit with dynamic config ratio
-- [x] (S00): ignation wizard for fresh system start
-- []
+- [x] (S09): ignation wizard for fresh system start
+- [x] (S10): Semantic Memory / Vector Brain implemented via Qdrant
 - []
 - []

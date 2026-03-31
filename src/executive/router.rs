@@ -37,7 +37,7 @@ pub async fn execute_command(cmd: Commands, cancel_token: CancellationToken) -> 
             // 3. Spawn Orchestrator
             let config = Arc::new(crate::config::AppConfig::default());
             let client = Ollama::new("http://localhost".to_string(), 11434);
-            let engine = OllamaClient::new(client, config.clone());
+            let engine = OllamaClient::new(client.clone(), config.clone());
             let ephemeral = Arc::new(EphemeralMemory::new("default".to_string()));
             let mut gatekeeper = Gatekeeper::new();
             let vault_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -47,6 +47,22 @@ pub async fn execute_command(cmd: Commands, cancel_token: CancellationToken) -> 
                 workspace_root: vault_root.clone(),
                 read_limit,
             }));
+
+            // Instantiate SemanticBrain and register memory tools
+            if let Ok(semantic_brain) = crate::memory::semantic::SemanticBrain::new(config.clone(), Arc::new(client)).await {
+                let semantic = Arc::new(semantic_brain);
+                gatekeeper.register(Arc::new(crate::tools::memory::MemoryCommitTool {
+                    workspace_root: vault_root.clone(),
+                    semantic: semantic.clone(),
+                    ephemeral: ephemeral.clone(),
+                }));
+                gatekeeper.register(Arc::new(crate::tools::memory::MemoryQueryTool {
+                    workspace: "default".to_string(),
+                    semantic: semantic.clone(),
+                }));
+            } else {
+                tracing::warn!("Semantic Brain offline. Vector tools will be unavailable.");
+            }
             
             let (interrupt_tx, interrupt_rx) = tokio::sync::watch::channel(());
             let _ = interrupt_tx; // Keep alive

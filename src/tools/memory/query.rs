@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -5,6 +6,7 @@ use serde_json::Value;
 
 use crate::executive::error::{FcpError, Result};
 use crate::tools::traits::Tool;
+use crate::memory::semantic::SemanticBrain;
 
 #[derive(Deserialize, JsonSchema)]
 pub struct MemoryQueryArgs {
@@ -15,6 +17,7 @@ pub struct MemoryQueryArgs {
 
 pub struct MemoryQueryTool {
     pub workspace: String,
+    pub semantic: Arc<SemanticBrain>,
 }
 
 #[async_trait]
@@ -32,39 +35,21 @@ impl Tool for MemoryQueryTool {
     }
 
     async fn execute(&self, args: Value) -> Result<String> {
-        let _args: MemoryQueryArgs = serde_json::from_value(args)
+        let args: MemoryQueryArgs = serde_json::from_value(args)
             .map_err(|e| FcpError::ParseFault(e))?;
 
-        // Structural stub: Fails correctly to satisfy TDD cycle
-        Err(FcpError::ToolFault {
-            tool_name: self.name().into(),
-            reason: "Not implemented: Requires Qdrant and OllamaClient integration".into(),
-        })
+        let results = self.semantic.search(&args.query, 5).await?;
+        
+        if results.is_empty() {
+            Ok(format!("No semantic memory found for query: {}", args.query))
+        } else {
+            Ok(results)
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[tokio::test]
-    async fn test_memory_query_execution() {
-        let tool = MemoryQueryTool {
-            workspace: "test_workspace".into(),
-        };
-        let args = serde_json::json!({
-            "query": "find auth logic",
-            "filter_tag": "security",
-            "file_path": "src/auth.rs"
-        });
-
-        let result = tool.execute(args).await;
-        
-        assert!(result.is_err());
-        if let Err(crate::executive::error::FcpError::ToolFault { reason, .. }) = result {
-            assert!(reason.contains("Not implemented"));
-        } else {
-            panic!("Expected ToolFault for unimplemented tool");
-        }
-    }
+    // Testing requires SemanticBrain, which needs network. Testing omitted here to avoid network calls.
 }

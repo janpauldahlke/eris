@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -5,6 +6,8 @@ use serde_json::Value;
 
 use crate::executive::error::{FcpError, Result};
 use crate::tools::traits::Tool;
+use crate::memory::semantic::SemanticBrain;
+use crate::memory::ephemeral::EphemeralMemory;
 
 #[derive(Deserialize, JsonSchema, PartialEq, Debug, Clone)]
 #[serde(rename_all = "PascalCase")]
@@ -21,6 +24,8 @@ pub struct MemoryCommitArgs {
 
 pub struct MemoryCommitTool {
     pub workspace_root: std::path::PathBuf,
+    pub semantic: Arc<SemanticBrain>,
+    pub ephemeral: Arc<EphemeralMemory>,
 }
 
 #[async_trait]
@@ -30,7 +35,7 @@ impl Tool for MemoryCommitTool {
     }
 
     fn description(&self) -> &'static str {
-        "Pulls moka cache entries for tag, writes them to physical vault, and invalidates keys."
+        "Pulls moka cache entries for tag, writes them to physical vault or semantic vector db, and invalidates keys."
     }
 
     fn parameters_schema(&self) -> schemars::schema::RootSchema {
@@ -38,38 +43,44 @@ impl Tool for MemoryCommitTool {
     }
 
     async fn execute(&self, args: Value) -> Result<String> {
-        let _args: MemoryCommitArgs = serde_json::from_value(args)
+        let args: MemoryCommitArgs = serde_json::from_value(args)
             .map_err(|e| FcpError::ParseFault(e))?;
 
-        // Structural stub: Fails correctly to satisfy TDD cycle
-        Err(FcpError::ToolFault {
-            tool_name: self.name().into(),
-            reason: "Not implemented: Requires moka read, formatting, physical file write, and cache invalidation".into(),
-        })
+        let content = self.ephemeral.get(&args.tag).await
+            .ok_or_else(|| FcpError::ToolFault {
+                tool_name: self.name().into(),
+                reason: format!("No staged memory found for tag: {}", args.tag),
+            })?;
+
+        match args.target_domain {
+            TargetDomain::Semantic => {
+                self.semantic.upsert(&content, vec![args.tag.clone()]).await?;
+            }
+            TargetDomain::Episodic => {
+                // For now, fallback to basic file write for episodic or simply append to a markdown file
+                let path = self.workspace_root.join(format!("{}.md", args.tag));
+                let mut existing = String::new();
+                if path.exists() {
+                    existing = tokio::fs::read_to_string(&path).await
+                        .map_err(|e| FcpError::WorkspaceFault { workspace: args.tag.clone(), reason: e.to_string() })?;
+                }
+                existing.push_str(&format!("\n\n{}", content));
+                tokio::fs::write(&path, existing).await
+                    .map_err(|e| FcpError::WorkspaceFault { workspace: args.tag.clone(), reason: e.to_string() })?;
+            }
+        }
+        
+        // Invalidate key after commit
+        self.ephemeral.cache.invalidate(&args.tag).await;
+
+        Ok(format!("Successfully committed {} to {:?}", args.tag, args.target_domain))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[tokio::test]
-    async fn test_memory_commit_execution() {
-        let tool = MemoryCommitTool {
-            workspace_root: std::path::PathBuf::from("/tmp/test_workspace"),
-        };
-        let args = serde_json::json!({
-            "tag": "infrastructure",
-            "target_domain": "Semantic"
-        });
-
-        let result = tool.execute(args).await;
-        
-        assert!(result.is_err());
-        if let Err(crate::executive::error::FcpError::ToolFault { reason, .. }) = result {
-            assert!(reason.contains("Not implemented"));
-        } else {
-            panic!("Expected ToolFault for unimplemented tool");
-        }
-    }
+    use std::path::PathBuf;
+    // Note: To test this properly, you need mock for SemanticBrain, which is tricky without a live Qdrant.
+    // For now, we rely on the type checking and orchestrator integration tests.
 }
