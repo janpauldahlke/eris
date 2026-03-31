@@ -36,9 +36,10 @@
 - [x] Patch (S11): The Cockpit Polish
 - [x] fix(S04.\_1): implement context assembler to dynamically inject identity and JSON schemas into system prompt
 - [x] Patch (S04.\_) JSON Lockdown
-- [x] fix (S07): scrollabel viewports inside the windows
+- [x] fix (S07): scrollabel viewport
 - [x] fix: clippy issues
 - [x] patch (s04.\_) add status field to JSON structure
+- [x] fix (S07): scrollabel viewports inside the windows II
 
 ---
 

@@ -8,6 +8,13 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use std::io::Stdout;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActivePane {
+    Main,
+    Telemetry,
+    SystemErrors,
+}
+
 pub struct TuiApp {
     pub rx: mpsc::Receiver<TuiEvent>,
     pub action_tx: mpsc::Sender<String>,
@@ -16,7 +23,10 @@ pub struct TuiApp {
     pub system_messages: Vec<String>,
     pub state: AgentStateUpdate,
     pub running: bool,
-    pub viewport_scroll: u16,
+    pub chat_scroll: u16,
+    pub telemetry_scroll: u16,
+    pub system_errors_scroll: u16,
+    pub active_pane: ActivePane,
 }
 
 impl TuiApp {
@@ -34,7 +44,10 @@ impl TuiApp {
                 active_task: None,
             },
             running: true,
-            viewport_scroll: 0,
+            chat_scroll: 0,
+            telemetry_scroll: 0,
+            system_errors_scroll: 0,
+            active_pane: ActivePane::Main,
         }
     }
 
@@ -92,11 +105,26 @@ impl TuiApp {
             }
             KeyCode::Char(c) => self.input.push(c),
             KeyCode::Backspace => { self.input.pop(); }
+            KeyCode::Tab => {
+                self.active_pane = match self.active_pane {
+                    ActivePane::Main => ActivePane::Telemetry,
+                    ActivePane::Telemetry => ActivePane::SystemErrors,
+                    ActivePane::SystemErrors => ActivePane::Main,
+                };
+            }
             KeyCode::Up | KeyCode::PageUp => {
-                self.viewport_scroll = self.viewport_scroll.saturating_sub(1);
+                match self.active_pane {
+                    ActivePane::Main => self.chat_scroll = self.chat_scroll.saturating_sub(1),
+                    ActivePane::Telemetry => self.telemetry_scroll = self.telemetry_scroll.saturating_sub(1),
+                    ActivePane::SystemErrors => self.system_errors_scroll = self.system_errors_scroll.saturating_sub(1),
+                }
             }
             KeyCode::Down | KeyCode::PageDown => {
-                self.viewport_scroll = self.viewport_scroll.saturating_add(1);
+                match self.active_pane {
+                    ActivePane::Main => self.chat_scroll = self.chat_scroll.saturating_add(1),
+                    ActivePane::Telemetry => self.telemetry_scroll = self.telemetry_scroll.saturating_add(1),
+                    ActivePane::SystemErrors => self.system_errors_scroll = self.system_errors_scroll.saturating_add(1),
+                }
             }
             _ => {}
         }

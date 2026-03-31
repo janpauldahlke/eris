@@ -6,6 +6,7 @@ use ratatui::{
 };
 use crate::ui::TuiApp;
 use crate::orchestrator::state::AgentState;
+use crate::ui::app::ActivePane;
 
 pub fn draw(f: &mut Frame, app: &TuiApp) {
     let chunks = Layout::default()
@@ -22,12 +23,23 @@ pub fn draw(f: &mut Frame, app: &TuiApp) {
         .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
         .split(chunks[0]);
 
+    let get_border_style = |pane: ActivePane| {
+        if app.active_pane == pane {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default()
+        }
+    };
+
     // Zone 1: Main Viewport
-    let chat_text = app.chat_stack.join("\n\n");
+    let chat_text = app.chat_stack.join("\n");
     let chat = Paragraph::new(chat_text)
-        .block(Block::default().borders(Borders::ALL).title(" Primary Viewport "))
+        .block(Block::default()
+            .borders(Borders::ALL)
+            .border_style(get_border_style(ActivePane::Main))
+            .title(" Primary Viewport (Tab to switch pane) "))
         .wrap(Wrap { trim: true })
-        .scroll((app.viewport_scroll, 0));
+        .scroll((app.chat_scroll, 0));
     f.render_widget(chat, top_chunks[0]);
 
     // Zone 2 & 3: Pulse / Telemetry
@@ -51,15 +63,23 @@ pub fn draw(f: &mut Frame, app: &TuiApp) {
     );
     let sidebar = Paragraph::new(telemetry)
         .style(Style::default().fg(color).add_modifier(Modifier::BOLD))
-        .block(Block::default().borders(Borders::ALL).title(" Pulse & Telemetry "));
+        .block(Block::default()
+            .borders(Borders::ALL)
+            .border_style(get_border_style(ActivePane::Telemetry))
+            .title(" Pulse & Telemetry "))
+        .scroll((app.telemetry_scroll, 0));
     f.render_widget(sidebar, top_chunks[1]);
 
     // Zone 3.5: System Errors
     let sys_errors_text = app.system_messages.join("\n");
     let sys_errors = Paragraph::new(sys_errors_text)
         .style(Style::default().fg(Color::Red))
-        .block(Block::default().borders(Borders::ALL).title(" System Errors / Telemetry "))
-        .wrap(Wrap { trim: true });
+        .block(Block::default()
+            .borders(Borders::ALL)
+            .border_style(get_border_style(ActivePane::SystemErrors))
+            .title(" System Errors / Telemetry "))
+        .wrap(Wrap { trim: true })
+        .scroll((app.system_errors_scroll, 0));
     f.render_widget(sys_errors, chunks[1]);
 
     // Zone 4: Input / Command Deck
