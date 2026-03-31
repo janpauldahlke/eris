@@ -30,6 +30,13 @@ pub struct LlmResponse {
     pub tool_calls: Vec<ToolCall>,
 }
 
+/// Lightweight response shape for the conversational pre-check (no tools).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ConversationalResponse {
+    pub thought: String,
+    pub message_to_user: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum LoopDirective {
     ExecuteTools(Vec<ToolCall>),

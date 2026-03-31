@@ -51,8 +51,8 @@ pub fn draw(f: &mut Frame, app: &TuiApp) {
             let split_idx = msg.find("]: ").unwrap_or(0);
             let (name_part, rest_part) = msg.split_at(split_idx + 3);
             chat_lines.push(Line::from(vec![
-                Span::styled(name_part.to_string(), Style::default().fg(Color::Rgb(92, 229, 190)).add_modifier(Modifier::BOLD)),
-                Span::styled(rest_part.to_string(), Style::default().fg(Color::Rgb(220, 255, 242))),
+                Span::styled(name_part.to_string(), Style::default().fg(Color::Rgb(140, 255, 220)).add_modifier(Modifier::BOLD)),
+                Span::styled(rest_part.to_string(), Style::default().fg(Color::Rgb(245, 248, 255))),
             ]));
         } else {
             chat_lines.push(Line::from(Span::styled(
@@ -74,11 +74,24 @@ pub fn draw(f: &mut Frame, app: &TuiApp) {
     f.render_widget(chat, top_chunks[0]);
 
     // Zone 2 & 3: Pulse / Telemetry
+    let phase = (app.tick_count as usize / 2) % 4;
     let pulse_str = match app.state.state {
-        AgentState::Idle => "[ - _ - ] (Idle)",
-        AgentState::Chat => "[ ^ _ ^ ] (Chat)",
-        AgentState::Reflect => "[ ~ _ ~ ] (Reflect)",
-        AgentState::Recover => "[ O _ O ] (Recover)",
+        AgentState::Idle => {
+            let frames = ["[ - _ - ] (Idle)", "[ . _ . ] (Idle)", "[ - _ - ] (Idle)", "[ . _ . ] (Idle)"];
+            frames[phase]
+        }
+        AgentState::Chat => {
+            let frames = ["[ ^ _ ^ ] (Chat)", "[ ^ o ^ ] (Chat)", "[ ^ _ ^ ] (Chat)", "[ ^ o ^ ] (Chat)"];
+            frames[phase]
+        }
+        AgentState::Reflect => {
+            let frames = ["[ ~ _ ~ ] (Reflect)", "[ * _ * ] (Reflect)", "[ ~ _ ~ ] (Reflect)", "[ * _ * ] (Reflect)"];
+            frames[phase]
+        }
+        AgentState::Recover => {
+            let frames = ["[ O _ O ] (Recover)", "[ X _ X ] (Recover)", "[ O _ O ] (Recover)", "[ X _ X ] (Recover)"];
+            frames[phase]
+        }
     };
     
     let color = match app.state.state {

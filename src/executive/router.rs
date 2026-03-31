@@ -41,6 +41,7 @@ pub async fn execute_command(cmd: Commands, config: Arc<AppConfig>, cancel_token
             // 4. Build Engine
             let client = Ollama::new(host, port);
             let engine = OllamaClient::new(client.clone(), config.clone());
+            let ollama_arc = Arc::new(client);
             let ephemeral = Arc::new(EphemeralMemory::new(config.workspace.clone()));
 
             // 5. Register ALL tools with the Gatekeeper
@@ -77,7 +78,7 @@ pub async fn execute_command(cmd: Commands, config: Arc<AppConfig>, cancel_token
             }));
 
             // Instantiate SemanticBrain and register memory tools
-            if let Ok(semantic_brain) = crate::memory::semantic::SemanticBrain::new(config.clone(), Arc::new(client)).await {
+            if let Ok(semantic_brain) = crate::memory::semantic::SemanticBrain::new(config.clone(), ollama_arc.clone()).await {
                 let semantic = Arc::new(semantic_brain);
                 tracing::info!("Semantic Brain online. Vector tools registered.");
                 gatekeeper.register(Arc::new(crate::tools::memory::MemoryCommitTool {
@@ -92,6 +93,25 @@ pub async fn execute_command(cmd: Commands, config: Arc<AppConfig>, cancel_token
             } else {
                 tracing::warn!("Semantic Brain offline. Vector tools will be unavailable.");
             }
+
+            // 5b. Build ToolRouter (semantic tool gating via nomic embeddings)
+            let tool_router = match crate::orchestrator::tool_router::ToolRouter::new(
+                ollama_arc,
+                config.embed_model_name.clone(),
+                gatekeeper.all_tool_descriptions(),
+                config.tool_match_threshold,
+            )
+            .await
+            {
+                Ok(r) => {
+                    tracing::info!("ToolRouter online. Semantic tool gating active.");
+                    Some(r)
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "ToolRouter offline — all requests will include tool schemas.");
+                    None
+                }
+            };
 
             // 6. Heartbeat + Interrupt wiring
             let (interrupt_tx, interrupt_rx) = tokio::sync::watch::channel(());
@@ -132,6 +152,7 @@ pub async fn execute_command(cmd: Commands, config: Arc<AppConfig>, cancel_token
                 config.num_ctx,
                 interrupt_rx,
                 Some(tui_tx.clone()),
+                tool_router,
             );
 
             tracing::info!(

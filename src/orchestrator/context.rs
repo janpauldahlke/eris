@@ -49,7 +49,8 @@ impl ContextAssembler {
             1) Task: use when continuing internal work/planning. tool_calls MUST be [].\n\
             2) Reflect: use ONLY when calling one or more tools now. tool_calls MUST be non-empty.\n\
             3) Idle: use when done and waiting for user input. tool_calls MUST be [].\n\
-            4) If no tool is needed, NEVER choose Reflect.\n\n\
+            4) In Idle, message_to_user MUST be a non-empty user-facing reply.\n\
+            5) If no tool is needed, NEVER choose Reflect.\n\n\
             Example (tool invocation):\n\
             {{\n\
               \"thought\": \"Need to read a vault note before answering.\",\n\
@@ -69,6 +70,34 @@ impl ContextAssembler {
             Available tools for current state:\n{tools}",
             identity = identity_content,
             tools = tools_schema_string
+        );
+
+        Ok(system_prompt)
+    }
+
+    /// Builds a tool-free conversational prompt.
+    /// The LLM responds naturally; its `thought` field is later fed to the
+    /// ToolRouter for semantic gating.
+    pub async fn assemble_conversational(&self, _ephemeral: &EphemeralMemory) -> Result<String> {
+        let identity_path = self.core_dir.join("Identity.md");
+        let identity_content = match tokio::fs::read_to_string(&identity_path).await {
+            Ok(c) => c,
+            Err(_) => "You are E.R.I.S., an autonomous AI agent.".to_string(),
+        };
+
+        let system_prompt = format!(
+            "{identity}\n\n\
+            Reply with ONE valid JSON object only. No markdown. No code fences.\n\n\
+            JSON shape:\n\
+            {{\n\
+              \"thought\": \"your internal reasoning (never shown to user)\",\n\
+              \"message_to_user\": \"your helpful reply\"\n\
+            }}\n\n\
+            Rules:\n\
+            1) thought is internal-only, used by the runtime for routing.\n\
+            2) message_to_user MUST always be a non-empty string.\n\
+            3) Answer the user directly, conversationally, and helpfully.",
+            identity = identity_content,
         );
 
         Ok(system_prompt)

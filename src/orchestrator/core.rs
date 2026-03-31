@@ -2,8 +2,9 @@ use crate::executive::error::Result;
 use crate::engine::LlmEngine;
 use crate::tools::Gatekeeper;
 use crate::memory::ephemeral::EphemeralMemory;
-use crate::orchestrator::state::{AgentState, LoopDirective, LlmResponse, LoopAction};
+use crate::orchestrator::state::{AgentState, LoopDirective, LlmResponse, LoopAction, ConversationalResponse};
 use crate::orchestrator::context::ContextAssembler;
+use crate::orchestrator::tool_router::ToolRouter;
 use futures::future;
 use std::sync::Arc;
 use std::path::Path;
@@ -14,6 +15,7 @@ pub struct Orchestrator<E: LlmEngine> {
     pub gatekeeper: Gatekeeper,
     pub ephemeral: Arc<EphemeralMemory>,
     pub context_assembler: ContextAssembler,
+    pub tool_router: Option<ToolRouter>,
 
     // Bounds
     pub max_recovery_attempts: u8,
@@ -46,6 +48,18 @@ impl<E: LlmEngine> Orchestrator<E> {
             .to_string()
     }
 
+    fn extract_json_slice<'a>(response_json: &'a str) -> &'a str {
+        if let (Some(start), Some(end)) = (response_json.find('{'), response_json.rfind('}')) {
+            if start <= end {
+                &response_json[start..=end]
+            } else {
+                response_json
+            }
+        } else {
+            response_json
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         engine: E,
@@ -59,6 +73,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         num_ctx: usize,
         interrupt_rx: tokio::sync::watch::Receiver<()>,
         tui_tx: Option<tokio::sync::mpsc::Sender<crate::ui::events::TuiEvent>>,
+        tool_router: Option<ToolRouter>,
     ) -> Self {
         Self {
             state: AgentState::Idle,
@@ -66,6 +81,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             gatekeeper,
             ephemeral,
             context_assembler: ContextAssembler::new(vault_root, workspace),
+            tool_router,
             max_recovery_attempts,
             max_tool_rounds,
             condensation_threshold,
@@ -93,11 +109,83 @@ impl<E: LlmEngine> Orchestrator<E> {
     }
 
     /// The main cognitive loop.
+    ///
+    /// Pre-LLM routing: embed the user's input with nomic *before* calling the
+    /// LLM. If no tool matches, use `assemble_conversational()` (no tool
+    /// schemas). If tools match, use `assemble()` (full schemas). Always
+    /// exactly one LLM generation per user turn.
     #[allow(clippy::never_loop)]
     pub async fn step(&mut self, _user_input: Option<String>) -> Result<()> {
         tracing::info!(state = ?self.state, tool_rounds = self.tool_rounds, recovery_count = self.recovery_count, chat_stack_len = self.chat_stack.len(), "step() entered");
         self.broadcast_state().await;
 
+        // ── Pre-LLM semantic routing ─────────────────────────────────
+        let tools_needed = if let Some(router) = &self.tool_router {
+            let user_input = self.chat_stack.iter().rev()
+                .find(|m| m.role == "user")
+                .map(|m| m.content.as_str())
+                .unwrap_or("");
+
+            match router.match_tools(user_input).await {
+                Ok(matches) if matches.is_empty() => {
+                    tracing::info!("Pre-LLM routing: no tool match → conversational mode");
+                    false
+                }
+                Ok(matches) => {
+                    tracing::info!(matched = ?matches, "Pre-LLM routing: tool match → tool mode");
+                    true
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Pre-LLM routing failed, defaulting to tool mode");
+                    true
+                }
+            }
+        } else {
+            true
+        };
+
+        // ── Conversational fast-path (no tools) ──────────────────────
+        if !tools_needed {
+            let conv_prompt = self.context_assembler
+                .assemble_conversational(&self.ephemeral)
+                .await?;
+
+            Self::upsert_system_prompt(&mut self.chat_stack, conv_prompt);
+
+            tracing::info!(chat_stack_len = self.chat_stack.len(), "Conversational generation");
+
+            let response = self.engine.generate(&self.chat_stack, "", None).await?;
+            tracing::debug!(raw = %response.content, "Conversational LLM output");
+
+            let json_slice = Self::extract_json_slice(&response.content);
+            let message = serde_json::from_str::<ConversationalResponse>(json_slice)
+                .ok()
+                .and_then(|p| p.message_to_user)
+                .unwrap_or_else(|| response.content.clone());
+
+            if !message.trim().is_empty() {
+                if let Some(tx) = &self.tui_tx {
+                    let agent_name = self.agent_name();
+                    let _ = tx
+                        .send(crate::ui::events::TuiEvent::IncomingMessage(
+                            format!("[{}]: {}", agent_name, message),
+                        ))
+                        .await;
+                }
+            }
+
+            self.chat_stack.push(crate::engine::Message {
+                role: "assistant".to_string(),
+                content: response.content,
+            });
+            self.state = AgentState::Idle;
+            self.tool_rounds = 0;
+            self.recovery_count = 0;
+            self.broadcast_state().await;
+            return Ok(());
+        }
+
+        // ── Tool-enabled loop (full schemas) ─────────────────────────
         loop {
             // 1. Bailout Checks
             if self.recovery_count >= self.max_recovery_attempts {
@@ -113,25 +201,10 @@ impl<E: LlmEngine> Orchestrator<E> {
                 return Ok(());
             }
 
-            // 2. Context Assembly
+            // 2. Context Assembly (WITH tool schemas)
             let system_prompt = self.context_assembler.assemble(&self.state, &self.ephemeral, &self.gatekeeper).await?;
             tracing::debug!(prompt_len = system_prompt.len(), "System prompt assembled");
-            
-            if let Some(first) = self.chat_stack.first_mut() {
-                if first.content.contains("You are operating within a strict programmatic state machine") {
-                    first.content = system_prompt;
-                } else {
-                    self.chat_stack.insert(0, crate::engine::Message {
-                        role: "system".to_string(),
-                        content: system_prompt,
-                    });
-                }
-            } else {
-                self.chat_stack.push(crate::engine::Message {
-                    role: "system".to_string(),
-                    content: system_prompt,
-                });
-            }
+            Self::upsert_system_prompt(&mut self.chat_stack, system_prompt);
 
             tracing::info!(chat_stack_len = self.chat_stack.len(), "Sending to LLM engine");
 
@@ -139,11 +212,9 @@ impl<E: LlmEngine> Orchestrator<E> {
             let response_result = tokio::select! {
                 res = self.engine.generate(&self.chat_stack, "", None) => res,
                 _ = self.interrupt_rx.changed() => {
-                    // The heartbeat fired.
                     self.saved_chat_state = Some(self.chat_stack.clone());
                     self.chat_stack.clear();
 
-                    // Read .fcp_agenda.json to inject oldest task if present
                     let workspace_root = self.context_assembler.core_dir.parent().unwrap_or(&self.context_assembler.core_dir);
                     let agenda_path = workspace_root.join(".fcp_agenda.json");
                     
@@ -184,7 +255,21 @@ impl<E: LlmEngine> Orchestrator<E> {
                 }
             };
 
-            // Push assistant response into chat_stack so the LLM retains context across turns
+            if let Some(tx) = &self.tui_tx {
+                let json_slice = Self::extract_json_slice(&response.content);
+                if let Ok(parsed) = serde_json::from_str::<LlmResponse>(json_slice)
+                    && let Some(msg) = parsed.message_to_user
+                    && !msg.trim().is_empty()
+                {
+                    let agent_name = self.agent_name();
+                    let _ = tx
+                        .send(crate::ui::events::TuiEvent::IncomingMessage(
+                            format!("[{}]: {}", agent_name, msg),
+                        ))
+                        .await;
+                }
+            }
+
             self.chat_stack.push(crate::engine::Message {
                 role: "assistant".to_string(),
                 content: response.content.clone(),
@@ -204,16 +289,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             tracing::info!(directive = ?directive, "Directive from LLM response");
 
             match directive {
-                LoopDirective::HaltAndAwaitInput(msg) => {
-                    if let Some(ref user_msg) = msg {
-                        tracing::info!(msg_len = user_msg.len(), "Agent responding to user");
-                        if let Some(tx) = &self.tui_tx {
-                            let agent_name = self.agent_name();
-                            let _ = tx.send(crate::ui::events::TuiEvent::IncomingMessage(
-                                format!("[{}]: {}", agent_name, user_msg)
-                            )).await;
-                        }
-                    }
+                LoopDirective::HaltAndAwaitInput(_) => {
                     self.state = AgentState::Idle;
                     self.tool_rounds = 0;
                     self.recovery_count = 0;
@@ -314,6 +390,24 @@ impl<E: LlmEngine> Orchestrator<E> {
         }
     }
 
+    fn upsert_system_prompt(chat_stack: &mut Vec<crate::engine::Message>, prompt: String) {
+        if let Some(first) = chat_stack.first_mut() {
+            if first.role == "system" {
+                first.content = prompt;
+            } else {
+                chat_stack.insert(0, crate::engine::Message {
+                    role: "system".to_string(),
+                    content: prompt,
+                });
+            }
+        } else {
+            chat_stack.push(crate::engine::Message {
+                role: "system".to_string(),
+                content: prompt,
+            });
+        }
+    }
+
     fn is_recoverable_tool_error(e: &crate::executive::error::FcpError) -> bool {
         matches!(
             e,
@@ -325,15 +419,7 @@ impl<E: LlmEngine> Orchestrator<E> {
     }
 
     pub fn process_llm_response(&mut self, response_json: &str) -> LoopDirective {
-        let json_str = if let (Some(start), Some(end)) = (response_json.find('{'), response_json.rfind('}')) {
-            if start <= end {
-                &response_json[start..=end]
-            } else {
-                response_json
-            }
-        } else {
-            response_json
-        };
+        let json_str = Self::extract_json_slice(response_json);
 
         tracing::debug!(extracted_json_len = json_str.len(), "Parsing LLM JSON response");
 
@@ -497,6 +583,7 @@ mod tests {
             4096,
             rx,
             None,
+            None,
         );
 
         assert_eq!(orchestrator.state, AgentState::Idle);
@@ -518,7 +605,7 @@ mod tests {
         let vault_root = Path::new("/tmp/vault");
         let (tx, rx) = tokio::sync::watch::channel(());
         Box::leak(Box::new(tx)); // Prevent sender from dropping, which would trigger `rx.changed()`
-        Orchestrator::new(engine, gatekeeper, ephemeral, vault_root, "test_ws", 3, 5, 0.8, 4096, rx, None)
+        Orchestrator::new(engine, gatekeeper, ephemeral, vault_root, "test_ws", 3, 5, 0.8, 4096, rx, None, None)
     }
 
     #[test]
@@ -737,6 +824,7 @@ mod tests {
             0.8,
             4096,
             rx,
+            None,
             None,
         );
 

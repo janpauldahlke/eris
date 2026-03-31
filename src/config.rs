@@ -26,6 +26,7 @@ pub struct AppConfig {
     pub web_fetch_max_bytes: usize,
     pub llm_context_window: usize,
     pub vault_read_ratio: f32,
+    pub tool_match_threshold: f32,
 }
 
 impl Default for AppConfig {
@@ -53,6 +54,7 @@ impl Default for AppConfig {
             web_fetch_max_bytes: 20480,
             llm_context_window: 16384,
             vault_read_ratio: 0.25,
+            tool_match_threshold: 0.55,
         }
     }
 }
@@ -167,7 +169,8 @@ mod tests {
             "web_fetch_timeout_secs": 15,
             "web_fetch_max_bytes": 10240,
             "llm_context_window": 16384,
-            "vault_read_ratio": 0.25
+            "vault_read_ratio": 0.25,
+            "tool_match_threshold": 0.55
         }"#;
 
         let parsed_config: AppConfig = serde_json::from_str(json_data).expect("Failed to parse JSON");
@@ -195,5 +198,6 @@ mod tests {
         assert_eq!(parsed_config.web_fetch_max_bytes, 10240);
         assert_eq!(parsed_config.llm_context_window, 16384);
         assert_eq!(parsed_config.vault_read_ratio, 0.25);
+        assert_eq!(parsed_config.tool_match_threshold, 0.55);
     }
 }

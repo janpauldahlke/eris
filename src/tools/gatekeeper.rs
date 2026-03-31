@@ -42,6 +42,13 @@ impl Gatekeeper {
             || Self::state_allows_tool(&AgentState::Recover, tool_name)
     }
 
+    pub fn all_tool_descriptions(&self) -> Vec<(String, String)> {
+        self.registry
+            .values()
+            .map(|t| (t.name().to_string(), t.description().to_string()))
+            .collect()
+    }
+
     pub fn get_allowed_tools(&self, state: &AgentState) -> Vec<Value> {
         self.registry.values()
             .filter(|tool| Self::state_allows_tool(state, tool.name()))
