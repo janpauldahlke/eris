@@ -29,10 +29,17 @@ pub async fn execute_command(cmd: Commands, cancel_token: CancellationToken) -> 
             // 3. Spawn Orchestrator
             let config = Arc::new(crate::config::AppConfig::default());
             let client = Ollama::new("http://localhost".to_string(), 11434);
-            let engine = OllamaClient::new(client, config);
+            let engine = OllamaClient::new(client, config.clone());
             let ephemeral = Arc::new(EphemeralMemory::new("default".to_string()));
-            let gatekeeper = Gatekeeper::new();
+            let mut gatekeeper = Gatekeeper::new();
             let vault_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            
+            let read_limit = (config.llm_context_window as f32 * config.vault_read_ratio) as usize;
+            gatekeeper.register(Arc::new(crate::tools::vault::VaultReadTool {
+                workspace_root: vault_root.clone(),
+                read_limit,
+            }));
+            
             let (interrupt_tx, interrupt_rx) = tokio::sync::watch::channel(());
             let _ = interrupt_tx; // Keep alive
             

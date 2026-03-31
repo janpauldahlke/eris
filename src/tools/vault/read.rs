@@ -16,6 +16,7 @@ pub struct VaultReadArgs {
 
 pub struct VaultReadTool {
     pub workspace_root: PathBuf,
+    pub read_limit: usize,
 }
 
 #[async_trait]
@@ -45,21 +46,27 @@ impl Tool for VaultReadTool {
              });
         }
 
-        let content = fs::read_to_string(&target_path).await
+        let mut content = fs::read_to_string(&target_path).await
             .map_err(|e| FcpError::Io(e))?;
 
-        // Token estimation (~4 chars per token constraint limit)
-        let estimated_tokens = content.chars().count() / 4;
+        let max_bytes = self.read_limit * 4;
         
-        if estimated_tokens > 3000 {
+        if content.len() > max_bytes {
             let headers: Vec<&str> = content.lines()
                 .filter(|line| line.trim_start().starts_with('#'))
                 .collect();
                 
             let map = headers.join("\n");
-            return Ok(format!(
-                "ERROR: File exceeds 3000 tokens. Use memory:query to search it semantically. FILE MAP:\n{}",
-                map
+            
+            let mut limit = max_bytes;
+            while limit > 0 && !content.is_char_boundary(limit) {
+                limit -= 1;
+            }
+            content.truncate(limit);
+            
+            content.push_str(&format!(
+                "\n\n[SYSTEM WARNING: CONTENT TRUNCATED TO {} TOKENS. Use memory:query to search it semantically. FILE MAP:\n{}]",
+                self.read_limit, map
             ));
         }
 
@@ -79,7 +86,7 @@ mod tests {
         let file_path = dir.path().join("normal.md");
         fs::write(&file_path, "Hello, Vault!").await.unwrap();
 
-        let tool = VaultReadTool { workspace_root: dir.path().to_path_buf() };
+        let tool = VaultReadTool { workspace_root: dir.path().to_path_buf(), read_limit: 3000 };
         let args = serde_json::json!({ "relative_path": "normal.md" });
 
         let result = tool.execute(args).await?;
@@ -99,11 +106,11 @@ mod tests {
         
         fs::write(&file_path, massive_content).await.unwrap();
 
-        let tool = VaultReadTool { workspace_root: dir.path().to_path_buf() };
+        let tool = VaultReadTool { workspace_root: dir.path().to_path_buf(), read_limit: 3000 };
         let args = serde_json::json!({ "relative_path": "massive.md" });
 
         let result = tool.execute(args).await?;
-        assert!(result.starts_with("ERROR: File exceeds 3000 tokens."));
+        assert!(result.contains("[SYSTEM WARNING: CONTENT TRUNCATED TO 3000 TOKENS."));
         assert!(result.contains("# Header 1"));
         assert!(result.contains("## Header 2"));
         Ok(())
