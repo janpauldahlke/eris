@@ -7,9 +7,76 @@ pub async fn execute_command(cmd: Commands, cancel_token: CancellationToken) -> 
     let _ = cancel_token;
     
     match cmd {
-        Commands::Chat => {
-            // Placeholder for chat loop
-            Ok(())
+                Commands::Chat => {
+            use crate::ui::terminal::{setup_terminal, restore_terminal};
+            use crate::ui::TuiApp;
+            use tokio::sync::mpsc;
+            use crate::orchestrator::core::Orchestrator;
+            use crate::engine::ollama::OllamaClient;
+            use crate::memory::ephemeral::EphemeralMemory;
+            use crate::tools::Gatekeeper;
+            use std::sync::Arc;
+            use std::path::PathBuf;
+            use ollama_rs::Ollama;
+
+            // 1. Setup channels
+            let (tui_tx, tui_rx) = mpsc::channel(100);
+            let (action_tx, mut action_rx) = mpsc::channel(100);
+
+            // 2. Setup Terminal
+            let terminal = setup_terminal()?;
+
+            // 3. Spawn Orchestrator
+            let config = Arc::new(crate::config::AppConfig::default());
+            let client = Ollama::new("http://localhost".to_string(), 11434);
+            let engine = OllamaClient::new(client, config);
+            let ephemeral = Arc::new(EphemeralMemory::new("default".to_string()));
+            let gatekeeper = Gatekeeper::new();
+            let vault_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let (interrupt_tx, interrupt_rx) = tokio::sync::watch::channel(());
+            let _ = interrupt_tx; // Keep alive
+            
+            let mut orchestrator = Orchestrator::new(
+                engine,
+                gatekeeper,
+                ephemeral,
+                &vault_root,
+                "default",
+                3,
+                5,
+                0.8,
+                4096,
+                interrupt_rx,
+                Some(tui_tx.clone()),
+            );
+
+            let tui_tx_err = tui_tx.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        Some(msg) = action_rx.recv() => {
+                            orchestrator.chat_stack.push(crate::engine::Message {
+                                role: "user".to_string(),
+                                content: msg,
+                            });
+                            orchestrator.state = crate::orchestrator::state::AgentState::Chat;
+                            if let Err(e) = orchestrator.step(None).await {
+                                let err_msg = format!("[FATAL ERROR] Orchestrator halted: {}", e);
+                                let _ = tui_tx_err.send(crate::ui::events::TuiEvent::IncomingMessage(err_msg)).await;
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+
+            // 4. Run TUI App
+            let mut app = TuiApp::new(tui_rx, action_tx);
+            let result = app.run(terminal).await;
+
+            // 5. Teardown
+            restore_terminal()?;
+            result
         }
         Commands::Run { prompt } => {
             // Placeholder for single-shot execution
@@ -69,7 +136,7 @@ mod tests {
         assert!(cancel_token.is_cancelled());
         
         // Ensure execution handles the exit without panic
-        let cmd = Commands::Chat;
+        let cmd = Commands::Run { prompt: "test".to_string() };
         let result = execute_command(cmd, cancel_token).await;
         assert!(result.is_ok());
     }

@@ -24,6 +24,8 @@ schemars = "0.8"
 jsonschema = "0.17"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 htmd = "0.1"
+ratatui = "0.26"
+crossterm = { version = "0.27", features = ["event-stream"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"

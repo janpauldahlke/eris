@@ -27,6 +27,7 @@ pub struct Orchestrator<E: LlmEngine> {
     pub chat_stack: Vec<crate::engine::Message>,
     pub saved_chat_state: Option<Vec<crate::engine::Message>>,
     pub interrupt_rx: tokio::sync::watch::Receiver<()>,
+    pub tui_tx: Option<tokio::sync::mpsc::Sender<crate::ui::events::TuiEvent>>,
 }
 
 impl<E: LlmEngine> Orchestrator<E> {
@@ -42,6 +43,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         condensation_threshold: f32,
         num_ctx: usize,
         interrupt_rx: tokio::sync::watch::Receiver<()>,
+        tui_tx: Option<tokio::sync::mpsc::Sender<crate::ui::events::TuiEvent>>,
     ) -> Self {
         Self {
             state: AgentState::Idle,
@@ -58,6 +60,20 @@ impl<E: LlmEngine> Orchestrator<E> {
             chat_stack: Vec::new(),
             saved_chat_state: None,
             interrupt_rx,
+            tui_tx,
+        }
+    }
+
+
+    pub async fn broadcast_state(&self) {
+        if let Some(tx) = &self.tui_tx {
+            let update = crate::ui::events::AgentStateUpdate {
+                state: self.state.clone(),
+                tool_rounds: self.tool_rounds,
+                recovery_count: self.recovery_count,
+                active_task: None,
+            };
+            let _ = tx.send(crate::ui::events::TuiEvent::StateUpdate(update)).await;
         }
     }
 
@@ -65,15 +81,18 @@ impl<E: LlmEngine> Orchestrator<E> {
     #[allow(clippy::never_loop)]
     pub async fn step(&mut self, _user_input: Option<String>) -> Result<()> {
         // TODO: Inject user_input into memory if provided
+        self.broadcast_state().await;
 
         loop {
             // 1. Bailout Checks
             if self.recovery_count >= self.max_recovery_attempts {
                 self.state = AgentState::Idle;
+                self.broadcast_state().await;
                 return Ok(());
             }
             if self.tool_rounds >= self.max_tool_rounds {
                 self.state = AgentState::Idle;
+                self.broadcast_state().await;
                 return Ok(());
             }
 
@@ -114,6 +133,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                         content: prompt,
                     });
                     self.state = AgentState::Idle;
+                    self.broadcast_state().await;
                     return Err(crate::executive::error::FcpError::Interrupted);
                 }
             };
@@ -122,12 +142,18 @@ impl<E: LlmEngine> Orchestrator<E> {
                 Ok(res) => res,
                 Err(e) => {
                     self.state = AgentState::Idle;
+                    self.broadcast_state().await;
                     return Err(e);
                 }
             };
 
+            if let Some(tx) = &self.tui_tx {
+                let _ = tx.send(crate::ui::events::TuiEvent::IncomingMessage(response.content.clone())).await;
+            }
+
             if (response.generated_tokens + response.prompt_tokens) > (self.num_ctx as f32 * self.condensation_threshold) as usize {
                 self.state = AgentState::Reflect;
+                self.broadcast_state().await;
             }
 
             // 4. Directive Processing
@@ -138,7 +164,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                     self.state = AgentState::Idle;
                     self.tool_rounds = 0;
                     self.recovery_count = 0;
-                    // If we had a user interface hooked up, we'd yield `msg` here.
+                    self.broadcast_state().await;
                     return Ok(());
                 }
                 LoopDirective::ExecuteTools(tools) => {
@@ -147,20 +173,30 @@ impl<E: LlmEngine> Orchestrator<E> {
                             Ok(result) => {
                                 self.tool_rounds += 1;
                                 self.recovery_count = 0;
+                                let msg = format!("Tool '{}' succeeded: {}", tool_call.name, result);
                                 self.chat_stack.push(crate::engine::Message {
                                     role: "system".to_string(),
-                                    content: format!("Tool '{}' succeeded: {}", tool_call.name, result),
+                                    content: msg.clone(),
                                 });
+                                if let Some(tx) = &self.tui_tx {
+                                    let _ = tx.send(crate::ui::events::TuiEvent::IncomingMessage(msg)).await;
+                                }
+                                self.broadcast_state().await;
                             }
                             Err(e) => {
                                 // Cognitive Fault: Catch Schema/Tool errors and force recovery
                                 if matches!(e, crate::executive::error::FcpError::ToolFault { .. } | crate::executive::error::FcpError::SchemaViolation(_)) {
                                     self.recovery_count += 1;
                                     self.state = AgentState::Recover;
+                                    let msg = format!("[SYSTEM OVERRIDE: FUCKUP DETECTED] Tool execution failed: {}", e);
                                     self.chat_stack.push(crate::engine::Message {
                                         role: "system".to_string(),
-                                        content: format!("[SYSTEM OVERRIDE: FUCKUP DETECTED] Tool execution failed: {}", e),
+                                        content: msg.clone(),
                                     });
+                                    if let Some(tx) = &self.tui_tx {
+                                        let _ = tx.send(crate::ui::events::TuiEvent::IncomingMessage(msg)).await;
+                                    }
+                                    self.broadcast_state().await;
                                     break; // Break the inner tool loop to restart the outer cognitive loop
                                 } else {
                                     // System Fatality (e.g., Network offline): Abort entirely
@@ -174,13 +210,19 @@ impl<E: LlmEngine> Orchestrator<E> {
                 LoopDirective::RecoverFromFuckup(msg) => {
                     self.recovery_count += 1;
                     self.state = AgentState::Recover;
+                    let msg = format!("[SYSTEM OVERRIDE: FUCKUP DETECTED] Invalid LLM Output: {}", msg);
                     self.chat_stack.push(crate::engine::Message {
                         role: "system".to_string(),
-                        content: format!("[SYSTEM OVERRIDE: FUCKUP DETECTED] Invalid LLM Output: {}", msg),
+                        content: msg.clone(),
                     });
+                    if let Some(tx) = &self.tui_tx {
+                        let _ = tx.send(crate::ui::events::TuiEvent::IncomingMessage(msg)).await;
+                    }
+                    self.broadcast_state().await;
                 }
                 LoopDirective::ShiftToReflection => {
                     self.state = AgentState::Reflect;
+                    self.broadcast_state().await;
                 }
             }
         }
@@ -235,6 +277,7 @@ impl<E: LlmEngine> Orchestrator<E> {
 
         // 6. Set `self.state = AgentState::Chat`.
         self.state = AgentState::Chat;
+        self.broadcast_state().await;
 
         Ok(())
     }
@@ -330,6 +373,7 @@ mod tests {
             0.8,
             4096,
             rx,
+            None,
         );
 
         assert_eq!(orchestrator.state, AgentState::Idle);
@@ -351,7 +395,7 @@ mod tests {
         let vault_root = Path::new("/tmp/vault");
         let (tx, rx) = tokio::sync::watch::channel(());
         Box::leak(Box::new(tx)); // Prevent sender from dropping, which would trigger `rx.changed()`
-        Orchestrator::new(engine, gatekeeper, ephemeral, vault_root, "test_ws", 3, 5, 0.8, 4096, rx)
+        Orchestrator::new(engine, gatekeeper, ephemeral, vault_root, "test_ws", 3, 5, 0.8, 4096, rx, None)
     }
 
     #[test]
@@ -563,6 +607,7 @@ mod tests {
             0.8,
             4096,
             rx,
+            None,
         );
 
         orchestrator.state = AgentState::Chat;
