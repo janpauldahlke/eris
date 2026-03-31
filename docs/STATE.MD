@@ -18,3 +18,4 @@
 - [x] (S04.3): implement heartbeat monitor, async guillotine, and s02 condensation loop
 - [x] (S05): implement semantic guards, schemars validation, and gatekeeper state routing
 - [x] (REFACTORING): refactor: enforce idiomatic module boundaries for engine and orchestrator
+- [x] (S06.1): implement physical vault tools (read, write, list) and path firewalls
