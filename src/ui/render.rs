@@ -9,6 +9,66 @@ use crate::ui::TuiApp;
 use crate::orchestrator::state::AgentState;
 use crate::ui::app::ActivePane;
 
+fn wrap_input_lines(input: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![String::new()];
+    }
+
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut current_len = 0usize;
+
+    for word in input.split_whitespace() {
+        let word_len = word.chars().count();
+        let separator_len = if current_len > 0 { 1 } else { 0 };
+
+        if current_len + separator_len + word_len <= width {
+            if separator_len == 1 {
+                current.push(' ');
+                current_len += 1;
+            }
+            current.push_str(word);
+            current_len += word_len;
+            continue;
+        }
+
+        if !current.is_empty() {
+            lines.push(current);
+            current = String::new();
+            current_len = 0;
+        }
+
+        if word_len <= width {
+            current.push_str(word);
+            current_len = word_len;
+        } else {
+            let mut chunk = String::new();
+            let mut chunk_len = 0usize;
+            for ch in word.chars() {
+                chunk.push(ch);
+                chunk_len += 1;
+                if chunk_len == width {
+                    lines.push(chunk);
+                    chunk = String::new();
+                    chunk_len = 0;
+                }
+            }
+            current = chunk;
+            current_len = chunk_len;
+        }
+    }
+
+    if !current.is_empty() {
+        lines.push(current);
+    }
+
+    if lines.is_empty() {
+        vec![String::new()]
+    } else {
+        lines
+    }
+}
+
 pub fn draw(f: &mut Frame, app: &TuiApp) {
     let background = Block::default().style(Style::default().bg(Color::Rgb(8, 10, 18)));
     f.render_widget(background, f.size());
@@ -16,9 +76,9 @@ pub fn draw(f: &mut Frame, app: &TuiApp) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(0),        // Chat (full width)
+            Constraint::Min(0),        // ERIS Console (grows with free space)
             Constraint::Length(8),     // Telemetry + Status bar
-            Constraint::Min(3),        // Input
+            Constraint::Length(8),     // Command Deck (~6 inner lines)
         ])
         .split(f.size());
 
@@ -63,6 +123,23 @@ pub fn draw(f: &mut Frame, app: &TuiApp) {
         chat_lines.push(Line::default());
     }
 
+    let chat_inner_height = chunks[0].height.saturating_sub(2) as usize;
+    if chat_lines.len() < chat_inner_height {
+        let pad_count = chat_inner_height - chat_lines.len();
+        let mut padded_lines = Vec::with_capacity(chat_inner_height);
+        for _ in 0..pad_count {
+            padded_lines.push(Line::default());
+        }
+        padded_lines.extend(chat_lines);
+        chat_lines = padded_lines;
+    }
+    let max_chat_scroll = chat_lines.len().saturating_sub(chat_inner_height) as u16;
+    let chat_scroll = if app.chat_follow_latest {
+        max_chat_scroll
+    } else {
+        app.chat_scroll.min(max_chat_scroll)
+    };
+
     let chat = Paragraph::new(Text::from(chat_lines))
         .style(Style::default().bg(Color::Rgb(10, 13, 24)))
         .block(Block::default()
@@ -70,7 +147,7 @@ pub fn draw(f: &mut Frame, app: &TuiApp) {
             .border_style(get_border_style(ActivePane::Main))
             .title(title))
         .wrap(Wrap { trim: true })
-        .scroll((app.chat_scroll, 0));
+        .scroll((chat_scroll, 0));
     f.render_widget(chat, chunks[0]);
 
     // ── Telemetry / System log (75%) ─────────────────────────────
@@ -138,14 +215,37 @@ pub fn draw(f: &mut Frame, app: &TuiApp) {
     f.render_widget(status, bottom_bar[1]);
 
     // ── Input / Command Deck ─────────────────────────────────────
-    let input = Paragraph::new(app.input.as_str())
+    let input_chunk = chunks[2];
+    let inner_width = input_chunk.width.saturating_sub(2) as usize;
+    let inner_height = input_chunk.height.saturating_sub(2) as usize;
+    let wrapped_lines = wrap_input_lines(app.input.as_str(), inner_width);
+    let max_input_scroll = wrapped_lines.len().saturating_sub(inner_height) as u16;
+    let input_scroll = if app.command_deck_follow_latest {
+        max_input_scroll
+    } else {
+        app.command_deck_scroll.min(max_input_scroll)
+    };
+    let cursor_line_idx = wrapped_lines.len().saturating_sub(1);
+    let cursor_col = wrapped_lines
+        .last()
+        .map(|line| line.chars().count() as u16)
+        .unwrap_or(0);
+    let visible_cursor_row = cursor_line_idx.saturating_sub(input_scroll as usize) as u16;
+
+    let input = Paragraph::new(Text::from(
+        wrapped_lines
+            .iter()
+            .map(|line| Line::from(line.as_str()))
+            .collect::<Vec<Line>>(),
+    ))
         .style(Style::default().fg(Color::Rgb(214, 223, 255)).bg(Color::Rgb(8, 10, 18)))
         .block(Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Rgb(120, 180, 255)))
-            .title(" Command Deck "));
+            .border_style(get_border_style(ActivePane::CommandDeck))
+            .title(" Command Deck "))
+        .scroll((input_scroll, 0))
+        .wrap(Wrap { trim: false });
     f.render_widget(input, chunks[2]);
 
-    let input_chunk = chunks[2];
-    f.set_cursor(input_chunk.x + app.input.len() as u16 + 1, input_chunk.y + 1);
+    f.set_cursor(input_chunk.x + cursor_col + 1, input_chunk.y + visible_cursor_row + 1);
 }
