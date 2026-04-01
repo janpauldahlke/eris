@@ -18,11 +18,17 @@ pub enum LoopAction {
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct ToolCall {
     pub name: String,
+    #[serde(default = "default_empty_object")]
     pub args: serde_json::Value,
+}
+
+fn default_empty_object() -> serde_json::Value {
+    serde_json::Value::Object(serde_json::Map::new())
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct LlmResponse {
+    #[serde(default)]
     pub thought: String,
     status: Option<LoopAction>,
     pub message_to_user: Option<String>,
@@ -51,6 +57,7 @@ impl LlmResponse {
 /// Lightweight response shape for the conversational pre-check (no tools).
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConversationalResponse {
+    #[serde(default)]
     pub thought: String,
     pub message_to_user: Option<String>,
 }

@@ -1,3 +1,5 @@
+# AI SHOULD IGNORE THIS DOC!!!
+
 # THE SNIPER PROTOCOL (Operator Manual)
 
 **The Prime Directive:** Never let the IDE auto-pilot a whole file. Build by the function, test by the function. The moment a test passes, the chat window is contaminated with dead context.
