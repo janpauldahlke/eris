@@ -51,3 +51,5 @@
 - [x] refactor (s04): CHANGES ephemeral and staging process
 - [x] refactor (S08_Preflight): harden init and tear down of peripheral systems // user info for this progress
 - [x] IMPROVEMENT (S03): introduce ticket like workflow for tools to avoid duplications in calls
+- [x] REFACTOR (S6.01): completly rework web:search improved chuking // in memory // llm lense // Phase A
+- [] REFACTOR (S6.01): completly rework web:search Phase B
