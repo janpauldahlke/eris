@@ -164,23 +164,24 @@ pub async fn execute_command(cmd: Commands, config: Arc<AppConfig>, cancel_token
                 }));
             }
 
-            // 5c. Load tool descriptors (TOML) and enforce strict coverage.
-            let descriptor_dir = workspace_root.join("tool_specs");
-            let descriptor_registry = crate::tools::ToolDescriptorRegistry::load_from_dir(&descriptor_dir).await?;
-            descriptor_registry.assert_covers_registered_tools(&gatekeeper.registered_tool_names())?;
-            tracing::info!(
-                descriptor_count = descriptor_registry.len(),
-                dir = %descriptor_dir.display(),
-                "Tool descriptor registry loaded"
-            );
-            let descriptor_registry = Arc::new(descriptor_registry);
+            // 5c. Load compile-time embedded tool descriptors.
+            // Runtime users cannot alter descriptor behavior without recompiling.
+            let descriptor_registry = {
+                let registry = crate::tools::ToolDescriptorRegistry::load_embedded()?;
+                registry.assert_covers_registered_tools(&gatekeeper.registered_tool_names())?;
+                tracing::info!(
+                    descriptor_count = registry.len(),
+                    "Embedded tool descriptor registry loaded"
+                );
+                Some(Arc::new(registry))
+            };
 
             // 5b. Build ToolRouter (semantic tool gating via nomic embeddings)
             let tool_router = match crate::orchestrator::tool_router::ToolRouter::new(
                 ollama_arc,
                 config.embed_model_name.clone(),
                 gatekeeper.all_tool_descriptions(),
-                Some(descriptor_registry.clone()),
+                descriptor_registry.clone(),
                 config.tool_match_threshold,
             )
             .await
@@ -238,7 +239,7 @@ pub async fn execute_command(cmd: Commands, config: Arc<AppConfig>, cancel_token
                 interrupt_rx,
                 Some(tui_tx.clone()),
                 tool_router,
-                Some(descriptor_registry),
+                descriptor_registry,
             );
 
             tracing::info!(

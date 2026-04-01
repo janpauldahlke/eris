@@ -83,7 +83,7 @@ impl ToolRouter {
         let mut tool_embeddings = Vec::with_capacity(tool_descriptions.len());
 
         for (name, description) in &tool_descriptions {
-            let text = Self::enrich_for_routing(&name, &description, descriptors.as_deref());
+            let text = Self::enrich_for_routing(name, description, descriptors.as_deref());
             let embedding = Self::embed(&ollama, &embed_model, &text).await?;
             tool_embeddings.push((name.clone(), embedding));
             tracing::debug!(tool = %name, "Pre-computed tool embedding");

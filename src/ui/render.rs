@@ -59,7 +59,6 @@ fn wrap_input_lines(input: &str, width: usize) -> Vec<String> {
         if !current.is_empty() {
             lines.push(current);
             current = String::new();
-            current_len = 0;
         }
 
         if word_len <= width {

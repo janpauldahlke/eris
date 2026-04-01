@@ -7,6 +7,7 @@ pub mod system;
 pub mod agenda;
 pub mod web;
 pub mod descriptors;
+pub mod specs;
 
 pub use traits::Tool;
 pub use gatekeeper::Gatekeeper;

@@ -3,5 +3,6 @@ pub mod context;
 pub mod heartbeat;
 pub mod core;
 pub mod tool_router;
+pub mod r#loop;
 
 pub use self::core::Orchestrator;

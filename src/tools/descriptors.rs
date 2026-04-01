@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 
 use serde::Deserialize;
 use serde_json::Value;
 
 use crate::executive::error::{FcpError, Result};
+use crate::tools::specs::DESCRIPTOR_TOMLS;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ToolExample {
@@ -35,36 +35,18 @@ pub struct ToolDescriptorRegistry {
 }
 
 impl ToolDescriptorRegistry {
-    pub async fn load_from_dir(dir: &Path) -> Result<Self> {
-        let mut entries = tokio::fs::read_dir(dir).await.map_err(FcpError::Io)?;
+    pub fn load_embedded() -> Result<Self> {
         let mut by_tool = HashMap::new();
-        let mut seen_files = HashSet::new();
 
-        while let Some(entry) = entries.next_entry().await.map_err(FcpError::Io)? {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("toml") {
-                continue;
-            }
-            let file_name = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .ok_or_else(|| FcpError::Config(format!("Invalid descriptor filename: {}", path.display())))?
-                .to_string();
-            if !seen_files.insert(file_name.clone()) {
-                return Err(FcpError::Config(format!("Duplicate descriptor filename: {file_name}")));
-            }
-
-            let raw = tokio::fs::read_to_string(&path).await.map_err(FcpError::Io)?;
-            let descriptor: ToolDescriptor = toml::from_str(&raw)
-                .map_err(|e| FcpError::Config(format!("Failed parsing {}: {}", path.display(), e)))?;
-            Self::validate_descriptor(&descriptor, &path)?;
-            if by_tool
-                .insert(descriptor.tool_name.clone(), descriptor)
-                .is_some()
-            {
+        for raw in DESCRIPTOR_TOMLS {
+            let descriptor: ToolDescriptor = toml::from_str(raw)
+                .map_err(|e| FcpError::Config(format!("Failed parsing embedded descriptor: {}", e)))?;
+            Self::validate_descriptor(&descriptor)?;
+            let tool_name = descriptor.tool_name.clone();
+            if by_tool.insert(tool_name.clone(), descriptor).is_some() {
                 return Err(FcpError::Config(format!(
-                    "Duplicate tool_name in descriptors: {}",
-                    path.display()
+                    "Duplicate embedded descriptor for tool_name: {}",
+                    tool_name
                 )));
             }
         }
@@ -72,18 +54,12 @@ impl ToolDescriptorRegistry {
         Ok(Self { by_tool })
     }
 
-    fn validate_descriptor(desc: &ToolDescriptor, path: &Path) -> Result<()> {
+    fn validate_descriptor(desc: &ToolDescriptor) -> Result<()> {
         if desc.descriptor_version == 0 {
-            return Err(FcpError::Config(format!(
-                "descriptor_version must be >= 1 in {}",
-                path.display()
-            )));
+            return Err(FcpError::Config("descriptor_version must be >= 1".to_string()));
         }
         if desc.tool_name.trim().is_empty() || desc.short_description.trim().is_empty() {
-            return Err(FcpError::Config(format!(
-                "tool_name and short_description are required in {}",
-                path.display()
-            )));
+            return Err(FcpError::Config("tool_name and short_description are required".to_string()));
         }
         Ok(())
     }
@@ -94,6 +70,10 @@ impl ToolDescriptorRegistry {
 
     pub fn len(&self) -> usize {
         self.by_tool.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.by_tool.is_empty()
     }
 
     pub fn assert_covers_registered_tools(&self, registered_tools: &[String]) -> Result<()> {
