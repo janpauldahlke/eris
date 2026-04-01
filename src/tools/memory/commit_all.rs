@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::executive::error::{FcpError, Result};
-use crate::memory::ephemeral::{resolve_vault_subdir, EphemeralMemory};
+use crate::memory::ephemeral::{is_web_artifact_staging, resolve_vault_subdir, EphemeralMemory};
 use crate::memory::semantic::SemanticBrain;
 use crate::tools::traits::Tool;
 
@@ -57,6 +57,17 @@ impl Tool for MemoryCommitAllTool {
                 continue;
             }
 
+            if is_web_artifact_staging(&entry.tags, &entry.title) {
+                self.ephemeral.cache.invalidate(&entry.staged_id).await;
+                committed.push(entry.staged_id.clone());
+                tracing::info!(
+                    staged_id = %entry.staged_id,
+                    title = %entry.title,
+                    "Web artifact: vault write skipped, ephemeral cleared (semantic chunks from fetch)"
+                );
+                continue;
+            }
+
             let target_subdir = resolve_vault_subdir(&entry.tags);
             let sanitized = entry
                 .title
@@ -90,6 +101,7 @@ impl Tool for MemoryCommitAllTool {
             if let Err(e) = self.semantic.upsert(&entry.data, entry.tags.clone()).await {
                 tracing::warn!(staged_id = %entry.staged_id, error = %e, "Vault write succeeded but semantic indexing failed");
                 indexing_failed.push(entry.staged_id.clone());
+                continue;
             }
 
             self.ephemeral.cache.invalidate(&entry.staged_id).await;

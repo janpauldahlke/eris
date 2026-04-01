@@ -86,10 +86,10 @@ rationale = "Tool does not require args."
 "#,
     r#"descriptor_version = 1
 tool_name = "memory:query"
-short_description = "Run semantic search against indexed memory/vault content."
-when_to_use = "Use for fuzzy recall over semantic memory."
-when_not_to_use = "Do not use for exact file reads."
-routing_hints = ["search memory", "do you remember", "semantic query", "recall context"]
+short_description = "Search long-term semantic memory for facts, user identity, preferences, and past context."
+when_to_use = "Use for fuzzy recall, who am I / what is my name, user preferences, and anything stored in indexed vault memory."
+when_not_to_use = "Do not use for exact file reads by path; use vault:read."
+routing_hints = ["search memory", "do you remember", "what is my name", "who am I", "user preferences", "my identity", "recall context", "semantic query"]
 
 [[examples_good]]
 name = "query_memory"

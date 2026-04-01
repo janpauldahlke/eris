@@ -11,8 +11,8 @@ use crate::memory::semantic::SemanticBrain;
 #[derive(Deserialize, JsonSchema)]
 pub struct MemoryQueryArgs {
     pub query: String,
+    /// When set, only points whose indexed `tags` contain this value are returned (matches upsert payload).
     pub filter_tag: Option<String>,
-    pub file_path: Option<String>,
 }
 
 pub struct MemoryQueryTool {
@@ -27,7 +27,7 @@ impl Tool for MemoryQueryTool {
     }
 
     fn description(&self) -> &'static str {
-        "Semantically search the vault (Semantic Zoom). Returns up to 1500 tokens of context."
+        "Search long-term semantic memory. Use this to retrieve facts, remember past conversations, or answer questions about the user's name, preferences, and identity. For reading a specific vault path, use vault:read."
     }
 
     fn parameters_schema(&self) -> schemars::schema::RootSchema {
@@ -45,7 +45,12 @@ impl Tool for MemoryQueryTool {
             });
         }
 
-        let results = self.semantic.search(&args.query, 5).await?;
+        let filter = args
+            .filter_tag
+            .as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty());
+        let results = self.semantic.search(&args.query, 5, filter).await?;
         
         if results.is_empty() {
             Ok(format!("No semantic memory found for query: {}", args.query))

@@ -13,6 +13,8 @@ pub enum AgentState {
 pub enum LoopAction {
     Reflect,
     Idle,
+    /// LLMs sometimes emit `"Process"` from training drift; map it to Task.
+    #[serde(alias = "Process")]
     Task,
 }
 
@@ -142,6 +144,18 @@ mod tests {
         let json = r#"{"thought": "planning"}"#;
         let response: LlmResponse = serde_json::from_str(json).unwrap();
         assert!(!response.has_explicit_status());
+        assert_eq!(response.status(), LoopAction::Task);
+    }
+
+    #[test]
+    fn test_llm_response_process_alias_deserializes_as_task() {
+        let json = r#"{
+            "thought": "mid-step",
+            "status": "Process",
+            "tool_calls": []
+        }"#;
+        let response: LlmResponse = serde_json::from_str(json).unwrap();
+        assert!(response.has_explicit_status());
         assert_eq!(response.status(), LoopAction::Task);
     }
 }

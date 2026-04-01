@@ -559,16 +559,21 @@ impl<E: LlmEngine> Orchestrator<E> {
             && !msg.trim().is_empty()
         {
             let agent_name = self.agent_name();
+            let out_line = if parsed.tool_calls.is_empty() {
+                msg
+            } else {
+                format!("{} [running tools…]", msg)
+            };
             tracing::info!(
                 event = "UI_EMIT_INCOMING_MESSAGE",
                 agent = %agent_name,
-                msg_len = msg.len(),
-                preview = %msg.chars().take(120).collect::<String>(),
+                msg_len = out_line.len(),
+                preview = %out_line.chars().take(120).collect::<String>(),
                 "Emitting assistant message to TUI deck"
             );
             let _ = tx
                 .send(crate::ui::events::TuiEvent::IncomingMessage(
-                    format!("[{}]: {}", agent_name, msg),
+                    format!("[{}]: {}", agent_name, out_line),
                 ))
                 .await;
         }
@@ -831,20 +836,21 @@ impl<E: LlmEngine> Orchestrator<E> {
             );
         }
 
+        // Tools take precedence: never drop tool_calls because of Idle/Reflect/Task mismatch.
+        if !response.tool_calls.is_empty() {
+            return LoopDirective::ExecuteTools(response.tool_calls);
+        }
+
         match status {
             LoopAction::Reflect => {
-                if response.tool_calls.is_empty() {
-                    if let Some(msg) = response.message_to_user
-                        && !msg.trim().is_empty()
-                    {
-                        return LoopDirective::HaltAndAwaitInput(Some(msg));
-                    }
-                    tracing::debug!("Reflect with empty tool_calls — treating as Task");
-                    self.state = AgentState::Chat;
-                    LoopDirective::ShiftToReflection
-                } else {
-                    LoopDirective::ExecuteTools(response.tool_calls)
+                if let Some(msg) = response.message_to_user
+                    && !msg.trim().is_empty()
+                {
+                    return LoopDirective::HaltAndAwaitInput(Some(msg));
                 }
+                tracing::debug!("Reflect with empty tool_calls — treating as Task");
+                self.state = AgentState::Chat;
+                LoopDirective::ShiftToReflection
             }
             LoopAction::Idle => match response.message_to_user {
                 Some(msg) if !msg.trim().is_empty() => LoopDirective::HaltAndAwaitInput(Some(msg)),
@@ -853,12 +859,8 @@ impl<E: LlmEngine> Orchestrator<E> {
                 ),
             },
             LoopAction::Task => {
-                if !response.tool_calls.is_empty() {
-                    LoopDirective::ExecuteTools(response.tool_calls)
-                } else {
-                    self.state = AgentState::Chat;
-                    LoopDirective::ShiftToReflection
-                }
+                self.state = AgentState::Chat;
+                LoopDirective::ShiftToReflection
             }
         }
     }
@@ -1030,6 +1032,26 @@ mod tests {
                 assert_eq!(tools[0].name, "foo");
             }
             _ => panic!("Expected ExecuteTools"),
+        }
+    }
+
+    #[test]
+    fn test_router_idle_with_tools_executes_tools() {
+        let mut orchestrator = setup_orchestrator();
+        let json = r#"{
+            "thought": "wrong status but tools present",
+            "status": "Idle",
+            "message_to_user": "Hang on…",
+            "tool_calls": [{ "name": "vault:read", "args": { "path": "x.md" } }]
+        }"#;
+
+        let directive = orchestrator.process_llm_response(json);
+        match directive {
+            LoopDirective::ExecuteTools(tools) => {
+                assert_eq!(tools.len(), 1);
+                assert_eq!(tools[0].name, "vault:read");
+            }
+            _ => panic!("Expected ExecuteTools when tool_calls non-empty"),
         }
     }
 

@@ -15,7 +15,7 @@ pub async fn run_ignition_sequence(workspace_root: &Path) -> Result<AppConfig> {
     let model_names: Vec<String> = local_models.into_iter().map(|m| m.name).collect();
 
     // 2. Interactive Prompts (blocking task)
-    let (agent_name, model_name) = tokio::task::spawn_blocking(move || -> Result<(String, String)> {
+    let (agent_name, user_name, model_name) = tokio::task::spawn_blocking(move || -> Result<(String, String, String)> {
         let agent_name = Text::new("Agent Name:")
             .with_default("ERIS")
             .prompt()
@@ -25,6 +25,17 @@ pub async fn run_ignition_sequence(workspace_root: &Path) -> Result<AppConfig> {
                 }
                 _ => FcpError::Config(format!("Prompt error: {}", e)),
             })?;
+
+        let user_name = Text::new("Your name (optional):")
+            .with_default("")
+            .prompt()
+            .map_err(|e| match e {
+                inquire::InquireError::OperationCanceled | inquire::InquireError::OperationInterrupted => {
+                    FcpError::Cancellation("Ignition cancelled by user".into())
+                }
+                _ => FcpError::Config(format!("Prompt error: {}", e)),
+            })?;
+        let user_name = user_name.trim().to_string();
 
         let model_name = if !model_names.is_empty() {
             // Find if default qwen2.5:14b is in the list
@@ -51,7 +62,7 @@ pub async fn run_ignition_sequence(workspace_root: &Path) -> Result<AppConfig> {
                 })?
         };
 
-        Ok((agent_name, model_name))
+        Ok((agent_name, user_name, model_name))
     }).await.map_err(|e| FcpError::Config(format!("Spawn blocking failed: {}", e)))??;
 
     // 3. The Scaffold
@@ -72,15 +83,22 @@ pub async fn run_ignition_sequence(workspace_root: &Path) -> Result<AppConfig> {
 
     // 4. The Cure (Identity Generation)
     let identity_path = workspace_root.join("00_Core/Identity.md");
-    let identity_content = format!(
-        "You are an autonomous AI operating in a strict state machine. You MUST communicate EXCLUSIVELY in JSON format matching the schemas provided. Never output plain conversational text.\n\nAgent Name: {}",
+    let mut identity_content = format!(
+        "You are an autonomous AI operating in a strict state machine. You MUST communicate EXCLUSIVELY in JSON format matching the schemas provided. Never output plain conversational text.\n\nAgent Name: {} (this is you!)",
         agent_name
     );
+    if !user_name.is_empty() {
+        identity_content.push_str(&format!(
+            "\nUser Name is: {} (your main user!)",
+            user_name
+        ));
+    }
     fs::write(&identity_path, identity_content).await?;
 
     // 5. The Seal
     let config = AppConfig {
         model_name,
+        user_name,
         ..Default::default()
     };
     

@@ -114,7 +114,7 @@ impl ToolRouter {
             "vault:read" => "reading files, checking notes, looking at documents, show me, what is in my vault, review notes, open file, read my notes",
             "vault:write" => "writing files, saving notes, creating documents, write this down, save to vault, take a note, jot down, record",
             "vault:list" => "listing files, what files do I have, show directory, browse vault, what is in my folder, list notes",
-            "memory:query" => "remembering, recalling, do you remember, what did I say, past conversations, search memory, who am I, what is my name, recall, recognize me, history",
+            "memory:query" => "remembering, recalling, do you remember, what did I say, past conversations, search memory, who am I, what is my name, user name, my identity, preferences, facts about the user, recall, recognize me, history",
             "memory:commit" => "commit one staged memory by staged_id, persist selected staged entry to long-term memory",
             "memory:commit_all" => "flush all staged memories, persist all staged entries, bulk commit staged memory",
             "memory:staged_list" => "show staged memory ids, list staged entries, what is currently staged before commit",

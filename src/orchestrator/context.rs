@@ -92,11 +92,13 @@ impl ContextAssembler {
               \"tool_calls\": [{{\"name\": \"tool:name\", \"args\": {{}} }}]\n\
             }}\n\n\
             Status rules (follow exactly):\n\
-            1) Task: use when continuing internal work/planning. tool_calls MUST be [].\n\
-            2) Reflect: use ONLY when calling one or more tools now. tool_calls MUST be non-empty.\n\
-            3) Idle: use when done and waiting for user input. tool_calls MUST be [].\n\
+            1) Reflect: when calling one or more tools this turn. tool_calls MUST be non-empty.\n\
+            2) Task: internal continuation or planning with NO tools this turn. tool_calls MUST be [].\n\
+            3) Idle: done; waiting for the user. tool_calls MUST be [].\n\
             4) In Idle, message_to_user MUST be a non-empty user-facing reply.\n\
-            5) If no tool is needed, NEVER choose Reflect.\n\n\
+            5) If you need tools, prefer Reflect. The runtime executes tool_calls whenever they are non-empty (before status), so do not mix Idle with tools.\n\
+            6) `Process` is accepted as an alias for Task (avoid inventing other status strings).\n\
+            7) If no tool is needed, NEVER choose Reflect.\n\n\
             News/web answer style (when summarizing fetched web content):\n\
             - Return at most 3-5 items.\n\
             - Each item: headline + one concise sentence.\n\
@@ -124,7 +126,8 @@ impl ContextAssembler {
             - Staged entries EXPIRE on TTL; they do not auto-promote.\n\
             - Use memory:staged_list to inspect staged entries before committing.\n\
             - Prefer memory:commit with staged_id for single-item persistence.\n\
-            - Use memory:commit_all for best-effort bulk persistence.\n\n\
+            - Use memory:commit_all for best-effort bulk persistence.\n\
+            - Web fetch staging (tags web_artifact): committing does NOT write markdown to disk; semantic chunks were stored at fetch time.\n\n\
             Vault taxonomy — when using memory:stage, include tags from the correct category:\n\
             - person, contact, people → stored in 30_Persons/\n\
             - user, preference, about_me → stored in 40_User/\n\
@@ -151,15 +154,19 @@ impl ContextAssembler {
         let system_prompt = format!(
             "{identity}\n\n\
             Reply with ONE valid JSON object only. No markdown. No code fences.\n\n\
-            JSON shape:\n\
+            JSON shape (same schema as tool mode; tools run only when the router enables tool mode):\n\
             {{\n\
               \"thought\": \"your internal reasoning (never shown to user)\",\n\
-              \"message_to_user\": \"your helpful reply\"\n\
+              \"status\": \"Task|Reflect|Idle\",\n\
+              \"message_to_user\": \"your helpful reply\",\n\
+              \"tool_calls\": []\n\
             }}\n\n\
             Rules:\n\
             1) thought is internal-only, used by the runtime for routing.\n\
-            2) message_to_user MUST always be a non-empty string.\n\
-            3) Answer the user directly, conversationally, and helpfully.",
+            2) message_to_user MUST always be a non-empty string when status is Idle.\n\
+            3) Do not invent status strings other than Task, Reflect, Idle (or Process as alias for Task).\n\
+            4) Leave tool_calls as [] unless the session is in tool-enabled mode.\n\
+            5) Answer the user directly, conversationally, and helpfully.",
             identity = identity_content,
         );
 

@@ -72,7 +72,7 @@ async fn main() -> ExitCode {
     });
 
     // 7. Route Execution
-    if let Err(e) = execute_command(cli.command, config, cancel_token).await {
+    if let Err(e) = execute_command(cli, config, cancel_token).await {
         tracing::error!("{}", e);
         // It's also printed to stderr as a structured error trace
         eprintln!("{}", e);

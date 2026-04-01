@@ -8,6 +8,9 @@ pub struct AppConfig {
     pub log_level: String,
     pub ollama_host: String,
     pub model_name: String,
+    /// Human display name from fcp.toml / `FCP_USER_NAME`; empty = unset.
+    #[serde(default)]
+    pub user_name: String,
     pub num_ctx: usize,
     pub generation_timeout_secs: u64,
     pub enable_reasoning_fsm: bool,
@@ -74,6 +77,7 @@ impl Default for AppConfig {
             log_level: "info".into(),
             ollama_host: "http://localhost:11434".into(),
             model_name: "llama3.2".into(),
+            user_name: String::new(),
             num_ctx: 8192,
             generation_timeout_secs: 120,
             enable_reasoning_fsm: true,
@@ -195,6 +199,7 @@ mod tests {
             "log_level": "debug",
             "ollama_host": "http://localhost:11434",
             "model_name": "qwen2.5:14b",
+            "user_name": "",
             "num_ctx": 32768,
             "generation_timeout_secs": 60,
             "enable_reasoning_fsm": false,
@@ -223,6 +228,7 @@ mod tests {
         assert_eq!(parsed_config.log_level, "debug");
         assert_eq!(parsed_config.ollama_host, "http://localhost:11434");
         assert_eq!(parsed_config.model_name, "qwen2.5:14b");
+        assert_eq!(parsed_config.user_name, "");
         assert_eq!(parsed_config.num_ctx, 32768);
         assert_eq!(parsed_config.generation_timeout_secs, 60);
         assert_eq!(parsed_config.enable_reasoning_fsm, false);

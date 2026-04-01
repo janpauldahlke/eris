@@ -185,6 +185,12 @@ impl EphemeralMemory {
     }
 }
 
+/// Staged rows from `web:fetch` must not be promoted to vault markdown (bloated HTML/JSON).
+/// They are indexed in Qdrant at fetch time; `memory:commit` treats them as semantic-only.
+pub fn is_web_artifact_staging(tags: &[String], title: &str) -> bool {
+    tags.iter().any(|t| t == "web_artifact") || title.starts_with("web_artifact:")
+}
+
 pub fn resolve_vault_subdir(tags: &[String]) -> &'static str {
     for tag in tags {
         let t = tag.to_lowercase();
@@ -253,6 +259,13 @@ pub fn spawn_snapshot_daemon(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_is_web_artifact_staging() {
+        assert!(is_web_artifact_staging(&["web_artifact".into(), "external".into()], "anything"));
+        assert!(is_web_artifact_staging(&["news".into()], "web_artifact:uuid-here"));
+        assert!(!is_web_artifact_staging(&["user".into()], "hagbard_profile"));
+    }
 
     #[tokio::test]
     async fn test_ephemeral_insert_and_get() {

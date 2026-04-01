@@ -1,5 +1,6 @@
 use crate::executive::error::{FcpError, Result};
 use crate::config::AppConfig;
+use crate::memory::ephemeral::is_web_artifact_staging;
 use std::sync::Arc;
 use qdrant_client::Qdrant;
 use qdrant_client::qdrant::{Condition, CreateCollectionBuilder, DeletePointsBuilder, Distance, Filter, VectorParamsBuilder, PointStruct, SearchPointsBuilder, UpsertPointsBuilder};
@@ -188,6 +189,13 @@ impl SemanticBrain {
     }
 
     pub async fn ingest_vault(&self, vault_root: &std::path::Path) -> Result<usize> {
+        if self.generate_embedding("ping").await.is_err() {
+            tracing::warn!(
+                "Vault ingest deferred: Ollama unreachable during boot (semantic pre-warm skipped)"
+            );
+            return Ok(0);
+        }
+
         let subdirs = ["10_Episodic", "20_Semantic", "30_Persons", "40_User"];
         let mut count = 0usize;
 
@@ -211,6 +219,17 @@ impl SemanticBrain {
                     match tokio::fs::read_to_string(&path).await {
                         Ok(raw) => {
                             let (tags, content) = parse_vault_md(&raw);
+                            let stem = path
+                                .file_stem()
+                                .map(|s| s.to_string_lossy().into_owned())
+                                .unwrap_or_default();
+                            if is_web_artifact_staging(&tags, &stem) {
+                                tracing::debug!(
+                                    path = %path.display(),
+                                    "Skipping web artifact markdown from vault ingest"
+                                );
+                                continue;
+                            }
                             if content.trim().is_empty() {
                                 continue;
                             }
@@ -231,13 +250,31 @@ impl SemanticBrain {
         Ok(count)
     }
 
-    pub async fn search(&self, query: &str, limit: u64) -> Result<String> {
+    /// Semantic search over indexed points. `filter_tag` restricts to points whose payload
+    /// `tags` JSON array contains this keyword (same shape as [`Self::upsert`]).
+    pub async fn search(
+        &self,
+        query: &str,
+        limit: u64,
+        filter_tag: Option<&str>,
+    ) -> Result<String> {
         let embedding = self.generate_embedding(query).await?;
 
-        let search_result = self.client.search_points(
-            SearchPointsBuilder::new(&self.config.qdrant_collection, embedding, limit)
-                .with_payload(true)
-        ).await.map_err(|e| FcpError::NetworkFault(e.to_string()))?;
+        let mut builder = SearchPointsBuilder::new(&self.config.qdrant_collection, embedding, limit)
+            .with_payload(true);
+
+        if let Some(tag) = filter_tag.map(str::trim).filter(|t| !t.is_empty()) {
+            builder = builder.filter(Filter::must([Condition::matches(
+                "tags",
+                tag.to_string(),
+            )]));
+        }
+
+        let search_result = self
+            .client
+            .search_points(builder)
+            .await
+            .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
 
         let mut markdown = String::new();
         for point in search_result.result {

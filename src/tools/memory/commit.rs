@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::executive::error::{FcpError, Result};
 use crate::tools::traits::Tool;
 use crate::memory::semantic::SemanticBrain;
-use crate::memory::ephemeral::{EphemeralMemory, resolve_vault_subdir};
+use crate::memory::ephemeral::{EphemeralMemory, is_web_artifact_staging, resolve_vault_subdir};
 
 #[derive(Deserialize, JsonSchema)]
 pub struct MemoryCommitArgs {
@@ -60,6 +60,18 @@ impl Tool for MemoryCommitTool {
                 reason: "Either staged_id or title is required".to_string(),
             });
         };
+
+        if is_web_artifact_staging(&entry.tags, &entry.title) {
+            self.ephemeral.cache.invalidate(&entry.staged_id).await;
+            tracing::info!(
+                staged_id = %entry.staged_id,
+                title = %entry.title,
+                "Web artifact staging cleared; vault write skipped (content already chunked in semantic index)"
+            );
+            return Ok(
+                "SUCCESS: Web artifact kept in semantic index only; vault write skipped.".to_string(),
+            );
+        }
 
         let target_subdir = resolve_vault_subdir(&entry.tags);
 

@@ -1,11 +1,11 @@
-use crate::executive::cli::Commands;
+use crate::executive::cli::{Cli, Commands};
 use crate::executive::error::{FcpError, Result};
 use crate::config::AppConfig;
 use tokio_util::sync::CancellationToken;
 use std::sync::Arc;
 
-pub async fn execute_command(cmd: Commands, config: Arc<AppConfig>, cancel_token: CancellationToken) -> Result<()> {
-    match cmd {
+pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: CancellationToken) -> Result<()> {
+    match cli.command {
         Commands::Chat => {
             use crate::ui::terminal::{setup_terminal, restore_terminal};
             use crate::ui::TuiApp;
@@ -29,6 +29,15 @@ pub async fn execute_command(cmd: Commands, config: Arc<AppConfig>, cancel_token
                 ))
                 .await;
 
+            let mut config = config;
+            let seal_path = workspace_root.join(".fcp_seal");
+            if !seal_path.exists() {
+                crate::executive::ignition::run_ignition_sequence(&workspace_root).await?;
+                config = Arc::new(AppConfig::load(cli.clone())?);
+            }
+            crate::executive::identity_md::sync_identity_user_line(&workspace_root, &config.user_name)
+                .await?;
+
             let mut peripheral_lifecycle =
                 crate::executive::peripherals::ensure_peripherals_for_chat(&config).await?;
             let ollama_status = if peripheral_lifecycle.started_ollama() {
@@ -46,12 +55,6 @@ pub async fn execute_command(cmd: Commands, config: Arc<AppConfig>, cancel_token
                     "[startup] Peripheral readiness: ollama={ollama_status}, qdrant={qdrant_status}"
                 )))
                 .await;
-
-            // 0. Ignition Sequence
-            let seal_path = workspace_root.join(".fcp_seal");
-            if !seal_path.exists() {
-                crate::executive::ignition::run_ignition_sequence(&workspace_root).await?;
-            }
 
             // 1. Parse Ollama host into components
             let parsed_url = url::Url::parse(&config.ollama_host)
@@ -355,10 +358,20 @@ pub async fn execute_command(cmd: Commands, config: Arc<AppConfig>, cancel_token
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::executive::cli::Cli;
     use std::time::Duration;
 
     fn test_config() -> Arc<AppConfig> {
         Arc::new(AppConfig::default())
+    }
+
+    fn test_cli(command: Commands) -> Cli {
+        Cli {
+            workspace: "default".to_string(),
+            vault: None,
+            verbose: 0,
+            command,
+        }
     }
 
     #[test]
@@ -368,7 +381,11 @@ mod tests {
             args: "{}".to_string(),
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(execute_command(cmd, test_config(), CancellationToken::new()));
+        let result = rt.block_on(execute_command(
+            test_cli(cmd),
+            test_config(),
+            CancellationToken::new(),
+        ));
         
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -393,7 +410,7 @@ mod tests {
         assert!(cancel_token.is_cancelled());
         
         let cmd = Commands::Run { prompt: "test".to_string() };
-        let result = execute_command(cmd, test_config(), cancel_token).await;
+        let result = execute_command(test_cli(cmd), test_config(), cancel_token).await;
         assert!(result.is_ok());
     }
 }
