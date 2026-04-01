@@ -1,0 +1,16 @@
+descriptor_version = 1
+tool_name = "memory:commit"
+short_description = "Commit one staged memory to vault and semantic index."
+when_to_use = "Use to persist a specific staged memory by staged_id."
+when_not_to_use = "Do not use for bulk commits."
+routing_hints = ["commit staged memory", "persist one memory", "save staged item"]
+
+[[examples_good]]
+name = "commit_by_id"
+args = { staged_id = "staged-uuid" }
+rationale = "Preferred commit path."
+
+[[examples_bad]]
+name = "missing_selector"
+args = {}
+rationale = "Either staged_id or title is required."

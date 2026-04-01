@@ -1,0 +1,16 @@
+descriptor_version = 1
+tool_name = "memory:stage"
+short_description = "Stage memory with title/content/tags into ephemeral cache."
+when_to_use = "Use to capture facts before explicit commit."
+when_not_to_use = "Do not use when immediate persistence is required."
+routing_hints = ["remember this", "stage memory", "temporary memory"]
+
+[[examples_good]]
+name = "stage_fact"
+args = { title = "hagbard_profile", content = "User prefers concise responses.", tags = ["user", "preference"] }
+rationale = "Valid staged memory payload."
+
+[[examples_bad]]
+name = "missing_tags"
+args = { title = "x", content = "y" }
+rationale = "tags is required and must be non-empty."

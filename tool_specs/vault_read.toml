@@ -1,0 +1,16 @@
+descriptor_version = 1
+tool_name = "vault:read"
+short_description = "Read a vault file by relative_path."
+when_to_use = "Use when you need exact file contents from the workspace vault."
+when_not_to_use = "Do not use for listing directories or writing files."
+routing_hints = ["read file", "open note", "show file", "inspect markdown"]
+
+[[examples_good]]
+name = "read_project_note"
+args = { relative_path = "10_Episodic/today.md" }
+rationale = "Reads a concrete file by relative path."
+
+[[examples_bad]]
+name = "wrong_field_name"
+args = { path = "10_Episodic/today.md" }
+rationale = "Invalid key; must use relative_path."

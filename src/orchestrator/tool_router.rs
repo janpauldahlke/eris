@@ -2,6 +2,7 @@ use std::sync::Arc;
 use ollama_rs::Ollama;
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use crate::executive::error::{FcpError, Result};
+use crate::tools::ToolDescriptorRegistry;
 
 pub struct ToolRouter {
     ollama: Arc<Ollama>,
@@ -76,12 +77,13 @@ impl ToolRouter {
         ollama: Arc<Ollama>,
         embed_model: String,
         tool_descriptions: Vec<(String, String)>,
+        descriptors: Option<Arc<ToolDescriptorRegistry>>,
         threshold: f32,
     ) -> Result<Self> {
         let mut tool_embeddings = Vec::with_capacity(tool_descriptions.len());
 
         for (name, description) in &tool_descriptions {
-            let text = Self::enrich_for_routing(&name, &description);
+            let text = Self::enrich_for_routing(&name, &description, descriptors.as_deref());
             let embedding = Self::embed(&ollama, &embed_model, &text).await?;
             tool_embeddings.push((name.clone(), embedding));
             tracing::debug!(tool = %name, "Pre-computed tool embedding");
@@ -96,7 +98,18 @@ impl ToolRouter {
         Ok(Self { ollama, embed_model, tool_embeddings, threshold })
     }
 
-    fn enrich_for_routing(name: &str, description: &str) -> String {
+    fn enrich_for_routing(name: &str, description: &str, descriptors: Option<&ToolDescriptorRegistry>) -> String {
+        if let Some(registry) = descriptors
+            && let Some(desc) = registry.get(name)
+            && !desc.routing_hints.is_empty()
+        {
+            return format!(
+                "{}: {}. Common triggers: {}",
+                name,
+                description,
+                desc.routing_hints.join(", ")
+            );
+        }
         let hints = match name {
             "vault:read" => "reading files, checking notes, looking at documents, show me, what is in my vault, review notes, open file, read my notes",
             "vault:write" => "writing files, saving notes, creating documents, write this down, save to vault, take a note, jot down, record",

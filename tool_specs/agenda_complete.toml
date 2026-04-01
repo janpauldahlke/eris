@@ -1,0 +1,16 @@
+descriptor_version = 1
+tool_name = "agenda:complete"
+short_description = "Mark a queued agenda task as completed."
+when_to_use = "Use after finishing a background task to close it."
+when_not_to_use = "Do not use to create tasks."
+routing_hints = ["task done", "complete task", "mark done"]
+
+[[examples_good]]
+name = "complete_task"
+args = { id = "task-uuid", result = "Completed successfully" }
+rationale = "Closes an existing task by id."
+
+[[examples_bad]]
+name = "missing_id"
+args = { result = "done" }
+rationale = "id is required."

@@ -1,0 +1,16 @@
+descriptor_version = 1
+tool_name = "web:artifact_query"
+short_description = "Query a previously fetched web artifact by artifact_id."
+when_to_use = "Use after web:fetch to extract targeted snippets."
+when_not_to_use = "Do not use without a valid artifact_id from web:fetch."
+routing_hints = ["search fetched page", "query artifact", "find in web artifact"]
+
+[[examples_good]]
+name = "query_artifact"
+args = { artifact_id = "artifact-uuid", query = "latest updates", top_k = 3 }
+rationale = "Queries cached web chunks."
+
+[[examples_bad]]
+name = "missing_artifact_id"
+args = { query = "updates" }
+rationale = "artifact_id is required."

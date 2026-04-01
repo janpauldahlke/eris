@@ -49,6 +49,12 @@ impl Gatekeeper {
             .collect()
     }
 
+    pub fn registered_tool_names(&self) -> Vec<String> {
+        let mut names = self.registry.keys().cloned().collect::<Vec<_>>();
+        names.sort();
+        names
+    }
+
     pub fn get_allowed_tools(&self, state: &AgentState) -> Vec<Value> {
         self.registry.values()
             .filter(|tool| Self::state_allows_tool(state, tool.name()))

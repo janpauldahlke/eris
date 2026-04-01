@@ -1,0 +1,16 @@
+descriptor_version = 1
+tool_name = "agenda:push"
+short_description = "Queue a background agenda task."
+when_to_use = "Use to create a new background task for later completion."
+when_not_to_use = "Do not use to read tasks or mark completion."
+routing_hints = ["add task", "remind me", "todo", "queue task"]
+
+[[examples_good]]
+name = "push_task"
+args = { description = "Summarize today's logs" }
+rationale = "Creates a pending task."
+
+[[examples_bad]]
+name = "missing_description"
+args = {}
+rationale = "description is required."

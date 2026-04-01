@@ -1,6 +1,7 @@
 use crate::executive::error::Result;
 use crate::engine::LlmEngine;
 use crate::tools::Gatekeeper;
+use crate::tools::ToolDescriptorRegistry;
 use crate::memory::ephemeral::EphemeralMemory;
 use crate::orchestrator::state::{AgentState, LoopDirective, LlmResponse, LoopAction, ToolIntentStatus, ToolIntentTicket};
 use crate::orchestrator::context::ContextAssembler;
@@ -39,6 +40,9 @@ pub struct Orchestrator<E: LlmEngine> {
     pub last_tool_ms: u64,
     pub last_total_ms: u64,
     pub last_top_tool_match: Option<String>,
+    pub descriptor_jit_top_k: usize,
+    pub descriptor_jit_max_chars: usize,
+    pub descriptor_registry: Option<Arc<ToolDescriptorRegistry>>,
 }
 
 impl<E: LlmEngine> Orchestrator<E> {
@@ -114,9 +118,12 @@ impl<E: LlmEngine> Orchestrator<E> {
         max_tool_rounds: u8,
         condensation_threshold: f32,
         num_ctx: usize,
+        descriptor_jit_top_k: usize,
+        descriptor_jit_max_chars: usize,
         interrupt_rx: tokio::sync::watch::Receiver<()>,
         tui_tx: Option<tokio::sync::mpsc::Sender<crate::ui::events::TuiEvent>>,
         tool_router: Option<ToolRouter>,
+        descriptor_registry: Option<Arc<ToolDescriptorRegistry>>,
     ) -> Self {
         Self {
             state: AgentState::Idle,
@@ -141,7 +148,93 @@ impl<E: LlmEngine> Orchestrator<E> {
             last_tool_ms: 0,
             last_total_ms: 0,
             last_top_tool_match: None,
+            descriptor_jit_top_k,
+            descriptor_jit_max_chars,
+            descriptor_registry,
         }
+    }
+
+    fn build_descriptor_jit_guidance(
+        &self,
+        state: &AgentState,
+        router_matches: &[String],
+        targeted_tools: &HashSet<String>,
+    ) -> Option<String> {
+        let registry = self.descriptor_registry.as_ref()?;
+        let mut selected = if !targeted_tools.is_empty() {
+            targeted_tools.iter().cloned().collect::<Vec<_>>()
+        } else {
+            router_matches
+                .iter()
+                .take(self.descriptor_jit_top_k.max(1))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        if selected.is_empty() {
+            return None;
+        }
+        selected.sort();
+        selected.dedup();
+
+        let allowed_names = self
+            .gatekeeper
+            .get_allowed_tools(state)
+            .into_iter()
+            .filter_map(|t| {
+                t.get("function")
+                    .and_then(|f| f.get("name"))
+                    .and_then(|n| n.as_str())
+                    .map(|s| s.to_string())
+            })
+            .collect::<HashSet<_>>();
+
+        let mut sections = Vec::new();
+        let mut used = 0usize;
+        let max_chars = self.descriptor_jit_max_chars.max(500);
+        for name in selected {
+            if !allowed_names.contains(&name) {
+                continue;
+            }
+            let Some(desc) = registry.get(&name) else {
+                continue;
+            };
+            let snippet = format!(
+                "Tool: {}\nWhen to use: {}\nWhen not to use: {}\nGood examples: {}\nBad examples: {}",
+                desc.tool_name,
+                desc.when_to_use.as_deref().unwrap_or("n/a"),
+                desc.when_not_to_use.as_deref().unwrap_or("n/a"),
+                desc.examples_good
+                    .iter()
+                    .take(2)
+                    .map(|e| format!("{} {}", e.name, e.args))
+                    .collect::<Vec<_>>()
+                    .join(" | "),
+                desc.examples_bad
+                    .iter()
+                    .take(2)
+                    .map(|e| format!("{} {}", e.name, e.args))
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            );
+            if used + snippet.len() > max_chars {
+                break;
+            }
+            used += snippet.len();
+            sections.push(snippet);
+        }
+        if sections.is_empty() {
+            return None;
+        }
+        tracing::debug!(
+            jit_section_chars = used,
+            jit_section_cap = max_chars,
+            selected_tools = sections.len(),
+            "Descriptor JIT guidance budget usage"
+        );
+        Some(format!(
+            "[JIT TOOL GUIDANCE]\nUse the following targeted tool guidance while keeping args fully compliant with provided JSON schemas.\n{}\n[/JIT TOOL GUIDANCE]",
+            sections.join("\n\n")
+        ))
     }
 
 
@@ -181,6 +274,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         self.broadcast_state().await;
 
         // ── Pre-LLM semantic routing ─────────────────────────────────
+        let mut pre_llm_matched_tools: Vec<String> = Vec::new();
         let mut tools_needed = if let Some(router) = &self.tool_router {
             let user_input = self.chat_stack.iter().rev()
                 .find(|m| m.role == "user")
@@ -196,6 +290,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                     false
                 }
                 Ok(matches) => {
+                    pre_llm_matched_tools = matches.iter().map(|(name, _)| name.clone()).collect();
                     self.last_router_ms = router_started.elapsed().as_millis() as u64;
                     self.last_top_tool_match = matches.first().map(|(name, score)| format!("{name}({score:.3})"));
                     tracing::info!(
@@ -247,6 +342,18 @@ impl<E: LlmEngine> Orchestrator<E> {
             };
             tracing::debug!(prompt_len = system_prompt.len(), "System prompt assembled");
             Self::upsert_system_prompt(&mut self.chat_stack, system_prompt);
+            if tools_needed
+                && let Some(jit_guidance) = self.build_descriptor_jit_guidance(
+                    &self.state,
+                    &pre_llm_matched_tools,
+                    &targeted_tools,
+                )
+            {
+                self.chat_stack.push(crate::engine::Message {
+                    role: "system".to_string(),
+                    content: jit_guidance,
+                });
+            }
 
             tracing::info!(chat_stack_len = self.chat_stack.len(), "Sending to LLM engine");
 
@@ -808,7 +915,10 @@ mod tests {
             5,
             0.8,
             4096,
+            3,
+            6000,
             rx,
+            None,
             None,
             None,
         );
@@ -832,7 +942,7 @@ mod tests {
         let vault_root = Path::new("/tmp/vault");
         let (tx, rx) = tokio::sync::watch::channel(());
         Box::leak(Box::new(tx)); // Prevent sender from dropping, which would trigger `rx.changed()`
-        Orchestrator::new(engine, gatekeeper, ephemeral, vault_root, "test_ws", 3, 5, 0.8, 4096, rx, None, None)
+        Orchestrator::new(engine, gatekeeper, ephemeral, vault_root, "test_ws", 3, 5, 0.8, 4096, 3, 6000, rx, None, None, None)
     }
 
     #[test]
@@ -1100,7 +1210,10 @@ mod tests {
             5,
             0.8,
             4096,
+            3,
+            6000,
             rx,
+            None,
             None,
             None,
         );
@@ -1197,7 +1310,10 @@ mod tests {
             5,
             0.8,
             4096,
+            3,
+            6000,
             rx,
+            None,
             None,
             None,
         );

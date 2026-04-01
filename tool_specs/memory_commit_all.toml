@@ -1,0 +1,16 @@
+descriptor_version = 1
+tool_name = "memory:commit_all"
+short_description = "Commit all currently staged memories with best effort."
+when_to_use = "Use to persist all staged entries in one operation."
+when_not_to_use = "Do not use when only one staged item should be committed."
+routing_hints = ["commit all memories", "flush staged memory", "bulk commit staged"]
+
+[[examples_good]]
+name = "commit_all"
+args = {}
+rationale = "Commits all staged entries."
+
+[[examples_bad]]
+name = "unexpected_arg"
+args = { force = true }
+rationale = "Tool does not require args."
