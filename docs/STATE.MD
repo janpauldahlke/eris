@@ -55,4 +55,4 @@
 - [x] REFACTOR Phase B (S6.01): completly rework web:search // making ingest a util
 - [x] IMPROVEMENT (S07_TUI): better status indictors and guards to improve message queue
 - [x] IMPROVEMENT (S05): use \*.toml as tools example to seperate rust code and description -> /tool_specs created
-- [] REFACTOR (S04): resolve technical debth, breaking down core.s and create a dedicated /loop to distinct policies and code
+- [x] REFACTOR (S04): resolve technical debth, breaking down core.s and create a dedicated /loop to distinct policies and code

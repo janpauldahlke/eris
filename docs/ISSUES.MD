@@ -1,6 +1,6 @@
-- about the tools, am thinking about describing each individual tool in a seperate json, to give the SML to prevent hallcuicnations on tools - an example for the usage. - by this i want to sepeate actual code and jsons formats
+- TUI command deck is not nice to write, we added the softwarp but it makes addtional white spaces, incorrect cursor positions
+- using back to delete chars is not working, we need to check on this.
 
-- on sigkill and /exit we need to have a good tear down
-  -> when i hardquit, the models are still running, on eris chat we need to check with like ollama ps which models run and start them!, also tear down lifecycle maybe adding a pending SHUTTING down to the TUI
-- persistency to the pyhsical vault.
-  -> we need to analyse this, atm block are saved in the semantic brain, but when staged we need them to be moved to the vault into markdowns, this
+# web artifacts do reach - episodic.
+
+- they shouldnt, they are bloat. maybe only maybe the final out of the question could reach it, think about a nested place fpr it, to tag with like news and move it into episodic/news -> question is, is it good to bloat news form the media into the episidic pyhsically, it could and nmighthas it place in semantic but not on the disc space
