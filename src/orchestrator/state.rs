@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentState {
@@ -54,20 +55,30 @@ impl LlmResponse {
     }
 }
 
-/// Lightweight response shape for the conversational pre-check (no tools).
-#[derive(Debug, Clone, Deserialize)]
-pub struct ConversationalResponse {
-    #[serde(default)]
-    pub thought: String,
-    pub message_to_user: Option<String>,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum LoopDirective {
     ExecuteTools(Vec<ToolCall>),
     HaltAndAwaitInput(Option<String>),
     ShiftToReflection,
     RecoverFromFuckup(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolIntentStatus {
+    Pending,
+    Success,
+    FailedRecoverable,
+    FailedFatal,
+}
+
+#[derive(Debug, Clone)]
+pub struct ToolIntentTicket {
+    pub intent_id: String,
+    pub tool_name: String,
+    pub args: Value,
+    pub status: ToolIntentStatus,
+    pub attempt_count: u8,
+    pub last_error: Option<String>,
 }
 
 #[cfg(test)]

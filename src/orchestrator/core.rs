@@ -2,10 +2,11 @@ use crate::executive::error::Result;
 use crate::engine::LlmEngine;
 use crate::tools::Gatekeeper;
 use crate::memory::ephemeral::EphemeralMemory;
-use crate::orchestrator::state::{AgentState, LoopDirective, LlmResponse, LoopAction, ConversationalResponse};
+use crate::orchestrator::state::{AgentState, LoopDirective, LlmResponse, LoopAction, ToolIntentStatus, ToolIntentTicket};
 use crate::orchestrator::context::ContextAssembler;
 use crate::orchestrator::tool_router::ToolRouter;
-use futures::future;
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::path::Path;
 
@@ -34,6 +35,26 @@ pub struct Orchestrator<E: LlmEngine> {
 }
 
 impl<E: LlmEngine> Orchestrator<E> {
+    fn normalize_json(value: &serde_json::Value) -> serde_json::Value {
+        match value {
+            serde_json::Value::Object(map) => {
+                let mut sorted = BTreeMap::new();
+                for (k, v) in map {
+                    sorted.insert(k.clone(), Self::normalize_json(v));
+                }
+                let mut normalized = serde_json::Map::new();
+                for (k, v) in sorted {
+                    normalized.insert(k, v);
+                }
+                serde_json::Value::Object(normalized)
+            }
+            serde_json::Value::Array(arr) => {
+                serde_json::Value::Array(arr.iter().map(Self::normalize_json).collect())
+            }
+            other => other.clone(),
+        }
+    }
+
     fn agent_name(&self) -> String {
         let workspace_root = self
             .context_assembler
@@ -122,7 +143,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         self.broadcast_state().await;
 
         // ── Pre-LLM semantic routing ─────────────────────────────────
-        let tools_needed = if let Some(router) = &self.tool_router {
+        let mut tools_needed = if let Some(router) = &self.tool_router {
             let user_input = self.chat_stack.iter().rev()
                 .find(|m| m.role == "user")
                 .map(|m| m.content.as_str())
@@ -145,47 +166,9 @@ impl<E: LlmEngine> Orchestrator<E> {
         } else {
             true
         };
-
-        // ── Conversational fast-path (no tools) ──────────────────────
-        if !tools_needed {
-            let conv_prompt = self.context_assembler
-                .assemble_conversational(&self.ephemeral)
-                .await?;
-
-            Self::upsert_system_prompt(&mut self.chat_stack, conv_prompt);
-
-            tracing::info!(chat_stack_len = self.chat_stack.len(), "Conversational generation");
-
-            let response = self.engine.generate(&self.chat_stack, "", None).await?;
-            tracing::debug!(raw = %response.content, "Conversational LLM output");
-
-            let json_slice = Self::extract_json_slice(&response.content);
-            let message = serde_json::from_str::<ConversationalResponse>(json_slice)
-                .ok()
-                .and_then(|p| p.message_to_user)
-                .unwrap_or_else(|| response.content.clone());
-
-            if !message.trim().is_empty() {
-                if let Some(tx) = &self.tui_tx {
-                    let agent_name = self.agent_name();
-                    let _ = tx
-                        .send(crate::ui::events::TuiEvent::IncomingMessage(
-                            format!("[{}]: {}", agent_name, message),
-                        ))
-                        .await;
-                }
-            }
-
-            self.chat_stack.push(crate::engine::Message {
-                role: "assistant".to_string(),
-                content: response.content,
-            });
-            self.state = AgentState::Idle;
-            self.tool_rounds = 0;
-            self.recovery_count = 0;
-            self.broadcast_state().await;
-            return Ok(());
-        }
+        let mut execution_ledger: HashMap<String, ToolIntentTicket> = HashMap::new();
+        let mut schema_recovery_attempted: HashSet<String> = HashSet::new();
+        let mut targeted_tools: HashSet<String> = HashSet::new();
 
         // ── Tool-enabled loop (full schemas) ─────────────────────────
         loop {
@@ -204,7 +187,16 @@ impl<E: LlmEngine> Orchestrator<E> {
             }
 
             // 2. Context Assembly (WITH tool schemas)
-            let system_prompt = self.context_assembler.assemble(&self.state, &self.ephemeral, &self.gatekeeper).await?;
+            let system_prompt = if !tools_needed {
+                self.context_assembler.assemble_conversational(&self.ephemeral).await?
+            } else if !targeted_tools.is_empty() {
+                let tool_names = targeted_tools.iter().cloned().collect::<Vec<_>>();
+                self.context_assembler
+                    .assemble_with_selected_tools(&self.state, &self.ephemeral, &self.gatekeeper, &tool_names)
+                    .await?
+            } else {
+                self.context_assembler.assemble(&self.state, &self.ephemeral, &self.gatekeeper).await?
+            };
             tracing::debug!(prompt_len = system_prompt.len(), "System prompt assembled");
             Self::upsert_system_prompt(&mut self.chat_stack, system_prompt);
 
@@ -299,29 +291,63 @@ impl<E: LlmEngine> Orchestrator<E> {
                     return Ok(());
                 }
                 LoopDirective::ExecuteTools(tools) => {
+                    if !tools_needed {
+                        tracing::info!(tool_count = tools.len(), "Latent tool intent detected in conversational path");
+                    }
                     tracing::info!(tool_count = tools.len(), "Executing tool calls");
                     let current_state = self.state;
-                    let exec_futures = tools.into_iter().map(|tool_call| {
-                        let gatekeeper = &self.gatekeeper;
-                        async move {
-                            tracing::info!(tool = %tool_call.name, args = %tool_call.args, state = ?current_state, "Dispatching tool");
-                            let name = tool_call.name;
-                            let args = tool_call.args;
-                            let result = gatekeeper.execute_tool(&current_state, &name, args).await;
-                            (name, result)
-                        }
-                    });
-
-                    let results = future::join_all(exec_futures).await;
                     let mut recoverable_msg: Option<String> = None;
                     let mut fatal_error = None;
+                    let mut targeted_recovery_requested = false;
+                    let mut executed_success_count = 0usize;
+                    let mut suppressed_duplicate_count = 0usize;
+                    let mut recoverable_fail_count = 0usize;
+                    let mut fatal_fail_count = 0usize;
 
-                    for (tool_name, result) in results {
+                    for tool_call in tools {
+                        let tool_name = tool_call.name;
+                        let args = tool_call.args;
+                        let intent_id = Self::tool_fingerprint(&tool_name, &args);
+                        if let Some(existing) = execution_ledger.get(&intent_id)
+                            && matches!(existing.status, ToolIntentStatus::Pending | ToolIntentStatus::Success)
+                        {
+                            tracing::warn!(tool = %tool_name, intent_id = %intent_id, "Duplicate tool call suppressed in current turn");
+                            suppressed_duplicate_count += 1;
+                            let msg = format!("[SYSTEM] Duplicate tool call suppressed for '{}'. Continue without repeating it.", tool_name);
+                            self.chat_stack.push(crate::engine::Message {
+                                role: "system".to_string(),
+                                content: msg.clone(),
+                            });
+                            if let Some(tx) = &self.tui_tx {
+                                let _ = tx.send(crate::ui::events::TuiEvent::SystemError(msg)).await;
+                            }
+                            continue;
+                        }
+                        let prev_attempts = execution_ledger
+                            .get(&intent_id)
+                            .map(|t| t.attempt_count)
+                            .unwrap_or(0);
+                        execution_ledger.insert(intent_id.clone(), ToolIntentTicket {
+                            intent_id: intent_id.clone(),
+                            tool_name: tool_name.clone(),
+                            args: args.clone(),
+                            status: ToolIntentStatus::Pending,
+                            attempt_count: prev_attempts.saturating_add(1),
+                            last_error: None,
+                        });
+                        tracing::debug!(tool = %tool_name, intent_id = %intent_id, "Intent ticket set to Pending");
+                        tracing::info!(tool = %tool_name, args = %args, state = ?current_state, "Dispatching tool");
+                        let result = self.gatekeeper.execute_tool(&current_state, &tool_name, args.clone()).await;
                         match result {
                             Ok(result) => {
+                                if let Some(ticket) = execution_ledger.get_mut(&intent_id) {
+                                    ticket.status = ToolIntentStatus::Success;
+                                    ticket.last_error = None;
+                                }
+                                executed_success_count += 1;
                                 self.tool_rounds += 1;
                                 self.recovery_count = 0;
-                                tracing::info!(tool = %tool_name, result_len = result.len(), round = self.tool_rounds, "Tool succeeded");
+                                tracing::info!(tool = %tool_name, intent_id = %intent_id, result_len = result.len(), round = self.tool_rounds, "Tool succeeded");
                                 let msg = format!("Tool '{}' succeeded: {}", tool_name, result);
                                 self.chat_stack.push(crate::engine::Message {
                                     role: "system".to_string(),
@@ -333,19 +359,90 @@ impl<E: LlmEngine> Orchestrator<E> {
                                 self.broadcast_state().await;
                             }
                             Err(e) => {
-                                tracing::error!(tool = %tool_name, error = %e, error_type = ?std::mem::discriminant(&e), "Tool execution failed");
+                                tracing::error!(tool = %tool_name, intent_id = %intent_id, error = %e, error_type = ?std::mem::discriminant(&e), "Tool execution failed");
+                                if let Some(ticket) = execution_ledger.get_mut(&intent_id) {
+                                    ticket.last_error = Some(e.to_string());
+                                }
+                                if Self::is_schema_or_parse_tool_error(&e)
+                                    && !schema_recovery_attempted.contains(&tool_name)
+                                {
+                                    schema_recovery_attempted.insert(tool_name.clone());
+                                    targeted_tools.insert(tool_name.clone());
+                                    targeted_recovery_requested = true;
+                                    tracing::warn!(tool = %tool_name, "Schema-fault recovery armed for tool");
+                                }
                                 if Self::is_recoverable_tool_error(&e) {
+                                    recoverable_fail_count += 1;
+                                    if let Some(ticket) = execution_ledger.get_mut(&intent_id) {
+                                        ticket.status = ToolIntentStatus::FailedRecoverable;
+                                    }
                                     if recoverable_msg.is_none() {
                                         recoverable_msg = Some(e.to_string());
                                     }
                                 } else {
-                                    tracing::error!(error = %e, "System fatality detected during parallel tool execution");
+                                    fatal_fail_count += 1;
+                                    if let Some(ticket) = execution_ledger.get_mut(&intent_id) {
+                                        ticket.status = ToolIntentStatus::FailedFatal;
+                                    }
+                                    tracing::error!(error = %e, "System fatality detected during tool execution");
                                     if fatal_error.is_none() {
                                         fatal_error = Some(e);
                                     }
                                 }
                             }
                         }
+                    }
+
+                    let pending_count = execution_ledger.values().filter(|t| matches!(t.status, ToolIntentStatus::Pending)).count();
+                    if pending_count > 0 {
+                        tracing::error!(pending_count, "Pending-state closure invariant violated");
+                        self.state = AgentState::Idle;
+                        self.broadcast_state().await;
+                        return Err(crate::executive::error::FcpError::EngineFault(
+                            format!("Tool intent ledger invariant violated: {pending_count} pending intents after dispatch"),
+                        ));
+                    }
+
+                    tracing::info!(
+                        executed_success_count,
+                        suppressed_duplicate_count,
+                        recoverable_fail_count,
+                        fatal_fail_count,
+                        "Tool batch outcome summary"
+                    );
+
+                    if executed_success_count == 0
+                        && recoverable_fail_count == 0
+                        && fatal_fail_count == 0
+                        && suppressed_duplicate_count > 0
+                    {
+                        tracing::info!("All tool intents in batch were duplicate-suppressed; halting turn early");
+                        self.state = AgentState::Idle;
+                        self.tool_rounds = 0;
+                        self.recovery_count = 0;
+                        self.broadcast_state().await;
+                        return Ok(());
+                    }
+
+                    if targeted_recovery_requested {
+                        tools_needed = true;
+                        self.recovery_count += 1;
+                        self.state = AgentState::Recover;
+                        let selected = targeted_tools.iter().cloned().collect::<Vec<_>>();
+                        let msg = format!(
+                            "[SYSTEM RECOVERY] Tool schema fault detected. Retrying with targeted schemas for: {:?}",
+                            selected
+                        );
+                        self.chat_stack.push(crate::engine::Message {
+                            role: "system".to_string(),
+                            content: msg.clone(),
+                        });
+                        tracing::info!(targeted_tools = ?selected, "Triggering targeted schema-fault recovery retry");
+                        if let Some(tx) = &self.tui_tx {
+                            let _ = tx.send(crate::ui::events::TuiEvent::SystemError(msg)).await;
+                        }
+                        self.broadcast_state().await;
+                        continue;
                     }
 
                     if let Some(e) = fatal_error {
@@ -418,6 +515,30 @@ impl<E: LlmEngine> Orchestrator<E> {
                 | crate::executive::error::FcpError::Io(_)
                 | crate::executive::error::FcpError::ParseFault(_)
         )
+    }
+
+    fn is_schema_or_parse_tool_error(e: &crate::executive::error::FcpError) -> bool {
+        matches!(
+            e,
+            crate::executive::error::FcpError::SchemaViolation(_)
+                | crate::executive::error::FcpError::ParseFault(_)
+        )
+    }
+
+    fn tool_fingerprint(name: &str, args: &serde_json::Value) -> String {
+        let normalized = Self::normalize_json(args);
+        let args_json = serde_json::to_string(&normalized).unwrap_or_else(|_| "null".to_string());
+        let mut hasher = Sha256::new();
+        hasher.update(name.as_bytes());
+        hasher.update(b"\n");
+        hasher.update(args_json.as_bytes());
+        let digest = hasher.finalize();
+        let mut hex = String::with_capacity(40);
+        for b in &digest[..20] {
+            use std::fmt::Write as _;
+            let _ = write!(&mut hex, "{:02x}", b);
+        }
+        hex
     }
 
     pub fn process_llm_response(&mut self, response_json: &str) -> LoopDirective {
@@ -507,6 +628,7 @@ mod tests {
     use super::*;
     use crate::engine::{Message, EngineResponse};
     use async_trait::async_trait;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::sync::mpsc;
     use crate::executive::error::Result;
 
@@ -698,6 +820,42 @@ mod tests {
         assert_eq!(orchestrator.state, AgentState::Chat);
     }
 
+    #[test]
+    fn test_tool_fingerprint_is_stable_for_same_payload() {
+        let args = serde_json::json!({"title":"hagbard_profile","tags":["person","contact"]});
+        let a = Orchestrator::<MockEngine>::tool_fingerprint("memory:stage", &args);
+        let b = Orchestrator::<MockEngine>::tool_fingerprint("memory:stage", &args);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_tool_fingerprint_canonicalizes_object_key_order() {
+        let a = serde_json::json!({
+            "content": "User name is Hagbard.",
+            "tags": ["person", "contact"],
+            "title": "hagbard_profile"
+        });
+        let b = serde_json::json!({
+            "title": "hagbard_profile",
+            "content": "User name is Hagbard.",
+            "tags": ["person", "contact"]
+        });
+        let fa = Orchestrator::<MockEngine>::tool_fingerprint("memory:stage", &a);
+        let fb = Orchestrator::<MockEngine>::tool_fingerprint("memory:stage", &b);
+        assert_eq!(fa, fb);
+    }
+
+    #[test]
+    fn test_schema_or_parse_error_detection() {
+        let schema_err = crate::executive::error::FcpError::SchemaViolation("bad args".to_string());
+        let parse_err = crate::executive::error::FcpError::ParseFault(serde_json::Error::io(std::io::Error::other("bad json")));
+        let net_err = crate::executive::error::FcpError::NetworkFault("offline".to_string());
+
+        assert!(Orchestrator::<MockEngine>::is_schema_or_parse_tool_error(&schema_err));
+        assert!(Orchestrator::<MockEngine>::is_schema_or_parse_tool_error(&parse_err));
+        assert!(!Orchestrator::<MockEngine>::is_schema_or_parse_tool_error(&net_err));
+    }
+
     #[tokio::test]
     async fn test_step_resets_counters_on_entry() {
         let json = r#"{
@@ -870,5 +1028,90 @@ mod tests {
         assert_eq!(orchestrator.chat_stack.len(), 1);
         assert!(orchestrator.chat_stack[0].content.contains("Test agenda task"));
         assert!(orchestrator.chat_stack[0].content.contains("agenda:complete"));
+    }
+
+    #[tokio::test]
+    async fn test_duplicate_only_batch_halts_without_extra_generation() {
+        #[derive(Clone)]
+        struct SequenceEngine {
+            responses: Arc<Vec<String>>,
+            calls: Arc<AtomicUsize>,
+        }
+
+        #[async_trait]
+        impl LlmEngine for SequenceEngine {
+            async fn generate(
+                &self,
+                _stack: &[Message],
+                _available_tools_json: &str,
+                _stream_tx: Option<mpsc::UnboundedSender<String>>
+            ) -> Result<EngineResponse> {
+                let idx = self.calls.fetch_add(1, Ordering::SeqCst);
+                let content = self
+                    .responses
+                    .get(idx)
+                    .cloned()
+                    .unwrap_or_else(|| self.responses.last().cloned().unwrap_or_else(|| "{\"status\":\"Idle\",\"message_to_user\":\"done\",\"tool_calls\":[]}".to_string()));
+                Ok(EngineResponse {
+                    content,
+                    prompt_tokens: 0,
+                    generated_tokens: 0,
+                })
+            }
+        }
+
+        let first = r#"{
+            "thought": "stage once",
+            "status": "Reflect",
+            "tool_calls": [{
+                "name": "memory:stage",
+                "args": {
+                    "title": "hagbard_profile",
+                    "content": "User name is Hagbard.",
+                    "tags": ["person","contact"]
+                }
+            }]
+        }"#.to_string();
+        let second_duplicate = first.clone();
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let engine = SequenceEngine {
+            responses: Arc::new(vec![first, second_duplicate]),
+            calls: calls.clone(),
+        };
+
+        let mut gatekeeper = Gatekeeper::new();
+        let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
+        gatekeeper.register(Arc::new(crate::tools::memory::MemoryStageTool {
+            ephemeral: ephemeral.clone(),
+            ttl_secs: 60,
+            max_content_chars: 10_000,
+        }));
+
+        let vault_root = Path::new("/tmp/vault");
+        let (tx, rx) = tokio::sync::watch::channel(());
+        Box::leak(Box::new(tx));
+
+        let mut orchestrator = Orchestrator::new(
+            engine,
+            gatekeeper,
+            ephemeral,
+            vault_root,
+            "test_ws",
+            3,
+            5,
+            0.8,
+            4096,
+            rx,
+            None,
+            None,
+        );
+        orchestrator.state = AgentState::Chat;
+        orchestrator.chat_stack.push(Message { role: "user".to_string(), content: "remember my name".to_string() });
+
+        let result = orchestrator.step(None).await;
+        assert!(result.is_ok());
+        assert_eq!(calls.load(Ordering::SeqCst), 2, "expected no extra LLM round after duplicate-only suppression");
+        assert_eq!(orchestrator.state, AgentState::Idle);
     }
 }

@@ -30,7 +30,53 @@ impl ContextAssembler {
         };
 
         let allowed_tools = gatekeeper.get_allowed_tools(state);
-        tracing::info!(state = ?state, tool_count = allowed_tools.len(), "Tools available for current state");
+        Self::build_tool_prompt(identity_content, allowed_tools)
+    }
+
+    pub async fn assemble_with_selected_tools(
+        &self,
+        state: &AgentState,
+        _ephemeral: &EphemeralMemory,
+        gatekeeper: &Gatekeeper,
+        selected_tools: &[String],
+    ) -> Result<String> {
+        let identity_path = self.core_dir.join("Identity.md");
+        tracing::debug!(path = %identity_path.display(), "Loading identity file");
+        let identity_content = match tokio::fs::read_to_string(&identity_path).await {
+            Ok(content) => {
+                tracing::info!(len = content.len(), "Identity loaded from vault");
+                content
+            }
+            Err(e) => {
+                tracing::warn!(path = %identity_path.display(), error = %e, "Identity file not found, using hardcoded fallback");
+                "You are E.R.I.S., an autonomous AI agent.".to_string()
+            }
+        };
+
+        let allowed_tools = gatekeeper
+            .get_allowed_tools(state)
+            .into_iter()
+            .filter(|tool| {
+                tool.get("function")
+                    .and_then(|f| f.get("name"))
+                    .and_then(|n| n.as_str())
+                    .map(|name| selected_tools.iter().any(|s| s == name))
+                    .unwrap_or(false)
+            })
+            .collect::<Vec<_>>();
+
+        tracing::info!(
+            state = ?state,
+            requested = ?selected_tools,
+            selected_count = allowed_tools.len(),
+            "Assembling targeted tool schema prompt"
+        );
+
+        Self::build_tool_prompt(identity_content, allowed_tools)
+    }
+
+    fn build_tool_prompt(identity_content: String, allowed_tools: Vec<serde_json::Value>) -> Result<String> {
+        tracing::info!(tool_count = allowed_tools.len(), "Tools included in assembled prompt");
         let tools_schema_string = serde_json::to_string_pretty(&allowed_tools)
             .unwrap_or_else(|_| "[]".to_string());
 

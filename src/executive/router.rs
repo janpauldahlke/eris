@@ -18,8 +18,33 @@ pub async fn execute_command(cmd: Commands, config: Arc<AppConfig>, cancel_token
             use ollama_rs::Ollama;
 
             let workspace_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            // 1. Setup channels + terminal early so startup status is visible in TUI telemetry.
+            let (tui_tx, tui_rx) = mpsc::channel(100);
+            let (action_tx, mut action_rx) = mpsc::channel::<String>(100);
+            let terminal = setup_terminal()?;
+            let _ = tui_tx
+                .send(crate::ui::events::TuiEvent::SystemError(
+                    "[startup] Checking peripheral daemons (Ollama, Qdrant)...".into(),
+                ))
+                .await;
+
             let mut peripheral_lifecycle =
                 crate::executive::peripherals::ensure_peripherals_for_chat(&config).await?;
+            let ollama_status = if peripheral_lifecycle.started_ollama() {
+                "started by eris"
+            } else {
+                "already running"
+            };
+            let qdrant_status = if peripheral_lifecycle.started_qdrant() {
+                "started by eris"
+            } else {
+                "already running"
+            };
+            let _ = tui_tx
+                .send(crate::ui::events::TuiEvent::SystemError(format!(
+                    "[startup] Peripheral readiness: ollama={ollama_status}, qdrant={qdrant_status}"
+                )))
+                .await;
 
             // 0. Ignition Sequence
             let seal_path = workspace_root.join(".fcp_seal");
@@ -32,13 +57,6 @@ pub async fn execute_command(cmd: Commands, config: Arc<AppConfig>, cancel_token
                 .map_err(|e| FcpError::Config(format!("Invalid ollama_host URL: {}", e)))?;
             let host = format!("{}://{}", parsed_url.scheme(), parsed_url.host_str().unwrap_or("localhost"));
             let port = parsed_url.port().unwrap_or(11434);
-
-            // 2. Setup channels
-            let (tui_tx, tui_rx) = mpsc::channel(100);
-            let (action_tx, mut action_rx) = mpsc::channel::<String>(100);
-
-            // 3. Setup Terminal
-            let terminal = setup_terminal()?;
 
             // 4. Build Engine
             let client = Ollama::new(host, port);
@@ -242,8 +260,14 @@ pub async fn execute_command(cmd: Commands, config: Arc<AppConfig>, cancel_token
 
             // 11. Teardown
             cancel_token.cancel();
-            peripheral_lifecycle.shutdown_started_peripherals();
             restore_terminal()?;
+            eprintln!("[shutdown] Tearing down owned peripheral daemons...");
+            let stopped = peripheral_lifecycle.shutdown_started_peripherals();
+            if stopped.is_empty() {
+                eprintln!("[shutdown] No peripheral daemons were started by this session.");
+            } else {
+                eprintln!("[shutdown] Stopped daemons: {}", stopped.join(", "));
+            }
             result
         }
         Commands::Run { prompt } => {

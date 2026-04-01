@@ -49,4 +49,5 @@
 01/04/2026
 
 - [x] refactor (s04): CHANGES ephemeral and staging process
-- [] refactor (S08_Preflight): harden init and tear down of peripheral systems
+- [x] refactor (S08_Preflight): harden init and tear down of peripheral systems // user info for this progress
+- [x] IMPROVEMENT (S03): introduce ticket like workflow for tools to avoid duplications in calls
