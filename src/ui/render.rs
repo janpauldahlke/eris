@@ -238,9 +238,15 @@ pub fn draw(f: &mut Frame, app: &TuiApp) {
     };
 
     let status_text = format!(
-        "{}\n{}\nT:{}/5 R:{}/3",
+        "{}\n{}\nT:{}/5 R:{}/3\nQ:{}\nrt:{}ms llm:{}ms\ntool:{}ms total:{}ms\nmatch:{}",
         pulse_str, state_label,
-        app.state.tool_rounds, app.state.recovery_count
+        app.state.tool_rounds, app.state.recovery_count,
+        app.state.queued_inputs.max(app.pending_inputs),
+        app.state.router_ms,
+        app.state.llm_ms,
+        app.state.tool_ms,
+        app.state.total_ms,
+        app.state.top_tool_match.as_deref().unwrap_or("-"),
     );
     let status = Paragraph::new(status_text)
         .style(Style::default().fg(state_color).bg(Color::Rgb(14, 16, 28)).add_modifier(Modifier::BOLD))
@@ -251,6 +257,26 @@ pub fn draw(f: &mut Frame, app: &TuiApp) {
     f.render_widget(status, bottom_bar[1]);
 
     // ── Input / Command Deck ─────────────────────────────────────
+    let queued = app.state.queued_inputs.max(app.pending_inputs);
+    let busy = app.state.state != AgentState::Idle || queued > 0;
+    let badge_face = if busy {
+        let frames = ["(>_<)", "(o_o)", "(>_<)", "(o_o)"];
+        frames[phase]
+    } else {
+        let frames = ["(^_^)", "(-_-)", "(^_^)", "(-_-)"];
+        frames[phase]
+    };
+    let badge_text = if busy {
+        format!(" BUSY q:{} ", queued)
+    } else {
+        " IDLE ".to_string()
+    };
+    let badge_color = if busy {
+        Color::Rgb(255, 209, 102)
+    } else {
+        Color::Rgb(92, 229, 190)
+    };
+
     let input_chunk = chunks[2];
     let inner_width = input_chunk.width.saturating_sub(2) as usize;
     let inner_height = input_chunk.height.saturating_sub(2) as usize;
@@ -278,7 +304,11 @@ pub fn draw(f: &mut Frame, app: &TuiApp) {
         .block(Block::default()
             .borders(Borders::ALL)
             .border_style(get_border_style(ActivePane::CommandDeck))
-            .title(" Command Deck "))
+            .title(Line::from(vec![
+                Span::styled(" Cmd ", Style::default().fg(Color::Rgb(120, 180, 255)).add_modifier(Modifier::BOLD)),
+                Span::styled(format!("{} ", badge_face), Style::default().fg(badge_color).add_modifier(Modifier::BOLD)),
+                Span::styled(badge_text, Style::default().fg(badge_color).add_modifier(Modifier::BOLD)),
+            ])))
         .scroll((input_scroll, 0))
         .wrap(Wrap { trim: false });
     f.render_widget(input, chunks[2]);

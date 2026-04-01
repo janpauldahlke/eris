@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::path::Path;
+use std::time::Instant;
 
 pub struct Orchestrator<E: LlmEngine> {
     pub state: AgentState,
@@ -32,6 +33,12 @@ pub struct Orchestrator<E: LlmEngine> {
     pub saved_chat_state: Option<Vec<crate::engine::Message>>,
     pub interrupt_rx: tokio::sync::watch::Receiver<()>,
     pub tui_tx: Option<tokio::sync::mpsc::Sender<crate::ui::events::TuiEvent>>,
+    pub queued_inputs: usize,
+    pub last_router_ms: u64,
+    pub last_llm_ms: u64,
+    pub last_tool_ms: u64,
+    pub last_total_ms: u64,
+    pub last_top_tool_match: Option<String>,
 }
 
 impl<E: LlmEngine> Orchestrator<E> {
@@ -128,6 +135,12 @@ impl<E: LlmEngine> Orchestrator<E> {
             saved_chat_state: None,
             interrupt_rx,
             tui_tx,
+            queued_inputs: 0,
+            last_router_ms: 0,
+            last_llm_ms: 0,
+            last_tool_ms: 0,
+            last_total_ms: 0,
+            last_top_tool_match: None,
         }
     }
 
@@ -139,6 +152,12 @@ impl<E: LlmEngine> Orchestrator<E> {
                 tool_rounds: self.tool_rounds,
                 recovery_count: self.recovery_count,
                 active_task: None,
+                queued_inputs: self.queued_inputs,
+                router_ms: self.last_router_ms,
+                llm_ms: self.last_llm_ms,
+                tool_ms: self.last_tool_ms,
+                total_ms: self.last_total_ms,
+                top_tool_match: self.last_top_tool_match.clone(),
             };
             let _ = tx.send(crate::ui::events::TuiEvent::StateUpdate(update)).await;
         }
@@ -152,6 +171,9 @@ impl<E: LlmEngine> Orchestrator<E> {
     /// exactly one LLM generation per user turn.
     #[allow(clippy::never_loop)]
     pub async fn step(&mut self, _user_input: Option<String>) -> Result<()> {
+        let step_start = Instant::now();
+        let mut llm_ms_acc = 0u64;
+        let mut tool_ms_acc = 0u64;
         self.recovery_count = 0;
         self.tool_rounds = 0;
         let mut web_tool_activity = false;
@@ -165,16 +187,26 @@ impl<E: LlmEngine> Orchestrator<E> {
                 .map(|m| m.content.as_str())
                 .unwrap_or("");
 
+            let router_started = Instant::now();
             match router.match_tools(user_input).await {
                 Ok(matches) if matches.is_empty() => {
+                    self.last_router_ms = router_started.elapsed().as_millis() as u64;
+                    self.last_top_tool_match = None;
                     tracing::info!("Pre-LLM routing: no tool match → conversational mode");
                     false
                 }
                 Ok(matches) => {
-                    tracing::info!(matched = ?matches, "Pre-LLM routing: tool match → tool mode");
+                    self.last_router_ms = router_started.elapsed().as_millis() as u64;
+                    self.last_top_tool_match = matches.first().map(|(name, score)| format!("{name}({score:.3})"));
+                    tracing::info!(
+                        matched = ?matches.iter().map(|(n,s)| format!("{}({:.3})", n, s)).collect::<Vec<_>>(),
+                        "Pre-LLM routing: tool match → tool mode"
+                    );
                     true
                 }
                 Err(e) => {
+                    self.last_router_ms = router_started.elapsed().as_millis() as u64;
+                    self.last_top_tool_match = None;
                     tracing::warn!(error = %e, "Pre-LLM routing failed, defaulting to tool mode");
                     true
                 }
@@ -220,7 +252,12 @@ impl<E: LlmEngine> Orchestrator<E> {
 
             // 3. Engine Generation
             let response_result = tokio::select! {
-                res = self.engine.generate(&self.chat_stack, "", None) => res,
+                res = async {
+                    let llm_started = Instant::now();
+                    let out = self.engine.generate(&self.chat_stack, "", None).await;
+                    llm_ms_acc = llm_ms_acc.saturating_add(llm_started.elapsed().as_millis() as u64);
+                    out
+                } => res,
                 _ = self.interrupt_rx.changed() => {
                     self.saved_chat_state = Some(self.chat_stack.clone());
                     self.chat_stack.clear();
@@ -371,7 +408,9 @@ impl<E: LlmEngine> Orchestrator<E> {
                         });
                         tracing::debug!(tool = %tool_name, intent_id = %intent_id, "Intent ticket set to Pending");
                         tracing::info!(tool = %tool_name, args = %args, state = ?current_state, "Dispatching tool");
+                        let tool_started = Instant::now();
                         let result = self.gatekeeper.execute_tool(&current_state, &tool_name, args.clone()).await;
+                        tool_ms_acc = tool_ms_acc.saturating_add(tool_started.elapsed().as_millis() as u64);
                         match result {
                             Ok(result) => {
                                 if let Some(ticket) = execution_ledger.get_mut(&intent_id) {
@@ -524,6 +563,10 @@ impl<E: LlmEngine> Orchestrator<E> {
                     self.broadcast_state().await;
                 }
             }
+            self.last_llm_ms = llm_ms_acc;
+            self.last_tool_ms = tool_ms_acc;
+            self.last_total_ms = step_start.elapsed().as_millis() as u64;
+            self.broadcast_state().await;
         }
     }
 

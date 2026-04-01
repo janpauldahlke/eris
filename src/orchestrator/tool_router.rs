@@ -11,6 +11,25 @@ pub struct ToolRouter {
 }
 
 impl ToolRouter {
+    fn is_short_input_without_explicit_tool_intent(text: &str) -> bool {
+        let trimmed = text.trim();
+        let token_count = trimmed.split_whitespace().count();
+        let is_short = token_count <= 3 || trimmed.chars().count() <= 15;
+        if !is_short {
+            return false;
+        }
+        let lower = trimmed.to_lowercase();
+        let explicit = lower.starts_with('/')
+            || lower.contains("http://")
+            || lower.contains("https://")
+            || lower.contains("www.")
+            || Self::has_domain_like_token(&lower)
+            || lower.contains("search web for")
+            || lower.contains("search the web")
+            || lower.contains("look up online");
+        !explicit
+    }
+
     fn has_domain_like_token(text: &str) -> bool {
         text.split_whitespace().any(|raw| {
             let token = raw
@@ -121,8 +140,16 @@ impl ToolRouter {
     /// Embed the LLM's thought and compare against all tool embeddings.
     /// Returns tool names whose similarity exceeds the threshold, sorted by
     /// descending similarity.
-    pub async fn match_tools(&self, thought: &str) -> Result<Vec<String>> {
+    pub async fn match_tools(&self, thought: &str) -> Result<Vec<(String, f32)>> {
         if thought.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        if Self::is_short_input_without_explicit_tool_intent(thought) {
+            tracing::info!(
+                event = "SHORT_INPUT_GUARD",
+                thought_preview = %thought.chars().take(80).collect::<String>(),
+                "Short input without explicit tool intent forced to conversational mode"
+            );
             return Ok(Vec::new());
         }
 
@@ -152,17 +179,16 @@ impl ToolRouter {
                 "Semantic tool matches"
             );
         }
-        let mut tools: Vec<String> = hits.into_iter().map(|(name, _)| name).collect();
-        if Self::has_web_lexical_intent(thought) && !tools.iter().any(|t| t == "web:fetch") {
+        if Self::has_web_lexical_intent(thought) && !hits.iter().any(|(t, _)| t == "web:fetch") {
             tracing::info!(
                 event = "LEXICAL_TOOL_GUARD",
                 forced_tool = "web:fetch",
                 thought_preview = %thought.chars().take(120).collect::<String>(),
                 "Forcing web:fetch due to lexical web intent"
             );
-            tools.push("web:fetch".to_string());
+            hits.push(("web:fetch".to_string(), 1.0));
         }
-        Ok(tools)
+        Ok(hits)
     }
 }
 
@@ -219,5 +245,12 @@ mod tests {
     fn test_web_lexical_intent_with_domain_token() {
         assert!(ToolRouter::has_web_lexical_intent("please open heise.de/newsticker"));
         assert!(!ToolRouter::has_web_lexical_intent("tell me about rust traits"));
+    }
+
+    #[test]
+    fn test_short_input_guard_without_explicit_intent() {
+        assert!(ToolRouter::is_short_input_without_explicit_tool_intent("test"));
+        assert!(!ToolRouter::is_short_input_without_explicit_tool_intent("https://example.com"));
+        assert!(!ToolRouter::is_short_input_without_explicit_tool_intent("/health"));
     }
 }

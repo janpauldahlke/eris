@@ -10,6 +10,7 @@ pub async fn execute_command(cmd: Commands, config: Arc<AppConfig>, cancel_token
             use crate::ui::terminal::{setup_terminal, restore_terminal};
             use crate::ui::TuiApp;
             use tokio::sync::mpsc;
+            use std::collections::VecDeque;
             use crate::orchestrator::core::Orchestrator;
             use crate::engine::ollama::OllamaClient;
             use crate::memory::ephemeral::EphemeralMemory;
@@ -20,7 +21,7 @@ pub async fn execute_command(cmd: Commands, config: Arc<AppConfig>, cancel_token
             let workspace_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
             // 1. Setup channels + terminal early so startup status is visible in TUI telemetry.
             let (tui_tx, tui_rx) = mpsc::channel(100);
-            let (action_tx, mut action_rx) = mpsc::channel::<String>(100);
+            let (action_tx, mut action_rx) = mpsc::channel::<crate::ui::events::UserAction>(100);
             let terminal = setup_terminal()?;
             let _ = tui_tx
                 .send(crate::ui::events::TuiEvent::SystemError(
@@ -194,7 +195,7 @@ pub async fn execute_command(cmd: Commands, config: Arc<AppConfig>, cancel_token
             crate::orchestrator::heartbeat::spawn_heartbeat_monitor(
                 last_input_time.clone(),
                 config.idle_timeout_secs,
-                interrupt_tx,
+                interrupt_tx.clone(),
                 cancel_token.clone(),
             );
 
@@ -236,38 +237,71 @@ pub async fn execute_command(cmd: Commands, config: Arc<AppConfig>, cancel_token
             // 9. Spawn orchestrator loop
             let tui_tx_err = tui_tx.clone();
             let cancel_token_loop = cancel_token.clone();
+            let interrupt_tx_user = interrupt_tx.clone();
             tokio::spawn(async move {
+                let mut pending_inputs: VecDeque<String> = VecDeque::new();
                 loop {
                     tokio::select! {
-                        Some(msg) = action_rx.recv() => {
-                            tracing::info!(msg_len = msg.len(), "User input received");
-                            last_input_time.store(
-                                std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap_or_default()
-                                    .as_secs(),
-                                std::sync::atomic::Ordering::Relaxed,
-                            );
-                            orchestrator.chat_stack.push(crate::engine::Message {
-                                role: "user".to_string(),
-                                content: msg,
-                            });
-                            orchestrator.state = crate::orchestrator::state::AgentState::Chat;
-                            if let Err(e) = orchestrator.step(None).await {
-                                if matches!(e, FcpError::Interrupted) {
-                                    tracing::info!("Orchestrator interrupted by heartbeat, continuing loop");
-                                    continue;
+                        Some(action) = action_rx.recv() => {
+                            match action {
+                                crate::ui::events::UserAction::CancelCurrentTurn => {
+                                    tracing::info!("User requested cancel current turn");
+                                    let _ = interrupt_tx_user.send(());
+                                    let _ = tui_tx_err.send(crate::ui::events::TuiEvent::SystemError("[ui] Cancel requested".into())).await;
                                 }
-                                let err_msg = format!("[FATAL ERROR] Orchestrator halted: {}", e);
-                                tracing::error!(error = %e, "Orchestrator fatal error");
-                                let _ = tui_tx_err.send(crate::ui::events::TuiEvent::SystemError(err_msg)).await;
-                                break;
+                                crate::ui::events::UserAction::Submit(msg) => {
+                                    let trimmed = msg.trim().to_string();
+                                    if trimmed.is_empty() {
+                                        continue;
+                                    }
+                                    if pending_inputs.len() >= 3 {
+                                        let _ = pending_inputs.pop_front();
+                                        let _ = tui_tx_err.send(crate::ui::events::TuiEvent::SystemError("[ui] Queue full; dropped oldest queued input".into())).await;
+                                    }
+                                    pending_inputs.push_back(trimmed);
+                                    if pending_inputs.len() > 1 {
+                                        let _ = tui_tx_err.send(crate::ui::events::TuiEvent::SystemError(format!(
+                                            "[ui] Processing older request ({} newer queued)",
+                                            pending_inputs.len() - 1
+                                        ))).await;
+                                    }
+                                }
                             }
                         }
                         _ = cancel_token_loop.cancelled() => {
                             tracing::info!("Orchestrator loop received cancellation signal");
                             break;
                         }
+                    }
+
+                    while let Some(msg) = pending_inputs.pop_front() {
+                        orchestrator.queued_inputs = pending_inputs.len();
+                        orchestrator.broadcast_state().await;
+                        tracing::info!(msg_len = msg.len(), queued = pending_inputs.len(), "User input received");
+                        last_input_time.store(
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs(),
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        orchestrator.chat_stack.push(crate::engine::Message {
+                            role: "user".to_string(),
+                            content: msg,
+                        });
+                        orchestrator.state = crate::orchestrator::state::AgentState::Chat;
+                        if let Err(e) = orchestrator.step(None).await {
+                            if matches!(e, FcpError::Interrupted) {
+                                tracing::info!("Orchestrator interrupted by heartbeat, continuing loop");
+                                continue;
+                            }
+                            let err_msg = format!("[FATAL ERROR] Orchestrator halted: {}", e);
+                            tracing::error!(error = %e, "Orchestrator fatal error");
+                            let _ = tui_tx_err.send(crate::ui::events::TuiEvent::SystemError(err_msg)).await;
+                            break;
+                        }
+                        orchestrator.queued_inputs = pending_inputs.len();
+                        orchestrator.broadcast_state().await;
                     }
                 }
             });

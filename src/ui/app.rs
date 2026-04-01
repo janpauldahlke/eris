@@ -1,12 +1,13 @@
 use tokio::sync::mpsc;
 use crate::executive::error::{Result, FcpError};
-use crate::ui::events::{TuiEvent, AgentStateUpdate};
+use crate::ui::events::{TuiEvent, AgentStateUpdate, UserAction};
 use crossterm::event::{Event as CrosstermEvent, EventStream, KeyCode};
 use tokio_stream::StreamExt;
 use std::time::Duration;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use std::io::Stdout;
+use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActivePane {
@@ -18,7 +19,7 @@ pub enum ActivePane {
 
 pub struct TuiApp {
     pub rx: mpsc::Receiver<TuiEvent>,
-    pub action_tx: mpsc::Sender<String>,
+    pub action_tx: mpsc::Sender<UserAction>,
     pub input: String,
     pub chat_stack: Vec<String>,
     pub system_messages: Vec<String>,
@@ -32,10 +33,12 @@ pub struct TuiApp {
     pub command_deck_follow_latest: bool,
     pub active_pane: ActivePane,
     pub tick_count: u64,
+    pub pending_inputs: usize,
+    last_submit: Option<(String, Instant)>,
 }
 
 impl TuiApp {
-    pub fn new(rx: mpsc::Receiver<TuiEvent>, action_tx: mpsc::Sender<String>) -> Self {
+    pub fn new(rx: mpsc::Receiver<TuiEvent>, action_tx: mpsc::Sender<UserAction>) -> Self {
         Self {
             rx,
             action_tx,
@@ -47,6 +50,12 @@ impl TuiApp {
                 tool_rounds: 0,
                 recovery_count: 0,
                 active_task: None,
+                queued_inputs: 0,
+                router_ms: 0,
+                llm_ms: 0,
+                tool_ms: 0,
+                total_ms: 0,
+                top_tool_match: None,
             },
             running: true,
             chat_scroll: 0,
@@ -57,6 +66,8 @@ impl TuiApp {
             command_deck_follow_latest: true,
             active_pane: ActivePane::Main,
             tick_count: 0,
+            pending_inputs: 0,
+            last_submit: None,
         }
     }
 
@@ -99,6 +110,7 @@ impl TuiApp {
                                 chat_scroll = self.chat_scroll,
                                 "Incoming message appended to deck"
                             );
+                            self.pending_inputs = self.pending_inputs.saturating_sub(1);
                         }
                         TuiEvent::SystemError(err) => self.system_messages.push(err),
                         _ => {}
@@ -127,8 +139,31 @@ impl TuiApp {
                     }
 
                     self.chat_stack.push(format!("You: {}", trimmed));
-                    let _ = self.action_tx.send(msg).await;
+                    let normalized = trimmed.to_lowercase();
+                    let now = Instant::now();
+                    let busy = self.state.state != crate::orchestrator::state::AgentState::Idle;
+                    if busy {
+                        if let Some((last_text, last_time)) = &self.last_submit
+                            && *last_text == normalized
+                            && now.duration_since(*last_time) <= Duration::from_secs(3)
+                        {
+                            self.system_messages.push("[ui] Duplicate input suppressed while busy".to_string());
+                            return;
+                        }
+                        if self.pending_inputs >= 3 {
+                            self.system_messages.push("[ui] Queue full (3). Keeping latest, dropping oldest queued input.".to_string());
+                            self.pending_inputs = 2;
+                        }
+                        self.system_messages.push(format!("[ui] Assistant busy. Message queued ({} pending).", self.pending_inputs + 1));
+                    }
+                    self.last_submit = Some((normalized, now));
+                    self.pending_inputs += 1;
+                    let _ = self.action_tx.send(UserAction::Submit(msg)).await;
                 }
+            }
+            KeyCode::Esc => {
+                let _ = self.action_tx.send(UserAction::CancelCurrentTurn).await;
+                self.system_messages.push("[ui] Cancel requested (Esc)".to_string());
             }
             KeyCode::Char(c) => {
                 self.input.push(c);

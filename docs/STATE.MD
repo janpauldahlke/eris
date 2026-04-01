@@ -52,4 +52,5 @@
 - [x] refactor (S08_Preflight): harden init and tear down of peripheral systems // user info for this progress
 - [x] IMPROVEMENT (S03): introduce ticket like workflow for tools to avoid duplications in calls
 - [x] REFACTOR Phase A (S6.01): completly rework web:search improved chuking // in memory // llm lense
-- [] REFACTOR Phase B (S6.01): completly rework web:search // making ingest a util
+- [x] REFACTOR Phase B (S6.01): completly rework web:search // making ingest a util
+- [x] IMPROVEMENT (S07_TUI): better status indictors and guards to improve message queue
