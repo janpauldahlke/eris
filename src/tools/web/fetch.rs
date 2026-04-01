@@ -1,5 +1,7 @@
 use crate::executive::error::{FcpError, Result};
+use crate::ingest::bound_chunks_and_preview;
 use crate::memory::ephemeral::EphemeralMemory;
+use crate::memory::semantic::SemanticBrain;
 use crate::tools::traits::Tool;
 use async_trait::async_trait;
 use schemars::JsonSchema;
@@ -25,6 +27,7 @@ pub struct WebFetchTool {
     preview_chars: usize,
     artifact_ttl_secs: u64,
     ephemeral: Arc<EphemeralMemory>,
+    semantic: Option<Arc<SemanticBrain>>,
 }
 
 impl WebFetchTool {
@@ -35,6 +38,7 @@ impl WebFetchTool {
         preview_chars: usize,
         artifact_ttl_secs: u64,
         ephemeral: Arc<EphemeralMemory>,
+        semantic: Option<Arc<SemanticBrain>>,
     ) -> Self {
         let client = Client::builder()
             .timeout(Duration::from_secs(timeout_secs))
@@ -49,6 +53,7 @@ impl WebFetchTool {
             preview_chars,
             artifact_ttl_secs,
             ephemeral,
+            semantic,
         }
     }
 }
@@ -66,37 +71,6 @@ struct WebFetchReceipt {
     chunk_count: usize,
     preview_head: String,
     next_step_hint: String,
-}
-
-fn truncate_char_boundary(input: &str, max_len: usize) -> String {
-    if input.len() <= max_len {
-        return input.to_string();
-    }
-    let mut limit = max_len;
-    while limit > 0 && !input.is_char_boundary(limit) {
-        limit -= 1;
-    }
-    input[..limit].to_string()
-}
-
-fn split_into_chunks(input: &str, chunk_chars: usize) -> Vec<String> {
-    if input.trim().is_empty() {
-        return Vec::new();
-    }
-    let mut out = Vec::new();
-    let mut start = 0usize;
-    while start < input.len() {
-        let mut end = (start + chunk_chars).min(input.len());
-        while end > start && !input.is_char_boundary(end) {
-            end -= 1;
-        }
-        if end == start {
-            break;
-        }
-        out.push(input[start..end].to_string());
-        start = end;
-    }
-    out
 }
 
 fn sanitize_markdown_noise(markdown: &str) -> String {
@@ -162,8 +136,12 @@ impl Tool for WebFetchTool {
             .build();
         let markdown = converter.convert(&html).unwrap_or_else(|_| "Failed to parse HTML".into());
         let sanitized = sanitize_markdown_noise(&markdown);
-        let bounded = truncate_char_boundary(&sanitized, self.max_bytes);
-        let chunks = split_into_chunks(&bounded, self.chunk_chars.max(256));
+        let (chunks, preview_head) = bound_chunks_and_preview(
+            &sanitized,
+            self.max_bytes,
+            self.chunk_chars,
+            self.preview_chars,
+        );
 
         if chunks.is_empty() {
             return Ok("No meaningful content extracted from URL.".to_string());
@@ -185,7 +163,22 @@ impl Tool for WebFetchTool {
             )
             .await?;
 
-        let preview_head = truncate_char_boundary(&chunks[0], self.preview_chars.max(128));
+        if let Some(semantic) = &self.semantic {
+            for (chunk_index, chunk) in chunks.iter().enumerate() {
+                if let Err(e) = semantic
+                    .upsert_web_chunk(&stored.staged_id, &parsed.url, chunk_index, chunk)
+                    .await
+                {
+                    tracing::warn!(
+                        artifact_id = %stored.staged_id,
+                        chunk_index,
+                        error = %e,
+                        "Failed to index web artifact chunk; lexical fallback remains available"
+                    );
+                }
+            }
+        }
+
         let receipt = WebFetchReceipt {
             artifact_id: stored.staged_id,
             url: parsed.url,
@@ -218,7 +211,7 @@ mod tests {
             .await;
 
         let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
-        let tool = WebFetchTool::new(5, 50, 32, 32, 60, ephemeral);
+        let tool = WebFetchTool::new(5, 50, 32, 32, 60, ephemeral, None);
         let args = json!({ "url": format!("{}/large", server.uri()) });
 
         let result = tool.execute(args).await.expect("Execution failed");
@@ -237,7 +230,7 @@ mod tests {
             .await;
 
         let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
-        let tool = WebFetchTool::new(5, 20480, 1024, 256, 60, ephemeral);
+        let tool = WebFetchTool::new(5, 20480, 1024, 256, 60, ephemeral, None);
         let args = json!({ "url": format!("{}/missing", server.uri()) });
 
         let result = tool.execute(args).await.expect("Execution failed");
@@ -247,7 +240,7 @@ mod tests {
     #[tokio::test]
     async fn test_schema_violation_malformed_url() {
         let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
-        let tool = WebFetchTool::new(5, 20480, 1024, 256, 60, ephemeral);
+        let tool = WebFetchTool::new(5, 20480, 1024, 256, 60, ephemeral, None);
         let args = json!({ "url": "not-a-link" });
 
         let result = tool.execute(args).await;

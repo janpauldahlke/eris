@@ -2,10 +2,17 @@ use crate::executive::error::{FcpError, Result};
 use crate::config::AppConfig;
 use std::sync::Arc;
 use qdrant_client::Qdrant;
-use qdrant_client::qdrant::{CreateCollectionBuilder, Distance, VectorParamsBuilder, PointStruct, SearchPointsBuilder, UpsertPointsBuilder};
+use qdrant_client::qdrant::{Condition, CreateCollectionBuilder, DeletePointsBuilder, Distance, Filter, VectorParamsBuilder, PointStruct, SearchPointsBuilder, UpsertPointsBuilder};
 use ollama_rs::Ollama;
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use std::collections::HashMap;
+
+#[derive(Debug, Clone)]
+pub struct SemanticChunkHit {
+    pub chunk_index: usize,
+    pub snippet: String,
+    pub score: f32,
+}
 
 #[derive(Clone)]
 pub struct SemanticBrain {
@@ -76,6 +83,107 @@ impl SemanticBrain {
             .await
             .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
 
+        Ok(())
+    }
+
+    pub async fn upsert_web_chunk(
+        &self,
+        artifact_id: &str,
+        url: &str,
+        chunk_index: usize,
+        text: &str,
+    ) -> Result<()> {
+        let embedding = self.generate_embedding(text).await?;
+        let id = uuid::Uuid::new_v4().to_string();
+
+        let mut payload: HashMap<String, serde_json::Value> = HashMap::new();
+        payload.insert("text".to_string(), serde_json::json!(text));
+        payload.insert("source".to_string(), serde_json::json!("web_artifact"));
+        payload.insert("artifact_id".to_string(), serde_json::json!(artifact_id));
+        payload.insert("url".to_string(), serde_json::json!(url));
+        payload.insert("chunk_index".to_string(), serde_json::json!(chunk_index));
+        payload.insert("tags".to_string(), serde_json::json!(vec!["web_artifact"]));
+
+        let point = PointStruct::new(id, embedding, payload);
+        self.client
+            .upsert_points(UpsertPointsBuilder::new(&self.config.qdrant_collection, vec![point]))
+            .await
+            .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
+
+        Ok(())
+    }
+
+    pub async fn search_web_artifact(
+        &self,
+        query: &str,
+        artifact_id: &str,
+        limit: usize,
+    ) -> Result<Vec<SemanticChunkHit>> {
+        let embedding = self.generate_embedding(query).await?;
+        let oversample = (limit.max(1) * 4) as u64;
+        let search_result = self
+            .client
+            .search_points(
+                SearchPointsBuilder::new(&self.config.qdrant_collection, embedding, oversample)
+                    .with_payload(true),
+            )
+            .await
+            .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
+
+        let mut out = Vec::new();
+        for point in search_result.result {
+            let payload = point.payload;
+            let Some(artifact_val) = payload.get("artifact_id") else {
+                continue;
+            };
+            let Some(qdrant_client::qdrant::value::Kind::StringValue(found_artifact_id)) = &artifact_val.kind else {
+                continue;
+            };
+            if found_artifact_id != artifact_id {
+                continue;
+            }
+
+            let text = payload
+                .get("text")
+                .and_then(|v| v.kind.as_ref())
+                .and_then(|k| match k {
+                    qdrant_client::qdrant::value::Kind::StringValue(s) => Some(s.clone()),
+                    _ => None,
+                })
+                .unwrap_or_default();
+            let chunk_index = payload
+                .get("chunk_index")
+                .and_then(|v| v.kind.as_ref())
+                .and_then(|k| match k {
+                    qdrant_client::qdrant::value::Kind::IntegerValue(i) => usize::try_from(*i).ok(),
+                    _ => None,
+                })
+                .unwrap_or(0);
+
+            out.push(SemanticChunkHit {
+                chunk_index,
+                snippet: text,
+                score: point.score,
+            });
+            if out.len() >= limit.max(1) {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    pub async fn delete_web_artifact_points(&self, artifact_id: &str) -> Result<()> {
+        self.client
+            .delete_points(
+                DeletePointsBuilder::new(&self.config.qdrant_collection)
+                    .points(Filter::must([Condition::matches(
+                        "artifact_id",
+                        artifact_id.to_string(),
+                    )]))
+                    .wait(true),
+            )
+            .await
+            .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
         Ok(())
     }
 

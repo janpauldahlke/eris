@@ -17,6 +17,7 @@ pub mod workspace;
 pub mod engine;
 pub mod memory;
 pub mod tools;
+pub mod ingest;
 pub mod orchestrator;
 pub mod ui;
 

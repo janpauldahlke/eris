@@ -100,6 +100,13 @@ impl EphemeralMemory {
             .collect()
     }
 
+    pub fn collect_expired_entries(&self) -> Vec<CacheValue> {
+        self.cache
+            .iter()
+            .filter_map(|(_, v)| Self::is_expired(v.expires_at).then_some(v.clone()))
+            .collect()
+    }
+
     pub async fn snapshot_to_disk(&self, vault_root: &std::path::Path) -> Result<()> {
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
         
@@ -208,12 +215,24 @@ pub fn spawn_snapshot_daemon(
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    let expired_ids = memory.collect_expired_ids();
-                    for staged_id in &expired_ids {
+                    let expired_entries = memory.collect_expired_entries();
+                    for entry in &expired_entries {
+                        if entry.tags.iter().any(|t| t == "web_artifact")
+                            && let Some(semantic) = &_semantic
+                            && let Err(e) = semantic.delete_web_artifact_points(&entry.staged_id).await
+                        {
+                            tracing::warn!(
+                                staged_id = %entry.staged_id,
+                                error = %e,
+                                "Failed to cleanup vector points for expired web artifact"
+                            );
+                        }
+                    }
+                    for staged_id in expired_entries.iter().map(|e| &e.staged_id) {
                         memory.cache.invalidate(staged_id).await;
                     }
-                    if !expired_ids.is_empty() {
-                        tracing::info!(count = expired_ids.len(), "Expired staged entries removed from ephemeral memory");
+                    if !expired_entries.is_empty() {
+                        tracing::info!(count = expired_entries.len(), "Expired staged entries removed from ephemeral memory");
                     }
 
                     if let Err(e) = memory.snapshot_to_disk(&vault_root).await {

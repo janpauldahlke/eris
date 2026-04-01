@@ -1,5 +1,7 @@
 use crate::executive::error::{FcpError, Result};
+use crate::ingest::{trim_chars, trim_snippets_to_budget};
 use crate::memory::ephemeral::EphemeralMemory;
+use crate::memory::semantic::SemanticBrain;
 use crate::tools::traits::Tool;
 use async_trait::async_trait;
 use schemars::schema::RootSchema;
@@ -24,7 +26,7 @@ struct WebArtifact {
 #[derive(Serialize)]
 struct ArtifactMatch {
     chunk_index: usize,
-    score: usize,
+    score: f32,
     snippet: String,
 }
 
@@ -37,6 +39,7 @@ struct ArtifactQueryResponse {
 
 pub struct WebArtifactQueryTool {
     pub ephemeral: Arc<EphemeralMemory>,
+    pub semantic: Option<Arc<SemanticBrain>>,
     pub max_snippet_chars: usize,
     pub max_total_chars: usize,
 }
@@ -54,29 +57,31 @@ fn score_chunk(chunk: &str, tokens: &[String]) -> usize {
     tokens.iter().map(|t| usize::from(c.contains(t))).sum()
 }
 
-fn trim_chars(input: &str, max_len: usize) -> String {
-    if input.len() <= max_len {
-        return input.to_string();
-    }
-    let mut limit = max_len;
-    while limit > 0 && !input.is_char_boundary(limit) {
-        limit -= 1;
-    }
-    input[..limit].to_string()
-}
+fn lexical_matches(
+    chunks: &[String],
+    query: &str,
+    top_k: usize,
+    max_snippet_chars: usize,
+) -> Vec<ArtifactMatch> {
+    let tokens = tokenize(query);
+    let mut scored: Vec<(usize, usize)> = chunks
+        .iter()
+        .enumerate()
+        .map(|(idx, c)| (idx, score_chunk(c, &tokens)))
+        .collect();
+    scored.sort_by(|a, b| b.1.cmp(&a.1));
 
-fn trim_response_budget(matches: &mut [ArtifactMatch], max_total_chars: usize) {
-    let mut used = 0usize;
-    for m in matches {
-        if used >= max_total_chars {
-            m.snippet.clear();
-            continue;
-        }
-        let remaining = max_total_chars - used;
-        let trimmed = trim_chars(&m.snippet, remaining);
-        used += trimmed.len();
-        m.snippet = trimmed;
-    }
+    scored
+        .into_iter()
+        .take(top_k)
+        .filter_map(|(idx, score)| {
+            chunks.get(idx).map(|chunk| ArtifactMatch {
+                chunk_index: idx,
+                score: score as f32,
+                snippet: trim_chars(chunk, max_snippet_chars),
+            })
+        })
+        .collect::<Vec<_>>()
 }
 
 #[async_trait]
@@ -109,28 +114,36 @@ impl Tool for WebArtifactQueryTool {
             })?;
         let artifact: WebArtifact = serde_json::from_str(&entry.data).map_err(FcpError::ParseFault)?;
         let top_k = args.top_k.unwrap_or(3).clamp(1, 3);
-        let tokens = tokenize(&args.query);
-
-        let mut scored: Vec<(usize, usize)> = artifact
-            .chunks
+        let mut matches = if let Some(semantic) = &self.semantic {
+            match semantic
+                .search_web_artifact(&args.query, &args.artifact_id, top_k)
+                .await
+            {
+                Ok(semantic_hits) if !semantic_hits.is_empty() => semantic_hits
+                    .into_iter()
+                    .map(|hit| ArtifactMatch {
+                        chunk_index: hit.chunk_index,
+                        score: hit.score,
+                        snippet: trim_chars(&hit.snippet, self.max_snippet_chars),
+                    })
+                    .collect::<Vec<_>>(),
+                Ok(_) => lexical_matches(&artifact.chunks, &args.query, top_k, self.max_snippet_chars),
+                Err(e) => {
+                    tracing::warn!(error = %e, "Semantic artifact query failed; using lexical fallback");
+                    lexical_matches(&artifact.chunks, &args.query, top_k, self.max_snippet_chars)
+                }
+            }
+        } else {
+            lexical_matches(&artifact.chunks, &args.query, top_k, self.max_snippet_chars)
+        };
+        let mut snippets = matches
             .iter()
-            .enumerate()
-            .map(|(idx, c)| (idx, score_chunk(c, &tokens)))
-            .collect();
-        scored.sort_by(|a, b| b.1.cmp(&a.1));
-
-        let mut matches = scored
-            .into_iter()
-            .take(top_k)
-            .filter_map(|(idx, score)| {
-                artifact.chunks.get(idx).map(|chunk| ArtifactMatch {
-                    chunk_index: idx,
-                    score,
-                    snippet: trim_chars(chunk, self.max_snippet_chars),
-                })
-            })
+            .map(|m| m.snippet.clone())
             .collect::<Vec<_>>();
-        trim_response_budget(&mut matches, self.max_total_chars.max(512));
+        trim_snippets_to_budget(&mut snippets, self.max_total_chars.max(512));
+        for (m, snippet) in matches.iter_mut().zip(snippets.into_iter()) {
+            m.snippet = snippet;
+        }
 
         let response = ArtifactQueryResponse {
             artifact_id: args.artifact_id,
@@ -164,6 +177,7 @@ mod tests {
 
         let tool = WebArtifactQueryTool {
             ephemeral: mem,
+            semantic: None,
             max_snippet_chars: 64,
             max_total_chars: 256,
         };
