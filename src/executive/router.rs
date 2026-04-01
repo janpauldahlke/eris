@@ -67,6 +67,12 @@ pub async fn execute_command(cmd: Commands, config: Arc<AppConfig>, cancel_token
             // 5. Register ALL tools with the Gatekeeper
             let mut gatekeeper = Gatekeeper::new();
             let read_limit = (config.llm_context_window as f32 * config.vault_read_ratio) as usize;
+            let web_chunk_chars = read_limit.max(512);
+            let web_preview_chars = (web_chunk_chars / 2).max(256);
+            let effective_web_fetch_max_bytes = config
+                .web_fetch_max_bytes
+                .min(web_chunk_chars.saturating_mul(6))
+                .max(web_chunk_chars);
 
             gatekeeper.register(Arc::new(crate::tools::vault::VaultReadTool {
                 workspace_root: workspace_root.clone(),
@@ -90,8 +96,17 @@ pub async fn execute_command(cmd: Commands, config: Arc<AppConfig>, cancel_token
             }));
             gatekeeper.register(Arc::new(crate::tools::web::WebFetchTool::new(
                 config.web_fetch_timeout_secs,
-                config.web_fetch_max_bytes,
+                effective_web_fetch_max_bytes,
+                web_chunk_chars,
+                web_preview_chars,
+                config.ephemeral_ttl_secs,
+                ephemeral.clone(),
             )));
+            gatekeeper.register(Arc::new(crate::tools::web::WebArtifactQueryTool {
+                ephemeral: ephemeral.clone(),
+                max_snippet_chars: (web_chunk_chars / 3).clamp(300, 900),
+                max_total_chars: (web_chunk_chars / 2).clamp(1000, 2500),
+            }));
             gatekeeper.register(Arc::new(crate::tools::system::SystemHealthTool));
 
             let max_content_chars = config.num_ctx * 3;

@@ -97,6 +97,11 @@ impl ContextAssembler {
             3) Idle: use when done and waiting for user input. tool_calls MUST be [].\n\
             4) In Idle, message_to_user MUST be a non-empty user-facing reply.\n\
             5) If no tool is needed, NEVER choose Reflect.\n\n\
+            News/web answer style (when summarizing fetched web content):\n\
+            - Return at most 3-5 items.\n\
+            - Each item: headline + one concise sentence.\n\
+            - Do not inline long URLs inside each sentence.\n\
+            - Put links in a final 'Sources:' section.\n\n\
             Example (tool invocation):\n\
             {{\n\
               \"thought\": \"Need to read a vault note before answering.\",\n\

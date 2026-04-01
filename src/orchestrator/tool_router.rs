@@ -11,6 +11,48 @@ pub struct ToolRouter {
 }
 
 impl ToolRouter {
+    fn has_domain_like_token(text: &str) -> bool {
+        text.split_whitespace().any(|raw| {
+            let token = raw
+                .trim_matches(|c: char| !c.is_alphanumeric() && c != '.' && c != '-' && c != '/')
+                .to_lowercase();
+            token.contains('.')
+                && !token.starts_with('.')
+                && !token.ends_with('.')
+                && (token.ends_with(".de")
+                    || token.ends_with(".com")
+                    || token.ends_with(".org")
+                    || token.ends_with(".net")
+                    || token.ends_with(".io")
+                    || token.contains(".de/")
+                    || token.contains(".com/")
+                    || token.contains(".org/")
+                    || token.contains(".net/")
+                    || token.contains(".io/"))
+        })
+    }
+
+    fn has_web_lexical_intent(text: &str) -> bool {
+        let lower = text.to_lowercase();
+        if lower.contains("http://") || lower.contains("https://") || lower.contains("www.") {
+            return true;
+        }
+        if Self::has_domain_like_token(&lower) {
+            return true;
+        }
+        let phrases = [
+            "visit ",
+            "open ",
+            "read website",
+            "read the website",
+            "news from",
+            "check website",
+            "look up online",
+            "search the web",
+        ];
+        phrases.iter().any(|p| lower.contains(p))
+    }
+
     pub async fn new(
         ollama: Arc<Ollama>,
         embed_model: String,
@@ -49,6 +91,7 @@ impl ToolRouter {
             "agenda:list" => "show tasks, what is on my list, pending items, show agenda, my schedule, what do I have to do",
             "agenda:complete" => "finishing tasks, mark done, complete task, check off, task finished, I did it",
             "web:fetch" => "fetching URLs, web search, look up online, check website, browse internet, search the web, what is happening, news, look this up",
+            "web:artifact_query" => "query fetched web artifact by artifact id, search fetched page snippets, retrieve specific sections from buffered webpage",
             "system:health" => "system status, CPU usage, memory usage, disk space, health check, diagnostics, how is the system, performance, resources",
             _ => "",
         };
@@ -109,8 +152,17 @@ impl ToolRouter {
                 "Semantic tool matches"
             );
         }
-
-        Ok(hits.into_iter().map(|(name, _)| name).collect())
+        let mut tools: Vec<String> = hits.into_iter().map(|(name, _)| name).collect();
+        if Self::has_web_lexical_intent(thought) && !tools.iter().any(|t| t == "web:fetch") {
+            tracing::info!(
+                event = "LEXICAL_TOOL_GUARD",
+                forced_tool = "web:fetch",
+                thought_preview = %thought.chars().take(120).collect::<String>(),
+                "Forcing web:fetch due to lexical web intent"
+            );
+            tools.push("web:fetch".to_string());
+        }
+        Ok(tools)
     }
 }
 
@@ -155,5 +207,17 @@ mod tests {
         let b = vec![-1.0, 0.0];
         let sim = cosine_similarity(&a, &b);
         assert!((sim + 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_web_lexical_intent_with_url() {
+        assert!(ToolRouter::has_web_lexical_intent("visit https://www.spiegel.de and summarize"));
+        assert!(ToolRouter::has_web_lexical_intent("read www.zeit.de news"));
+    }
+
+    #[test]
+    fn test_web_lexical_intent_with_domain_token() {
+        assert!(ToolRouter::has_web_lexical_intent("please open heise.de/newsticker"));
+        assert!(!ToolRouter::has_web_lexical_intent("tell me about rust traits"));
     }
 }

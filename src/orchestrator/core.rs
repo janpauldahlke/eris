@@ -35,6 +35,8 @@ pub struct Orchestrator<E: LlmEngine> {
 }
 
 impl<E: LlmEngine> Orchestrator<E> {
+    const MAX_TOOL_RESULT_CHARS: usize = 2500;
+    const WEB_CONDENSATION_THRESHOLD: f32 = 0.85;
     fn normalize_json(value: &serde_json::Value) -> serde_json::Value {
         match value {
             serde_json::Value::Object(map) => {
@@ -79,6 +81,19 @@ impl<E: LlmEngine> Orchestrator<E> {
         } else {
             response_json
         }
+    }
+
+    fn trim_chars(input: &str, max_len: usize) -> String {
+        if input.len() <= max_len {
+            return input.to_string();
+        }
+        let mut limit = max_len;
+        while limit > 0 && !input.is_char_boundary(limit) {
+            limit -= 1;
+        }
+        let mut out = input[..limit].to_string();
+        out.push_str("… [truncated]");
+        out
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -139,6 +154,7 @@ impl<E: LlmEngine> Orchestrator<E> {
     pub async fn step(&mut self, _user_input: Option<String>) -> Result<()> {
         self.recovery_count = 0;
         self.tool_rounds = 0;
+        let mut web_tool_activity = false;
         tracing::info!(state = ?self.state, chat_stack_len = self.chat_stack.len(), "step() entered");
         self.broadcast_state().await;
 
@@ -256,6 +272,13 @@ impl<E: LlmEngine> Orchestrator<E> {
                     && !msg.trim().is_empty()
                 {
                     let agent_name = self.agent_name();
+                    tracing::info!(
+                        event = "UI_EMIT_INCOMING_MESSAGE",
+                        agent = %agent_name,
+                        msg_len = msg.len(),
+                        preview = %msg.chars().take(120).collect::<String>(),
+                        "Emitting assistant message to TUI deck"
+                    );
                     let _ = tx
                         .send(crate::ui::events::TuiEvent::IncomingMessage(
                             format!("[{}]: {}", agent_name, msg),
@@ -270,9 +293,20 @@ impl<E: LlmEngine> Orchestrator<E> {
             });
 
             let total_tokens = response.generated_tokens + response.prompt_tokens;
-            let threshold = (self.num_ctx as f32 * self.condensation_threshold) as usize;
+            let active_threshold_ratio = if web_tool_activity {
+                Self::WEB_CONDENSATION_THRESHOLD
+            } else {
+                self.condensation_threshold
+            };
+            let threshold = (self.num_ctx as f32 * active_threshold_ratio) as usize;
             if total_tokens > threshold {
-                tracing::warn!(total_tokens, threshold, "Token usage exceeds condensation threshold, running condenser");
+                tracing::warn!(
+                    total_tokens,
+                    threshold,
+                    active_threshold_ratio,
+                    web_tool_activity,
+                    "Token usage exceeds condensation threshold, running condenser"
+                );
                 self.execute_condensation().await?;
                 self.state = AgentState::Reflect;
                 self.broadcast_state().await;
@@ -345,10 +379,14 @@ impl<E: LlmEngine> Orchestrator<E> {
                                     ticket.last_error = None;
                                 }
                                 executed_success_count += 1;
+                                if tool_name.starts_with("web:") {
+                                    web_tool_activity = true;
+                                }
                                 self.tool_rounds += 1;
                                 self.recovery_count = 0;
                                 tracing::info!(tool = %tool_name, intent_id = %intent_id, result_len = result.len(), round = self.tool_rounds, "Tool succeeded");
-                                let msg = format!("Tool '{}' succeeded: {}", tool_name, result);
+                                let bounded_result = Self::trim_chars(&result, Self::MAX_TOOL_RESULT_CHARS);
+                                let msg = format!("Tool '{}' succeeded: {}", tool_name, bounded_result);
                                 self.chat_stack.push(crate::engine::Message {
                                     role: "system".to_string(),
                                     content: msg.clone(),
@@ -554,14 +592,25 @@ impl<E: LlmEngine> Orchestrator<E> {
             }
         };
 
+        let explicit_status = response.has_explicit_status();
         let status = response.status();
         tracing::info!(
             status = ?status,
+            explicit_status,
             thought_len = response.thought.len(),
             tool_count = response.tool_calls.len(),
             has_message = response.message_to_user.is_some(),
             "Parsed LLM response"
         );
+
+        if !explicit_status
+            && response.tool_calls.is_empty()
+            && response.message_to_user.as_ref().is_none_or(|m| m.trim().is_empty())
+        {
+            return LoopDirective::RecoverFromFuckup(
+                "Missing required `status` and no actionable fields (`tool_calls`/`message_to_user`)".to_string(),
+            );
+        }
 
         match status {
             LoopAction::Reflect => {
@@ -578,9 +627,12 @@ impl<E: LlmEngine> Orchestrator<E> {
                     LoopDirective::ExecuteTools(response.tool_calls)
                 }
             }
-            LoopAction::Idle => {
-                LoopDirective::HaltAndAwaitInput(response.message_to_user)
-            }
+            LoopAction::Idle => match response.message_to_user {
+                Some(msg) if !msg.trim().is_empty() => LoopDirective::HaltAndAwaitInput(Some(msg)),
+                _ => LoopDirective::RecoverFromFuckup(
+                    "Idle status requires non-empty message_to_user".to_string(),
+                ),
+            },
             LoopAction::Task => {
                 if !response.tool_calls.is_empty() {
                     LoopDirective::ExecuteTools(response.tool_calls)

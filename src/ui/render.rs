@@ -9,6 +9,30 @@ use crate::ui::TuiApp;
 use crate::orchestrator::state::AgentState;
 use crate::ui::app::ActivePane;
 
+fn push_multiline(
+    chat_lines: &mut Vec<Line>,
+    prefix: Option<(String, Style)>,
+    content: &str,
+    style: Style,
+) {
+    let mut lines = content.lines();
+    if let Some(first) = lines.next() {
+        if let Some((label, label_style)) = prefix.clone() {
+            chat_lines.push(Line::from(vec![
+                Span::styled(label, label_style),
+                Span::styled(first.to_string(), style),
+            ]));
+        } else {
+            chat_lines.push(Line::from(Span::styled(first.to_string(), style)));
+        }
+        for line in lines {
+            chat_lines.push(Line::from(Span::styled(line.to_string(), style)));
+        }
+    } else if let Some((label, label_style)) = prefix {
+        chat_lines.push(Line::from(vec![Span::styled(label, label_style)]));
+    }
+}
+
 fn wrap_input_lines(input: &str, width: usize) -> Vec<String> {
     if width == 0 {
         return vec![String::new()];
@@ -103,22 +127,34 @@ pub fn draw(f: &mut Frame, app: &TuiApp) {
     let mut chat_lines: Vec<Line> = Vec::new();
     for msg in &app.chat_stack {
         if let Some(rest) = msg.strip_prefix("You: ") {
-            chat_lines.push(Line::from(vec![
-                Span::styled("You: ", Style::default().fg(Color::Rgb(120, 180, 255)).add_modifier(Modifier::BOLD)),
-                Span::styled(rest.to_string(), Style::default().fg(Color::Rgb(214, 223, 255))),
-            ]));
+            push_multiline(
+                &mut chat_lines,
+                Some((
+                    "You: ".to_string(),
+                    Style::default().fg(Color::Rgb(120, 180, 255)).add_modifier(Modifier::BOLD),
+                )),
+                rest,
+                Style::default().fg(Color::Rgb(214, 223, 255)),
+            );
         } else if msg.starts_with('[') && msg.contains("]: ") {
             let split_idx = msg.find("]: ").unwrap_or(0);
             let (name_part, rest_part) = msg.split_at(split_idx + 3);
-            chat_lines.push(Line::from(vec![
-                Span::styled(name_part.to_string(), Style::default().fg(Color::Rgb(140, 255, 220)).add_modifier(Modifier::BOLD)),
-                Span::styled(rest_part.to_string(), Style::default().fg(Color::Rgb(245, 248, 255))),
-            ]));
+            push_multiline(
+                &mut chat_lines,
+                Some((
+                    name_part.to_string(),
+                    Style::default().fg(Color::Rgb(140, 255, 220)).add_modifier(Modifier::BOLD),
+                )),
+                rest_part.trim_start(),
+                Style::default().fg(Color::Rgb(245, 248, 255)),
+            );
         } else {
-            chat_lines.push(Line::from(Span::styled(
-                msg.clone(),
+            push_multiline(
+                &mut chat_lines,
+                None,
+                msg,
                 Style::default().fg(Color::Rgb(180, 186, 212)),
-            )));
+            );
         }
         chat_lines.push(Line::default());
     }

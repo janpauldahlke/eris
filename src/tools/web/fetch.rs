@@ -1,10 +1,13 @@
 use crate::executive::error::{FcpError, Result};
+use crate::memory::ephemeral::EphemeralMemory;
 use crate::tools::traits::Tool;
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use schemars::schema::RootSchema;
 use serde::Deserialize;
+use serde::Serialize;
 use serde_json::Value;
+use std::sync::Arc;
 use std::time::Duration;
 use reqwest::Client;
 use htmd::HtmlToMarkdown;
@@ -18,24 +21,114 @@ pub struct WebFetchArgs {
 pub struct WebFetchTool {
     client: Client,
     max_bytes: usize,
+    chunk_chars: usize,
+    preview_chars: usize,
+    artifact_ttl_secs: u64,
+    ephemeral: Arc<EphemeralMemory>,
 }
 
 impl WebFetchTool {
-    pub fn new(timeout_secs: u64, max_bytes: usize) -> Self {
+    pub fn new(
+        timeout_secs: u64,
+        max_bytes: usize,
+        chunk_chars: usize,
+        preview_chars: usize,
+        artifact_ttl_secs: u64,
+        ephemeral: Arc<EphemeralMemory>,
+    ) -> Self {
         let client = Client::builder()
             .timeout(Duration::from_secs(timeout_secs))
             .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
             .build()
             .unwrap_or_else(|_| Client::new());
 
-        Self { client, max_bytes }
+        Self {
+            client,
+            max_bytes,
+            chunk_chars,
+            preview_chars,
+            artifact_ttl_secs,
+            ephemeral,
+        }
     }
+}
+
+#[derive(Serialize, Deserialize)]
+struct WebArtifact {
+    url: String,
+    chunks: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct WebFetchReceipt {
+    artifact_id: String,
+    url: String,
+    chunk_count: usize,
+    preview_head: String,
+    next_step_hint: String,
+}
+
+fn truncate_char_boundary(input: &str, max_len: usize) -> String {
+    if input.len() <= max_len {
+        return input.to_string();
+    }
+    let mut limit = max_len;
+    while limit > 0 && !input.is_char_boundary(limit) {
+        limit -= 1;
+    }
+    input[..limit].to_string()
+}
+
+fn split_into_chunks(input: &str, chunk_chars: usize) -> Vec<String> {
+    if input.trim().is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    while start < input.len() {
+        let mut end = (start + chunk_chars).min(input.len());
+        while end > start && !input.is_char_boundary(end) {
+            end -= 1;
+        }
+        if end == start {
+            break;
+        }
+        out.push(input[start..end].to_string());
+        start = end;
+    }
+    out
+}
+
+fn sanitize_markdown_noise(markdown: &str) -> String {
+    let mut out = Vec::new();
+    for line in markdown.lines() {
+        let l = line.trim();
+        if l.is_empty() {
+            out.push(String::new());
+            continue;
+        }
+        let ll = l.to_lowercase();
+        if ll.contains("cookie settings")
+            || ll.contains("accept all cookies")
+            || ll.contains("consent preferences")
+            || ll.contains("subscribe")
+            || ll.contains("newsletter")
+            || ll.contains("advertisement")
+            || ll.contains("sponsored")
+            || ll.contains("privacy policy")
+            || ll.contains("terms of service")
+        {
+            continue;
+        }
+        out.push(line.to_string());
+    }
+    out.join("\n")
 }
 
 #[async_trait]
 impl Tool for WebFetchTool {
     fn name(&self) -> &'static str { "web:fetch" }
-    fn description(&self) -> &'static str { "Fetch a webpage and convert its content to Markdown." }
+    fn description(&self) -> &'static str { "Fetch webpage, sanitize/chunk externally, and return a compact artifact receipt." }
     fn parameters_schema(&self) -> RootSchema { schemars::schema_for!(WebFetchArgs) }
 
     async fn execute(&self, args: Value) -> Result<String> {
@@ -62,28 +155,56 @@ impl Tool for WebFetchTool {
             Err(e) => return Ok(format!("Error reading response body: {}", e)),
         };
 
-        let converter = HtmlToMarkdown::builder().skip_tags(vec!["script", "style", "nav", "footer"]).build();
-        let mut markdown = converter.convert(&html).unwrap_or_else(|_| "Failed to parse HTML".into());
+        let converter = HtmlToMarkdown::builder()
+            .skip_tags(vec![
+                "script", "style", "nav", "footer", "noscript", "aside", "form", "svg", "header",
+            ])
+            .build();
+        let markdown = converter.convert(&html).unwrap_or_else(|_| "Failed to parse HTML".into());
+        let sanitized = sanitize_markdown_noise(&markdown);
+        let bounded = truncate_char_boundary(&sanitized, self.max_bytes);
+        let chunks = split_into_chunks(&bounded, self.chunk_chars.max(256));
 
-        if markdown.len() > self.max_bytes {
-            let mut limit = self.max_bytes;
-            while limit > 0 && !markdown.is_char_boundary(limit) {
-                limit -= 1;
-            }
-            markdown.truncate(limit);
-            markdown.push_str("\n\n[SYSTEM WARNING: CONTENT TRUNCATED DUE TO LENGTH LIMITS]");
+        if chunks.is_empty() {
+            return Ok("No meaningful content extracted from URL.".to_string());
         }
 
-        Ok(markdown)
+        let artifact = WebArtifact {
+            url: parsed.url.clone(),
+            chunks: chunks.clone(),
+        };
+        let serialized = serde_json::to_string(&artifact).map_err(FcpError::ParseFault)?;
+        let title = format!("web_artifact:{}", uuid::Uuid::new_v4());
+        let stored = self
+            .ephemeral
+            .insert(
+                &title,
+                &serialized,
+                vec!["web_artifact".to_string(), "external".to_string()],
+                self.artifact_ttl_secs,
+            )
+            .await?;
+
+        let preview_head = truncate_char_boundary(&chunks[0], self.preview_chars.max(128));
+        let receipt = WebFetchReceipt {
+            artifact_id: stored.staged_id,
+            url: parsed.url,
+            chunk_count: chunks.len(),
+            preview_head,
+            next_step_hint: "Use web:artifact_query with artifact_id and query for targeted retrieval.".to_string(),
+        };
+        serde_json::to_string(&receipt).map_err(FcpError::ParseFault)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::memory::ephemeral::EphemeralMemory;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
     use serde_json::json;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_web_fetch_truncation() {
@@ -96,12 +217,14 @@ mod tests {
             .mount(&server)
             .await;
 
-        let tool = WebFetchTool::new(5, 50); // Small byte limit
+        let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
+        let tool = WebFetchTool::new(5, 50, 32, 32, 60, ephemeral);
         let args = json!({ "url": format!("{}/large", server.uri()) });
 
         let result = tool.execute(args).await.expect("Execution failed");
-        assert!(result.contains("[SYSTEM WARNING: CONTENT TRUNCATED DUE TO LENGTH LIMITS]"));
-        assert!(result.len() <= 50 + 60); // Limit + Warning length
+        let parsed: serde_json::Value = serde_json::from_str(&result).expect("receipt json");
+        assert!(parsed.get("artifact_id").is_some());
+        assert!(parsed.get("preview_head").is_some());
     }
 
     #[tokio::test]
@@ -113,7 +236,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let tool = WebFetchTool::new(5, 20480);
+        let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
+        let tool = WebFetchTool::new(5, 20480, 1024, 256, 60, ephemeral);
         let args = json!({ "url": format!("{}/missing", server.uri()) });
 
         let result = tool.execute(args).await.expect("Execution failed");
@@ -122,7 +246,8 @@ mod tests {
     
     #[tokio::test]
     async fn test_schema_violation_malformed_url() {
-        let tool = WebFetchTool::new(5, 20480);
+        let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
+        let tool = WebFetchTool::new(5, 20480, 1024, 256, 60, ephemeral);
         let args = json!({ "url": "not-a-link" });
 
         let result = tool.execute(args).await;

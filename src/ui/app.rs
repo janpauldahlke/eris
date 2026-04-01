@@ -86,10 +86,19 @@ impl TuiApp {
                     match evt {
                         TuiEvent::StateUpdate(update) => self.state = update,
                         TuiEvent::IncomingMessage(msg) => {
+                            let before_len = self.chat_stack.len();
                             self.chat_stack.push(msg);
-                            if self.chat_follow_latest {
-                                self.chat_scroll = u16::MAX;
-                            }
+                            // Always snap to newest assistant reply for now.
+                            self.chat_follow_latest = true;
+                            self.chat_scroll = u16::MAX;
+                            tracing::info!(
+                                event = "UI_RECV_INCOMING_MESSAGE",
+                                before_len,
+                                after_len = self.chat_stack.len(),
+                                follow_latest = self.chat_follow_latest,
+                                chat_scroll = self.chat_scroll,
+                                "Incoming message appended to deck"
+                            );
                         }
                         TuiEvent::SystemError(err) => self.system_messages.push(err),
                         _ => {}
@@ -142,6 +151,12 @@ impl TuiApp {
                     ActivePane::Main => {
                         self.chat_follow_latest = false;
                         self.chat_scroll = self.chat_scroll.saturating_sub(1);
+                        tracing::debug!(
+                            event = "UI_SCROLL_MAIN_UP",
+                            follow_latest = self.chat_follow_latest,
+                            chat_scroll = self.chat_scroll,
+                            "Main deck scrolled up"
+                        );
                     }
                     ActivePane::Telemetry => self.telemetry_scroll = self.telemetry_scroll.saturating_sub(1),
                     ActivePane::SystemErrors => self.system_errors_scroll = self.system_errors_scroll.saturating_sub(1),
@@ -156,6 +171,12 @@ impl TuiApp {
                     ActivePane::Main => {
                         self.chat_follow_latest = false;
                         self.chat_scroll = self.chat_scroll.saturating_add(1);
+                        tracing::debug!(
+                            event = "UI_SCROLL_MAIN_DOWN",
+                            follow_latest = self.chat_follow_latest,
+                            chat_scroll = self.chat_scroll,
+                            "Main deck scrolled down"
+                        );
                     }
                     ActivePane::Telemetry => self.telemetry_scroll = self.telemetry_scroll.saturating_add(1),
                     ActivePane::SystemErrors => self.system_errors_scroll = self.system_errors_scroll.saturating_add(1),
@@ -170,6 +191,14 @@ impl TuiApp {
                     ActivePane::Main => self.chat_follow_latest = true,
                     ActivePane::CommandDeck => self.command_deck_follow_latest = true,
                     _ => {}
+                }
+                if self.active_pane == ActivePane::Main {
+                    tracing::debug!(
+                        event = "UI_SCROLL_MAIN_END",
+                        follow_latest = self.chat_follow_latest,
+                        chat_scroll = self.chat_scroll,
+                        "Main deck follow-latest enabled"
+                    );
                 }
             }
             _ => {}

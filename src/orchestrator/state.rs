@@ -38,6 +38,10 @@ pub struct LlmResponse {
 }
 
 impl LlmResponse {
+    pub fn has_explicit_status(&self) -> bool {
+        self.status.is_some()
+    }
+
     /// If the LLM omitted `status`, infer it from the other fields:
     ///   - tool_calls non-empty → Reflect
     ///   - message_to_user present → Idle
@@ -137,6 +141,7 @@ mod tests {
     fn test_llm_response_missing_status_bare() {
         let json = r#"{"thought": "planning"}"#;
         let response: LlmResponse = serde_json::from_str(json).unwrap();
+        assert!(!response.has_explicit_status());
         assert_eq!(response.status(), LoopAction::Task);
     }
 }
