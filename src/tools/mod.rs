@@ -5,6 +5,7 @@ pub mod vault;
 pub mod memory;
 pub mod system;
 pub mod agenda;
+pub mod clock;
 pub mod web;
 pub mod descriptors;
 pub mod specs;

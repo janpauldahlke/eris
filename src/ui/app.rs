@@ -113,6 +113,11 @@ impl TuiApp {
                             self.pending_inputs = self.pending_inputs.saturating_sub(1);
                         }
                         TuiEvent::SystemError(err) => self.system_messages.push(err),
+                        TuiEvent::SystemAlarm(label) => {
+                            if self.action_tx.try_send(UserAction::SystemInject(label)).is_err() {
+                                tracing::error!("Dropped alarm due to TUI→Orchestrator action channel backpressure");
+                            }
+                        }
                         _ => {}
                     }
                 }

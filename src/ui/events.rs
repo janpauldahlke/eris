@@ -1,10 +1,15 @@
 use crossterm::event::KeyEvent;
 use crate::orchestrator::state::AgentState;
 
+/// Prefix applied by the orchestrator when turning [`UserAction::SystemInject`] into a `user` line.
+pub const SYSTEM_ALARM_PREFIX: &str = "[SYSTEM OVERRIDE - ALARM TRIGGERED]: ";
+
 #[derive(Debug, Clone)]
 pub enum UserAction {
     Submit(String),
     CancelCurrentTurn,
+    /// Asynchronous clock/alarm injected via TUI relay; raw label only (prefix added in orchestrator).
+    SystemInject(String),
 }
 
 pub enum TuiEvent {
@@ -13,6 +18,8 @@ pub enum TuiEvent {
     StateUpdate(AgentStateUpdate),
     IncomingMessage(String),
     SystemError(String),     // System Errors / Telemetry
+    /// Fired by the alarm scheduler; TUI must only forward to [`UserAction::SystemInject`].
+    SystemAlarm(String),
 }
 
 #[derive(Clone)]

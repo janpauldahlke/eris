@@ -58,3 +58,4 @@
 - [x] REFACTOR (S04): resolve technical debth, breaking down core.s and create a dedicated /loop to distinct policies and code
 - [x] IMPROVEMENT (S04 / memory): orchestrator tools-first JSON handling // commit_all vs semantic skew fix
 - [x] Improvement (S09): add user name to ignation process
+- [x] feature (S06): add clock and alarm tool

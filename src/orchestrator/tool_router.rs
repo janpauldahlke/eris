@@ -125,6 +125,9 @@ impl ToolRouter {
             "web:fetch" => "fetching URLs, web search, look up online, check website, browse internet, search the web, what is happening, news, look this up",
             "web:artifact_query" => "query fetched web artifact by artifact id, search fetched page snippets, retrieve specific sections from buffered webpage",
             "system:health" => "system status, CPU usage, memory usage, disk space, health check, diagnostics, how is the system, performance, resources",
+            "clock:now" => "what time is it, current time, timezone, date now, local time",
+            "clock:timer" => "remind me in, timer, in 30 minutes, countdown, in half an hour",
+            "clock:alarm" => "wake me at, alarm at, 7am, remind me at eight, schedule at o'clock",
             _ => "",
         };
         if hints.is_empty() {

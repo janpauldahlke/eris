@@ -139,6 +139,17 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
             }));
             gatekeeper.register(Arc::new(crate::tools::system::SystemHealthTool));
 
+            let (alarm_reschedule_tx, alarm_reschedule_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
+            gatekeeper.register(Arc::new(crate::tools::clock::ClockNowTool));
+            gatekeeper.register(Arc::new(crate::tools::clock::ClockTimerTool {
+                workspace_root: workspace_root.clone(),
+                reschedule_tx: alarm_reschedule_tx.clone(),
+            }));
+            gatekeeper.register(Arc::new(crate::tools::clock::ClockWallAlarmTool {
+                workspace_root: workspace_root.clone(),
+                reschedule_tx: alarm_reschedule_tx,
+            }));
+
             let max_content_chars = config.num_ctx * 3;
             gatekeeper.register(Arc::new(crate::tools::memory::MemoryStageTool {
                 ephemeral: ephemeral.clone(),
@@ -215,6 +226,13 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                 cancel_token.clone(),
             );
 
+            crate::orchestrator::alarm_scheduler::spawn_alarm_scheduler(
+                workspace_root.clone(),
+                tui_tx.clone(),
+                alarm_reschedule_rx,
+                cancel_token.clone(),
+            );
+
             // 7. Snapshot + promotion daemon
             crate::memory::ephemeral::spawn_snapshot_daemon(
                 ephemeral.clone(),
@@ -267,6 +285,42 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                                     tracing::info!("User requested cancel current turn");
                                     let _ = interrupt_tx_user.send(());
                                     let _ = tui_tx_err.send(crate::ui::events::TuiEvent::SystemError("[ui] Cancel requested".into())).await;
+                                }
+                                crate::ui::events::UserAction::SystemInject(label) => {
+                                    let trimmed = label.trim().to_string();
+                                    if trimmed.is_empty() {
+                                        continue;
+                                    }
+                                    let content = format!(
+                                        "{}{}",
+                                        crate::ui::events::SYSTEM_ALARM_PREFIX,
+                                        trimmed
+                                    );
+                                    orchestrator.chat_stack.push(crate::engine::Message {
+                                        role: "user".to_string(),
+                                        content,
+                                    });
+                                    orchestrator.state = crate::orchestrator::state::AgentState::Chat;
+                                    last_input_time.store(
+                                        std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .map(|d| d.as_secs())
+                                            .unwrap_or(0),
+                                        std::sync::atomic::Ordering::Relaxed,
+                                    );
+                                    orchestrator.broadcast_state().await;
+                                    tracing::info!("SystemInject alarm turn");
+                                    if let Err(e) = orchestrator.step(None).await {
+                                        if matches!(e, FcpError::Interrupted) {
+                                            tracing::info!("Orchestrator interrupted during alarm turn");
+                                            continue;
+                                        }
+                                        let err_msg = format!("[FATAL ERROR] Orchestrator halted: {}", e);
+                                        tracing::error!(error = %e, "Orchestrator fatal error");
+                                        let _ = tui_tx_err.send(crate::ui::events::TuiEvent::SystemError(err_msg)).await;
+                                        break;
+                                    }
+                                    orchestrator.broadcast_state().await;
                                 }
                                 crate::ui::events::UserAction::Submit(msg) => {
                                     let trimmed = msg.trim().to_string();
@@ -412,5 +466,164 @@ mod tests {
         let cmd = Commands::Run { prompt: "test".to_string() };
         let result = execute_command(test_cli(cmd), test_config(), cancel_token).await;
         assert!(result.is_ok());
+    }
+
+    /// Submit queues work that runs `system:health` (Reflect), then `SystemInject` is already on
+    /// `action_rx`. The first `step` must fully finish (tool + follow-up generation) before the
+    /// relay pulls the alarm—FIFO on the single action channel.
+    #[tokio::test]
+    async fn relay_submit_then_system_inject_orders_after_tool() {
+        use std::collections::VecDeque;
+        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+        use std::sync::Arc;
+
+        use async_trait::async_trait;
+        use tokio::sync::mpsc;
+
+        use crate::engine::{EngineResponse, LlmEngine, Message};
+        use crate::memory::ephemeral::EphemeralMemory;
+        use crate::orchestrator::core::Orchestrator;
+        use crate::orchestrator::state::AgentState;
+        use crate::tools::gatekeeper::Gatekeeper;
+        use crate::tools::system::SystemHealthTool;
+        use crate::ui::events::{UserAction, SYSTEM_ALARM_PREFIX};
+
+        #[derive(Clone)]
+        struct SeqEngine {
+            responses: Arc<Vec<String>>,
+            calls: Arc<AtomicUsize>,
+        }
+
+        #[async_trait]
+        impl LlmEngine for SeqEngine {
+            async fn generate(
+                &self,
+                _stack: &[Message],
+                _available_tools_json: &str,
+                _stream_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+            ) -> crate::executive::error::Result<EngineResponse> {
+                let i = self.calls.fetch_add(1, AtomicOrdering::SeqCst);
+                let content = self
+                    .responses
+                    .get(i)
+                    .cloned()
+                    .expect("SeqEngine: unexpected extra generate call");
+                Ok(EngineResponse {
+                    content,
+                    prompt_tokens: 0,
+                    generated_tokens: 0,
+                })
+            }
+        }
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let engine = SeqEngine {
+            responses: Arc::new(vec![
+                r#"{"status":"Reflect","tool_calls":[{"name":"system:health","args":{}}]}"#
+                    .to_string(),
+                r#"{"status":"Idle","tool_calls":[],"message_to_user":"done first turn"}"#
+                    .to_string(),
+                r#"{"status":"Idle","tool_calls":[],"message_to_user":"alarm handled"}"#.to_string(),
+            ]),
+            calls: calls.clone(),
+        };
+
+        let mut gatekeeper = Gatekeeper::new();
+        gatekeeper.register(Arc::new(SystemHealthTool));
+        let ephemeral = Arc::new(EphemeralMemory::new("relay_ws".to_string()));
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vault_root = dir.path();
+        let workspace = "relay_ws";
+        tokio::fs::create_dir_all(vault_root.join(workspace).join("00_Core"))
+            .await
+            .expect("mkdir");
+
+        let (watch_tx, watch_rx) = tokio::sync::watch::channel(());
+        let _keep_watch = watch_tx;
+
+        let mut orchestrator = Orchestrator::new(
+            engine,
+            gatekeeper,
+            ephemeral,
+            vault_root,
+            workspace,
+            3,
+            5,
+            0.8,
+            4096,
+            3,
+            6000,
+            watch_rx,
+            None,
+            None,
+            None,
+        );
+
+        let (action_tx, mut action_rx) = mpsc::channel::<UserAction>(100);
+        let long_user =
+            "please run a full system health diagnostic because we need relay ordering proof";
+        action_tx
+            .send(UserAction::Submit(long_user.to_string()))
+            .await
+            .expect("submit");
+        action_tx
+            .send(UserAction::SystemInject("Drink water".to_string()))
+            .await
+            .expect("inject");
+        drop(action_tx);
+
+        let mut pending = VecDeque::new();
+        let mut saw_inject = false;
+
+        while let Some(action) = action_rx.recv().await {
+            match action {
+                UserAction::Submit(msg) => {
+                    let trimmed = msg.trim().to_string();
+                    if !trimmed.is_empty() {
+                        pending.push_back(trimmed);
+                    }
+                }
+                UserAction::SystemInject(label) => {
+                    assert!(
+                        calls.load(AtomicOrdering::SeqCst) >= 2,
+                        "tool round must finish (two LLM calls) before alarm is consumed; calls={}",
+                        calls.load(AtomicOrdering::SeqCst)
+                    );
+                    saw_inject = true;
+                    let trimmed = label.trim().to_string();
+                    let content = format!("{}{}", SYSTEM_ALARM_PREFIX, trimmed);
+                    orchestrator.chat_stack.push(Message {
+                        role: "user".to_string(),
+                        content,
+                    });
+                    orchestrator.state = AgentState::Chat;
+                    orchestrator.step(None).await.expect("alarm step");
+                }
+                UserAction::CancelCurrentTurn => {}
+            }
+            while let Some(msg) = pending.pop_front() {
+                orchestrator.chat_stack.push(Message {
+                    role: "user".to_string(),
+                    content: msg,
+                });
+                orchestrator.state = AgentState::Chat;
+                orchestrator.step(None).await.expect("user step");
+            }
+        }
+
+        assert!(saw_inject, "expected SystemInject to be processed");
+        assert_eq!(
+            calls.load(AtomicOrdering::SeqCst),
+            3,
+            "expected three LLM generations: tool, idle, alarm"
+        );
+        assert!(
+            orchestrator.chat_stack.iter().any(|m| {
+                m.content.contains("SYSTEM OVERRIDE")
+                    && m.content.contains("[SYSTEM OVERRIDE - ALARM TRIGGERED]")
+                    && m.content.contains("Drink water")
+            }),
+            "stack should contain prefixed alarm text"
+        );
     }
 }

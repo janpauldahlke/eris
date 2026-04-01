@@ -237,4 +237,55 @@ name = "bad_url"
 args = { url = "example.com" }
 rationale = "URL must start with http:// or https://."
 "#,
+    r#"descriptor_version = 1
+tool_name = "clock:now"
+short_description = "Return current local time as HH:MM : DD/MM/YY plus timezone/offset."
+when_to_use = "Use to ground scheduling in the real-world clock before setting timers or alarms; when answering the user, prefer that time format."
+when_not_to_use = "Do not use to schedule; use clock:timer or clock:alarm."
+routing_hints = ["what time is it", "current time", "timezone", "now", "date and time"]
+
+[[examples_good]]
+name = "now"
+args = {}
+rationale = "No arguments."
+
+[[examples_bad]]
+name = "unexpected"
+args = { tz = "UTC" }
+rationale = "Tool takes no parameters."
+"#,
+    r#"descriptor_version = 1
+tool_name = "clock:timer"
+short_description = "Schedule a relative timer (in N minutes) with a label."
+when_to_use = "Use for remind me in X minutes, stretch timer, drink water soon."
+when_not_to_use = "Do not use for wall-clock at 7am; use clock:alarm."
+routing_hints = ["in 30 minutes", "timer", "remind me in", "half an hour", "countdown"]
+
+[[examples_good]]
+name = "stretch"
+args = { minutes = 30, label = "stretch" }
+rationale = "Relative delay with label."
+
+[[examples_bad]]
+name = "zero_minutes"
+args = { minutes = 0, label = "x" }
+rationale = "minutes must be positive."
+"#,
+    r#"descriptor_version = 1
+tool_name = "clock:alarm"
+short_description = "Schedule a wall-clock alarm at hour:minute local (24h)."
+when_to_use = "Use for wake me at 7:00, alarm at 14:30, at eight am tomorrow logic."
+when_not_to_use = "Do not use for in N minutes; use clock:timer."
+routing_hints = ["at 7am", "wake me", "alarm at", "remind me at", "o'clock", "tomorrow morning"]
+
+[[examples_good]]
+name = "morning"
+args = { hour = 7, minute = 0, label = "wake up" }
+rationale = "Wall time with label."
+
+[[examples_bad]]
+name = "bad_hour"
+args = { hour = 25, minute = 0, label = "x" }
+rationale = "hour must be 0-23."
+"#,
 ];

@@ -1,6 +1,7 @@
 pub mod state;
 pub mod context;
 pub mod heartbeat;
+pub mod alarm_scheduler;
 pub mod core;
 pub mod tool_router;
 pub mod r#loop;
