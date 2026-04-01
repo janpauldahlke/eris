@@ -1,20 +1,46 @@
-use tokio::net::TcpStream;
-use tokio::time::{timeout, Duration};
+use crate::config::AppConfig;
+use crate::executive::cli::Commands;
 use crate::executive::error::{FcpError, Result};
+use crate::executive::peripherals::{ollama_reachable, qdrant_reachable};
 
-pub async fn run_preflight_checks() -> Result<()> {
-    // Check 1: Ollama Ping
-    let client = reqwest::Client::new();
-    match timeout(Duration::from_secs(2), client.get("http://localhost:11434/api/tags").send()).await {
-        Ok(Ok(res)) if res.status().is_success() => (),
-        _ => return Err(FcpError::NetworkFault("FATAL: Ollama daemon not responding. Ensure Ollama is running.".into())),
+pub async fn run_preflight_checks(command: &Commands, config: &AppConfig) -> Result<()> {
+    if matches!(command, Commands::Chat) {
+        return Ok(());
     }
 
-    // Check 2: Qdrant Ping
-    match timeout(Duration::from_secs(2), TcpStream::connect("127.0.0.1:6334")).await {
-        Ok(Ok(_)) => (),
-        _ => return Err(FcpError::NetworkFault("FATAL: Qdrant sidecar not detected. Run your vector db.".into())),
+    if !ollama_reachable(&config.ollama_host).await {
+        return Err(FcpError::NetworkFault(
+            "FATAL: Ollama daemon not responding. Ensure Ollama is running.".into(),
+        ));
+    }
+
+    if !qdrant_reachable(&config.qdrant_url).await {
+        return Err(FcpError::NetworkFault(
+            "FATAL: Qdrant sidecar not detected. Run your vector db.".into(),
+        ));
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn preflight_skips_chat_mode() {
+        let mut config = AppConfig::default();
+        config.ollama_host = "not a url".into();
+        config.qdrant_url = "still-not-a-url".into();
+        let result = run_preflight_checks(&Commands::Chat, &config).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn preflight_checks_non_chat_mode() {
+        let mut config = AppConfig::default();
+        config.ollama_host = "http://127.0.0.1:9".into();
+        let result = run_preflight_checks(&Commands::Run { prompt: "x".into() }, &config).await;
+        assert!(result.is_err());
+    }
 }

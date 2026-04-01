@@ -54,7 +54,7 @@ async fn main() -> ExitCode {
     };
 
     // 5. Pre-Flight Checks
-    if let Err(e) = crate::telemetry::preflight::run_preflight_checks().await {
+    if let Err(e) = crate::telemetry::preflight::run_preflight_checks(&cli.command, &config).await {
         eprintln!("{}", e);
         return ExitCode::FAILURE;
     }

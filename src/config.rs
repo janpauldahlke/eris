@@ -27,6 +27,31 @@ pub struct AppConfig {
     pub llm_context_window: usize,
     pub vault_read_ratio: f32,
     pub tool_match_threshold: f32,
+    #[serde(default = "default_ollama_daemon")]
+    pub ollama_daemon: DaemonCommand,
+    #[serde(default = "default_qdrant_daemon")]
+    pub qdrant_daemon: DaemonCommand,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct DaemonCommand {
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
+fn default_ollama_daemon() -> DaemonCommand {
+    DaemonCommand {
+        command: "ollama".into(),
+        args: vec!["serve".into()],
+    }
+}
+
+fn default_qdrant_daemon() -> DaemonCommand {
+    DaemonCommand {
+        command: "qdrant".into(),
+        args: Vec::new(),
+    }
 }
 
 impl Default for AppConfig {
@@ -55,6 +80,8 @@ impl Default for AppConfig {
             llm_context_window: 16384,
             vault_read_ratio: 0.25,
             tool_match_threshold: 0.50,
+            ollama_daemon: default_ollama_daemon(),
+            qdrant_daemon: default_qdrant_daemon(),
         }
     }
 }
@@ -170,7 +197,9 @@ mod tests {
             "web_fetch_max_bytes": 10240,
             "llm_context_window": 16384,
             "vault_read_ratio": 0.25,
-            "tool_match_threshold": 0.50
+            "tool_match_threshold": 0.50,
+            "ollama_daemon": { "command": "ollama", "args": ["serve"] },
+            "qdrant_daemon": { "command": "qdrant", "args": [] }
         }"#;
 
         let parsed_config: AppConfig = serde_json::from_str(json_data).expect("Failed to parse JSON");
@@ -199,5 +228,9 @@ mod tests {
         assert_eq!(parsed_config.llm_context_window, 16384);
         assert_eq!(parsed_config.vault_read_ratio, 0.25);
         assert_eq!(parsed_config.tool_match_threshold, 0.50);
+        assert_eq!(parsed_config.ollama_daemon.command, "ollama");
+        assert_eq!(parsed_config.ollama_daemon.args, vec!["serve"]);
+        assert_eq!(parsed_config.qdrant_daemon.command, "qdrant");
+        assert!(parsed_config.qdrant_daemon.args.is_empty());
     }
 }

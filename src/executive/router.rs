@@ -18,6 +18,8 @@ pub async fn execute_command(cmd: Commands, config: Arc<AppConfig>, cancel_token
             use ollama_rs::Ollama;
 
             let workspace_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let mut peripheral_lifecycle =
+                crate::executive::peripherals::ensure_peripherals_for_chat(&config).await?;
 
             // 0. Ignition Sequence
             let seal_path = workspace_root.join(".fcp_seal");
@@ -80,6 +82,9 @@ pub async fn execute_command(cmd: Commands, config: Arc<AppConfig>, cancel_token
                 ttl_secs: config.ephemeral_ttl_secs,
                 max_content_chars,
             }));
+            gatekeeper.register(Arc::new(crate::tools::memory::MemoryStagedListTool {
+                ephemeral: ephemeral.clone(),
+            }));
 
             // Instantiate SemanticBrain and register memory tools
             let semantic_arc: Option<Arc<crate::memory::semantic::SemanticBrain>> =
@@ -101,6 +106,11 @@ pub async fn execute_command(cmd: Commands, config: Arc<AppConfig>, cancel_token
                         }
 
                         gatekeeper.register(Arc::new(crate::tools::memory::MemoryCommitTool {
+                            workspace_root: workspace_root.clone(),
+                            semantic: semantic.clone(),
+                            ephemeral: ephemeral.clone(),
+                        }));
+                        gatekeeper.register(Arc::new(crate::tools::memory::MemoryCommitAllTool {
                             workspace_root: workspace_root.clone(),
                             semantic: semantic.clone(),
                             ephemeral: ephemeral.clone(),
@@ -232,6 +242,7 @@ pub async fn execute_command(cmd: Commands, config: Arc<AppConfig>, cancel_token
 
             // 11. Teardown
             cancel_token.cancel();
+            peripheral_lifecycle.shutdown_started_peripherals();
             restore_terminal()?;
             result
         }

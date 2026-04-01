@@ -1,15 +1,16 @@
 use serde::{Deserialize, Serialize};
 use moka::future::Cache;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use crate::executive::error::Result;
-use crate::memory::semantic::SemanticBrain;
 
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CacheValue {
+    pub staged_id: String,
+    pub title: String,
     pub data: String,
     pub tags: Vec<String>,
     pub expires_at: u64, // Absolute UNIX timestamp
@@ -29,65 +30,84 @@ impl EphemeralMemory {
         Self { cache, workspace }
     }
 
-    pub async fn insert(&self, key: &str, value: &str, tags: Vec<String>, ttl_secs: u64) -> Result<()> {
+    pub async fn insert(&self, title: &str, value: &str, tags: Vec<String>, ttl_secs: u64) -> Result<CacheValue> {
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
         let expires_at = now.as_secs() + ttl_secs;
-        
+        let staged_id = uuid::Uuid::new_v4().to_string();
+
         let cache_value = CacheValue {
+            staged_id: staged_id.clone(),
+            title: title.to_string(),
             data: value.to_string(),
             tags,
             expires_at,
         };
-        
-        self.cache.insert(key.to_string(), cache_value).await;
-        Ok(())
+
+        self.cache.insert(staged_id, cache_value.clone()).await;
+        Ok(cache_value)
     }
 
-    pub async fn get_entry(&self, key: &str) -> Option<CacheValue> {
-        let val = self.cache.get(key).await?;
-        
+    fn is_expired(expires_at: u64) -> bool {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-            
-        if now >= val.expires_at {
-            self.cache.invalidate(key).await;
-            None
-        } else {
-            Some(val)
+        now >= expires_at
+    }
+
+    pub async fn get_by_id(&self, staged_id: &str) -> Option<CacheValue> {
+        let val = self.cache.get(staged_id).await?;
+        if Self::is_expired(val.expires_at) {
+            self.cache.invalidate(staged_id).await;
+            return None;
         }
+        Some(val)
     }
 
-    pub async fn get(&self, key: &str) -> Option<String> {
-        self.get_entry(key).await.map(|v| v.data)
+    pub async fn get_by_title(&self, title: &str) -> Option<CacheValue> {
+        for (id, entry) in self.cache.iter() {
+            if entry.title == title {
+                if Self::is_expired(entry.expires_at) {
+                    self.cache.invalidate(id.as_str()).await;
+                    continue;
+                }
+                return Some(entry);
+            }
+        }
+        None
     }
 
-    pub fn collect_all_entries(&self) -> Vec<(String, CacheValue)> {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-        self.cache.iter()
-            .filter(|(_, v)| v.expires_at > now)
-            .map(|(k, v)| (k.to_string(), v.clone()))
+    pub fn list_entries(&self) -> Vec<CacheValue> {
+        self.cache
+            .iter()
+            .filter_map(|(_, v)| (!Self::is_expired(v.expires_at)).then_some(v.clone()))
             .collect()
     }
 
-    pub fn collect_expired_entries(&self) -> Vec<(String, CacheValue)> {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-        self.cache.iter()
-            .filter(|(_, v)| v.expires_at <= now)
-            .map(|(k, v)| (k.to_string(), v.clone()))
+    pub async fn get(&self, key: &str) -> Option<String> {
+        self.get_by_title(key).await.map(|v| v.data)
+    }
+
+    pub fn collect_all_entries(&self) -> Vec<CacheValue> {
+        self.list_entries()
+    }
+
+    pub fn collect_expired_ids(&self) -> Vec<String> {
+        self.cache
+            .iter()
+            .filter(|(_, v)| Self::is_expired(v.expires_at))
+            .map(|(k, _)| k.to_string())
             .collect()
     }
 
     pub async fn snapshot_to_disk(&self, vault_root: &std::path::Path) -> Result<()> {
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
         
-        let mut entries = Vec::new();
-        for (k, v) in self.cache.iter() {
-            if v.expires_at > now {
-                entries.push((k.to_string(), v.clone()));
-            }
-        }
+        let entries: Vec<CacheValue> = self
+            .cache
+            .iter()
+            .filter_map(|(_, v)| (v.expires_at > now).then_some(v.clone()))
+            .collect();
         
         let path = vault_root.join(format!(".fcp/ephemeral_{}.bin", self.workspace));
         if let Some(parent) = path.parent() {
@@ -131,7 +151,7 @@ impl EphemeralMemory {
             })?;
             if !data.is_empty() {
                 let ws = workspace.to_string();
-                let entries: Vec<(String, CacheValue)> = tokio::task::spawn_blocking(move || bincode::deserialize(&data))
+                let entries: Vec<CacheValue> = tokio::task::spawn_blocking(move || bincode::deserialize(&data))
                     .await
                     .map_err(|e| crate::executive::error::FcpError::WorkspaceFault {
                         workspace: ws.clone(),
@@ -143,9 +163,9 @@ impl EphemeralMemory {
                     })?;
                 
                 let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-                for (k, v) in entries {
+                for v in entries {
                     if v.expires_at > now {
-                        cache.insert(k, v).await;
+                        cache.insert(v.staged_id.clone(), v).await;
                     }
                 }
             }
@@ -174,50 +194,10 @@ pub fn resolve_vault_subdir(tags: &[String]) -> &'static str {
     "10_Episodic"
 }
 
-pub async fn promote_entry(
-    title: &str,
-    entry: &CacheValue,
-    vault_root: &Path,
-    semantic: &Option<Arc<SemanticBrain>>,
-) {
-    let sanitized = title.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
-    let subdir = resolve_vault_subdir(&entry.tags);
-    let dir = vault_root.join(subdir);
-    if let Err(e) = tokio::fs::create_dir_all(&dir).await {
-        tracing::error!(title = %title, error = %e, "Failed to create Episodic dir for promotion");
-        return;
-    }
-
-    let path = dir.join(format!("{}.md", sanitized));
-
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-    let tags_yaml = entry.tags.iter()
-        .map(|t| format!("  - {}", t))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let frontmatter = format!(
-        "---\ntitle: \"{}\"\ntags:\n{}\npromoted_at: {}\n---\n\n{}",
-        title, tags_yaml, now, entry.data,
-    );
-
-    if let Err(e) = tokio::fs::write(&path, frontmatter).await {
-        tracing::error!(title = %title, error = %e, "Failed to write promoted entry to disk");
-        return;
-    }
-
-    if let Some(brain) = semantic {
-        if let Err(e) = brain.upsert(&entry.data, entry.tags.clone()).await {
-            tracing::warn!(title = %title, error = %e, "Promoted to disk but Qdrant upsert failed");
-        }
-    }
-
-    tracing::info!(title = %title, tags = ?entry.tags, path = %path.display(), "Auto-promoted ephemeral entry to vault");
-}
-
 pub fn spawn_snapshot_daemon(
     memory: Arc<EphemeralMemory>,
     vault_root: PathBuf,
-    semantic: Option<Arc<SemanticBrain>>,
+    _semantic: Option<Arc<crate::memory::semantic::SemanticBrain>>,
     interval_secs: u64,
     cancel_token: CancellationToken,
 ) {
@@ -228,13 +208,12 @@ pub fn spawn_snapshot_daemon(
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    let expired = memory.collect_expired_entries();
-                    for (title, entry) in &expired {
-                        promote_entry(title, entry, &vault_root, &semantic).await;
-                        memory.cache.invalidate(title).await;
+                    let expired_ids = memory.collect_expired_ids();
+                    for staged_id in &expired_ids {
+                        memory.cache.invalidate(staged_id).await;
                     }
-                    if !expired.is_empty() {
-                        tracing::info!(count = expired.len(), "Promoted expired ephemeral entries");
+                    if !expired_ids.is_empty() {
+                        tracing::info!(count = expired_ids.len(), "Expired staged entries removed from ephemeral memory");
                     }
 
                     if let Err(e) = memory.snapshot_to_disk(&vault_root).await {
@@ -242,14 +221,6 @@ pub fn spawn_snapshot_daemon(
                     }
                 }
                 _ = cancel_token.cancelled() => {
-                    let remaining = memory.collect_all_entries();
-                    for (title, entry) in &remaining {
-                        promote_entry(title, entry, &vault_root, &semantic).await;
-                    }
-                    if !remaining.is_empty() {
-                        tracing::info!(count = remaining.len(), "Promoted all remaining entries on shutdown");
-                    }
-
                     if let Err(e) = memory.snapshot_to_disk(&vault_root).await {
                         tracing::error!("Daemon failed to snapshot memory on cancellation: {}", e);
                     }
@@ -267,13 +238,13 @@ mod tests {
     #[tokio::test]
     async fn test_ephemeral_insert_and_get() {
         let memory = EphemeralMemory::new("test_ws".to_string());
-        
-        memory.insert("key1", "value1", vec!["tag1".into()], 60).await.unwrap();
-        
+
+        let staged = memory.insert("key1", "value1", vec!["tag1".into()], 60).await.unwrap();
+
         let result = memory.get("key1").await;
         assert_eq!(result, Some("value1".to_string()));
 
-        let entry = memory.get_entry("key1").await.unwrap();
+        let entry = memory.get_by_id(&staged.staged_id).await.unwrap();
         assert_eq!(entry.tags, vec!["tag1".to_string()]);
     }
 
@@ -286,11 +257,13 @@ mod tests {
         
         // Manually insert into the cache to bypass the `insert` method's `now + ttl_secs` logic
         let expired_value = CacheValue {
+            staged_id: "expired_id".to_string(),
+            title: "expired_key".to_string(),
             data: "expired_data".to_string(),
             tags: vec![],
             expires_at: past_timestamp,
         };
-        memory.cache.insert("expired_key".to_string(), expired_value).await;
+        memory.cache.insert("expired_id".to_string(), expired_value).await;
         
         let result = memory.get("expired_key").await;
         assert_eq!(result, None);
@@ -324,18 +297,22 @@ mod tests {
         let future_timestamp = now + 60;
         
         let expired_value = CacheValue {
+            staged_id: "expired_id".to_string(),
+            title: "expired_key".to_string(),
             data: "expired".to_string(),
             tags: vec![],
             expires_at: past_timestamp,
         };
         let valid_value = CacheValue {
+            staged_id: "valid_id".to_string(),
+            title: "valid_key".to_string(),
             data: "valid".to_string(),
             tags: vec!["test".into()],
             expires_at: future_timestamp,
         };
         
-        memory.cache.insert("expired_key".to_string(), expired_value).await;
-        memory.cache.insert("valid_key".to_string(), valid_value).await;
+        memory.cache.insert("expired_id".to_string(), expired_value).await;
+        memory.cache.insert("valid_id".to_string(), valid_value).await;
         
         // Snapshot to disk
         memory.snapshot_to_disk(vault_root).await.unwrap();

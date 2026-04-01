@@ -32,7 +32,7 @@ impl Tool for MemoryStageTool {
     }
 
     fn description(&self) -> &'static str {
-        "Stages content into ephemeral memory with a title, tags, and TTL. Content auto-promotes to vault on TTL expiry."
+        "Stages content into ephemeral memory with title, tags, and TTL. Expired entries are discarded unless committed."
     }
 
     fn parameters_schema(&self) -> schemars::schema::RootSchema {
@@ -72,10 +72,13 @@ impl Tool for MemoryStageTool {
             });
         }
 
-        self.ephemeral.insert(&title, &content, tags.clone(), self.ttl_secs).await?;
+        let staged = self
+            .ephemeral
+            .insert(&title, &content, tags.clone(), self.ttl_secs)
+            .await?;
         Ok(format!(
-            "Staged '{}' with tags {:?} (ttl={}s, auto-promotes on expiry)",
-            title, tags, self.ttl_secs
+            "Staged '{}' as id '{}' with tags {:?} (ttl={}s, expires if not committed)",
+            title, staged.staged_id, tags, self.ttl_secs
         ))
     }
 }
@@ -100,7 +103,7 @@ mod tests {
 
         let result = tool.execute(args).await;
         assert!(result.is_ok());
-        let entry = ephemeral.get_entry("infrastructure").await.unwrap();
+        let entry = ephemeral.get_by_title("infrastructure").await.unwrap();
         assert_eq!(entry.data, "The database uses port 5432.");
         assert_eq!(entry.tags, vec!["db", "postgres"]);
     }

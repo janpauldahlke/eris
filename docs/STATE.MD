@@ -46,6 +46,7 @@
 - [x] patch (S02): connect ephemeral and physical layer to make it persist
 - [x] patch (S02): better staging and more instructive fields
 
----
+01/04/2026
 
-- [] Testing - report in ISSUES.md
+- [x] refactor (s04): CHANGES ephemeral and staging process
+- [] refactor (S08_Preflight): harden init and tear down of peripheral systems

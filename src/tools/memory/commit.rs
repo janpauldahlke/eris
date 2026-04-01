@@ -12,7 +12,8 @@ use crate::memory::ephemeral::{EphemeralMemory, resolve_vault_subdir};
 
 #[derive(Deserialize, JsonSchema)]
 pub struct MemoryCommitArgs {
-    pub title: String,
+    pub staged_id: Option<String>,
+    pub title: Option<String>,
 }
 
 pub struct MemoryCommitTool {
@@ -28,7 +29,7 @@ impl Tool for MemoryCommitTool {
     }
 
     fn description(&self) -> &'static str {
-        "Pulls staged content by title from ephemeral memory and persists it to the vault (disk + Qdrant). Routes to the correct vault folder based on tags (persons, user, semantic, episodic)."
+        "Persists one staged memory to the vault (disk + Qdrant). Prefer staged_id; title is legacy fallback."
     }
 
     fn parameters_schema(&self) -> schemars::schema::RootSchema {
@@ -39,15 +40,30 @@ impl Tool for MemoryCommitTool {
         let args: MemoryCommitArgs = serde_json::from_value(args)
             .map_err(FcpError::ParseFault)?;
 
-        let entry = self.ephemeral.get_entry(&args.title).await
-            .ok_or_else(|| FcpError::ToolFault {
+        let (entry, lookup_ref) = if let Some(staged_id) = args.staged_id.as_deref().filter(|s| !s.trim().is_empty()) {
+            let entry = self.ephemeral.get_by_id(staged_id).await
+                .ok_or_else(|| FcpError::ToolFault {
+                    tool_name: self.name().into(),
+                    reason: format!("No staged memory found for staged_id: {}", staged_id),
+                })?;
+            (entry, staged_id.to_string())
+        } else if let Some(title) = args.title.as_deref().filter(|s| !s.trim().is_empty()) {
+            let entry = self.ephemeral.get_by_title(title).await
+                .ok_or_else(|| FcpError::ToolFault {
+                    tool_name: self.name().into(),
+                    reason: format!("No staged memory found for title: {}", title),
+                })?;
+            (entry, title.to_string())
+        } else {
+            return Err(FcpError::ToolFault {
                 tool_name: self.name().into(),
-                reason: format!("No staged memory found for title: {}", args.title),
-            })?;
+                reason: "Either staged_id or title is required".to_string(),
+            });
+        };
 
         let target_subdir = resolve_vault_subdir(&entry.tags);
 
-        let sanitized = args.title.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
+        let sanitized = entry.title.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
         let dir = self.workspace_root.join(target_subdir);
         tokio::fs::create_dir_all(&dir).await.map_err(FcpError::Io)?;
         let path = dir.join(format!("{}.md", sanitized));
@@ -59,17 +75,19 @@ impl Tool for MemoryCommitTool {
             .join("\n");
         let frontmatter = format!(
             "---\ntitle: \"{}\"\ntags:\n{}\ncommitted_at: {}\n---\n\n{}",
-            args.title, tags_yaml, now, entry.data,
+            entry.title, tags_yaml, now, entry.data,
         );
 
         tokio::fs::write(&path, frontmatter).await.map_err(FcpError::Io)?;
 
         self.semantic.upsert(&entry.data, entry.tags.clone()).await?;
 
-        self.ephemeral.cache.invalidate(&args.title).await;
+        self.ephemeral.cache.invalidate(&entry.staged_id).await;
 
         tracing::info!(
-            title = %args.title,
+            title = %entry.title,
+            staged_id = %entry.staged_id,
+            lookup = %lookup_ref,
             subdir = target_subdir,
             tags = ?entry.tags,
             path = %path.display(),
@@ -77,8 +95,8 @@ impl Tool for MemoryCommitTool {
         );
 
         Ok(format!(
-            "Committed '{}' to {}/{}.md and indexed in semantic brain",
-            args.title, target_subdir, sanitized
+            "Committed '{}' (id: {}) to {}/{}.md and indexed in semantic brain",
+            entry.title, entry.staged_id, target_subdir, sanitized
         ))
     }
 }

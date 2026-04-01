@@ -68,6 +68,12 @@ impl ContextAssembler {
               \"tool_calls\": []\n\
             }}\n\n\
             Available tools for current state:\n{tools}\n\n\
+            Memory lifecycle rules (follow exactly):\n\
+            - memory:stage creates temporary entries in ephemeral memory and returns a staged_id.\n\
+            - Staged entries EXPIRE on TTL; they do not auto-promote.\n\
+            - Use memory:staged_list to inspect staged entries before committing.\n\
+            - Prefer memory:commit with staged_id for single-item persistence.\n\
+            - Use memory:commit_all for best-effort bulk persistence.\n\n\
             Vault taxonomy — when using memory:stage, include tags from the correct category:\n\
             - person, contact, people → stored in 30_Persons/\n\
             - user, preference, about_me → stored in 40_User/\n\
