@@ -41,6 +41,15 @@ pub struct AppConfig {
     pub ollama_daemon: DaemonCommand,
     #[serde(default = "default_qdrant_daemon")]
     pub qdrant_daemon: DaemonCommand,
+    /// When true, startup fails if Qdrant gRPC (semantic brain) cannot connect after retries.
+    #[serde(default = "default_require_semantic_brain")]
+    pub require_semantic_brain: bool,
+    /// Max attempts for `SemanticBrain::new` (gRPC to Qdrant), including the first try.
+    #[serde(default = "default_semantic_brain_connect_attempts")]
+    pub semantic_brain_connect_attempts: u32,
+    /// Delay between failed gRPC connect attempts (milliseconds).
+    #[serde(default = "default_semantic_brain_connect_retry_delay_ms")]
+    pub semantic_brain_connect_retry_delay_ms: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -76,6 +85,18 @@ fn default_tool_descriptor_jit_max_chars() -> usize {
     6000
 }
 
+fn default_require_semantic_brain() -> bool {
+    true
+}
+
+fn default_semantic_brain_connect_attempts() -> u32 {
+    12
+}
+
+fn default_semantic_brain_connect_retry_delay_ms() -> u64 {
+    500
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -108,6 +129,9 @@ impl Default for AppConfig {
             tool_descriptor_jit_max_chars: 6000,
             ollama_daemon: default_ollama_daemon(),
             qdrant_daemon: default_qdrant_daemon(),
+            require_semantic_brain: default_require_semantic_brain(),
+            semantic_brain_connect_attempts: default_semantic_brain_connect_attempts(),
+            semantic_brain_connect_retry_delay_ms: default_semantic_brain_connect_retry_delay_ms(),
         }
     }
 }

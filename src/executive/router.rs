@@ -67,30 +67,47 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
             let engine = OllamaClient::new(client.clone(), config.clone());
             let ollama_arc = Arc::new(client);
             let ephemeral = Arc::new(EphemeralMemory::new(config.workspace.clone()));
-            let semantic_arc: Option<Arc<crate::memory::semantic::SemanticBrain>> =
-                match crate::memory::semantic::SemanticBrain::new(config.clone(), ollama_arc.clone()).await {
-                    Ok(semantic_brain) => {
-                        let semantic = Arc::new(semantic_brain);
-                        tracing::info!("Semantic Brain online. Vector tools registered.");
+            let connect_attempts = config.semantic_brain_connect_attempts;
+            let connect_retry_ms = config.semantic_brain_connect_retry_delay_ms;
+            let semantic_arc: Option<Arc<crate::memory::semantic::SemanticBrain>> = match crate::memory::semantic::SemanticBrain::new_with_connect_retries(
+                config.clone(),
+                ollama_arc.clone(),
+                connect_attempts,
+                connect_retry_ms,
+            )
+            .await
+            {
+                Ok(semantic_brain) => {
+                    let semantic = Arc::new(semantic_brain);
+                    tracing::info!("Semantic Brain online. Vector tools registered.");
 
-                        match semantic.ingest_vault(&workspace_root).await {
-                            Ok(count) if count > 0 => {
-                                tracing::info!(files = count, "Boot-time vault ingestion complete");
-                            }
-                            Ok(_) => {
-                                tracing::debug!("No vault files to ingest at boot");
-                            }
-                            Err(e) => {
-                                tracing::warn!(error = %e, "Boot-time vault ingestion failed");
-                            }
+                    match semantic.ingest_vault(&workspace_root).await {
+                        Ok(count) if count > 0 => {
+                            tracing::info!(files = count, "Boot-time vault ingestion complete");
                         }
-                        Some(semantic)
+                        Ok(_) => {
+                            tracing::debug!("No vault files to ingest at boot");
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "Boot-time vault ingestion failed");
+                        }
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "Semantic Brain offline. Vector tools will be unavailable.");
-                        None
+                    Some(semantic)
+                }
+                Err(e) => {
+                    if config.require_semantic_brain {
+                        return Err(FcpError::VectorDbOffline(format!(
+                            "require_semantic_brain enabled: Qdrant gRPC did not come up after {connect_attempts} attempt(s): {e}"
+                        )));
                     }
-                };
+                    tracing::warn!(
+                        error = %e,
+                        attempts = connect_attempts,
+                        "Semantic Brain offline after retries. Vector tools will be unavailable."
+                    );
+                    None
+                }
+            };
 
             // 5. Register ALL tools with the Gatekeeper
             let mut gatekeeper = Gatekeeper::new();

@@ -87,14 +87,19 @@ rationale = "Tool does not require args."
     r#"descriptor_version = 1
 tool_name = "memory:query"
 short_description = "Search long-term semantic memory for facts, user identity, preferences, and past context."
-when_to_use = "Use for fuzzy recall, who am I / what is my name, user preferences, and anything stored in indexed vault memory."
+when_to_use = "Use for fuzzy recall, who am I / what is my name, user preferences, and anything stored in indexed vault memory. Prefer query alone; use filter_tag only when you know an exact frontmatter tag."
 when_not_to_use = "Do not use for exact file reads by path; use vault:read."
 routing_hints = ["search memory", "do you remember", "what is my name", "who am I", "user preferences", "my identity", "recall context", "semantic query"]
 
 [[examples_good]]
-name = "query_memory"
-args = { query = "user preferences", filter_tag = "user" }
-rationale = "Semantic lookup with optional tag."
+name = "query_broad"
+args = { query = "coffee preference" }
+rationale = "Default: semantic search without filter_tag first."
+
+[[examples_good]]
+name = "query_with_known_tag"
+args = { query = "notes about me", filter_tag = "user" }
+rationale = "Optional narrowing when the tag is known from vault metadata."
 
 [[examples_bad]]
 name = "empty_query"
