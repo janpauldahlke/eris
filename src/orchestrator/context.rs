@@ -75,6 +75,126 @@ impl ContextAssembler {
         Self::build_tool_prompt(identity_content, allowed_tools)
     }
 
+    /// Tier 1: full JSON schemas for the top semantic matches (and recovery targets). Tier 2: sorted
+    /// allowed tool names without full schemas, plus schema-request protocol for deliberate `{}` calls.
+    pub async fn assemble_two_tier(
+        &self,
+        state: &AgentState,
+        _ephemeral: &EphemeralMemory,
+        gatekeeper: &Gatekeeper,
+        tier1_names: &[String],
+        roster_names: &[String],
+    ) -> Result<String> {
+        let identity_path = self.core_dir.join("Identity.md");
+        tracing::debug!(path = %identity_path.display(), "Loading identity file");
+        let identity_content = match tokio::fs::read_to_string(&identity_path).await {
+            Ok(content) => {
+                tracing::info!(len = content.len(), "Identity loaded from vault");
+                content
+            }
+            Err(e) => {
+                tracing::warn!(path = %identity_path.display(), error = %e, "Identity file not found, using hardcoded fallback");
+                "You are E.R.I.S., an autonomous AI agent.".to_string()
+            }
+        };
+
+        let allowed = gatekeeper.get_allowed_tools(state);
+        let mut tier1_schemas: Vec<serde_json::Value> = Vec::new();
+        for name in tier1_names {
+            if let Some(v) = allowed.iter().find(|t| {
+                t.get("function")
+                    .and_then(|f| f.get("name"))
+                    .and_then(|n| n.as_str())
+                    == Some(name.as_str())
+            }) {
+                tier1_schemas.push(v.clone());
+            }
+        }
+
+        tracing::info!(
+            tier1 = tier1_names.len(),
+            tier1_schemas = tier1_schemas.len(),
+            roster = roster_names.len(),
+            "Assembling two-tier tool prompt"
+        );
+
+        let tier1_json = serde_json::to_string_pretty(&tier1_schemas)?;
+        let roster_json = serde_json::to_string_pretty(&roster_names)?;
+        Self::build_two_tier_tool_prompt(identity_content, &tier1_json, &roster_json)
+    }
+
+    fn build_two_tier_tool_prompt(
+        identity_content: String,
+        tier1_schemas_json: &str,
+        roster_names_json: &str,
+    ) -> Result<String> {
+        let system_prompt = format!(
+            "{identity}\n\n\
+            You are inside a strict agent loop. Reply with ONE valid JSON object only.\n\
+            No markdown. No prose outside JSON. No code fences.\n\n\
+            Required JSON shape:\n\
+            {{\n\
+              \"thought\": \"internal reasoning for the agent runtime only; never user-facing\",\n\
+              \"status\": \"Task|Reflect|Idle\",\n\
+              \"message_to_user\": \"optional plain-language assistant reply\",\n\
+              \"tool_calls\": [{{\"name\": \"tool:name\", \"args\": {{}} }}]\n\
+            }}\n\n\
+            Status rules (follow exactly):\n\
+            1) Reflect: when calling one or more tools this turn. tool_calls MUST be non-empty.\n\
+            2) Task: internal continuation or planning with NO tools this turn. tool_calls MUST be [].\n\
+            3) Idle: done; waiting for the user. tool_calls MUST be [].\n\
+            4) In Idle, message_to_user MUST be a non-empty user-facing reply.\n\
+            5) If you need tools, prefer Reflect. The runtime executes tool_calls whenever they are non-empty (before status), so do not mix Idle with tools.\n\
+            6) `Process` is accepted as an alias for Task (avoid inventing other status strings).\n\
+            7) If no tool is needed, NEVER choose Reflect.\n\n\
+            News/web answer style (when summarizing fetched web content):\n\
+            - Return at most 3-5 items.\n\
+            - Each item: headline + one concise sentence.\n\
+            - Do not inline long URLs inside each sentence.\n\
+            - Put links in a final 'Sources:' section.\n\n\
+            Example (tool invocation):\n\
+            {{\n\
+              \"thought\": \"Need to read a vault note before answering.\",\n\
+              \"status\": \"Reflect\",\n\
+              \"message_to_user\": null,\n\
+              \"tool_calls\": [\n\
+                {{\"name\": \"vault:read\", \"args\": {{\"path\": \"notes/today.md\"}}}}\n\
+              ]\n\
+            }}\n\n\
+            Example (final reply):\n\
+            {{\n\
+              \"thought\": \"Sufficient context gathered; ready to answer user.\",\n\
+              \"status\": \"Idle\",\n\
+              \"message_to_user\": \"I found the note and summarized it above.\",\n\
+              \"tool_calls\": []\n\
+            }}\n\n\
+            Schema request protocol (follow exactly):\n\
+            - Tier 2 lists additional allowed tool names. If you must use a tool from Tier 2 but do not know its required parameters, call it with \"args\": {{}}.\n\
+            - The runtime rejects invalid calls; the next inner turn injects the full JSON schema for that tool so you can call it correctly.\n\
+            - Do not invent parameters; use this deliberate empty-args step instead of guessing.\n\n\
+            Tier 1 — full JSON schemas (top semantic matches; may be empty):\n{tier1}\n\n\
+            Tier 2 — additional allowed tool names (sorted; invoke by exact name):\n{roster}\n\n\
+            Memory lifecycle rules (follow exactly):\n\
+            - memory:stage creates temporary entries in ephemeral memory and returns a staged_id.\n\
+            - Staged entries EXPIRE on TTL; they do not auto-promote.\n\
+            - Use memory:staged_list to inspect staged entries before committing.\n\
+            - Prefer memory:commit with staged_id for single-item persistence.\n\
+            - Use memory:commit_all for best-effort bulk persistence.\n\
+            - Web fetch staging (tags web_artifact): committing does NOT write markdown to disk; semantic chunks were stored at fetch time.\n\n\
+            Vault taxonomy — when using memory:stage, include tags from the correct category:\n\
+            - person, contact, people → stored in 30_Persons/\n\
+            - user, preference, about_me → stored in 40_User/\n\
+            - semantic, knowledge, api, reference, concept → stored in 20_Semantic/\n\
+            - Everything else → stored in 10_Episodic/\n\
+            The tags you provide at stage time determine where content is physically stored on disk.",
+            identity = identity_content,
+            tier1 = tier1_schemas_json,
+            roster = roster_names_json
+        );
+
+        Ok(system_prompt)
+    }
+
     fn build_tool_prompt(identity_content: String, allowed_tools: Vec<serde_json::Value>) -> Result<String> {
         tracing::info!(tool_count = allowed_tools.len(), "Tools included in assembled prompt");
         let tools_schema_string = serde_json::to_string_pretty(&allowed_tools)
@@ -177,8 +297,45 @@ impl ContextAssembler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     use tempfile::tempdir;
     use tokio::fs;
+
+    #[tokio::test]
+    async fn test_two_tier_prompt_has_tier_blocks_and_schema_protocol() {
+        let temp_dir = tempdir().expect("tempdir for two-tier assembler test");
+        let vault_root = temp_dir.path();
+        let workspace = "test_workspace";
+        let core_dir = vault_root.join(workspace).join("00_Core");
+        fs::create_dir_all(&core_dir)
+            .await
+            .expect("mkdir 00_Core");
+        fs::write(core_dir.join("Identity.md"), "Test identity.")
+            .await
+            .expect("write Identity.md");
+
+        let mut gatekeeper = crate::tools::gatekeeper::Gatekeeper::new();
+        gatekeeper.register(Arc::new(crate::tools::system::health::SystemHealthTool));
+
+        let assembler = ContextAssembler::new(vault_root, workspace);
+        let ephemeral = crate::memory::ephemeral::EphemeralMemory::new(workspace.to_string());
+        let state = crate::orchestrator::state::AgentState::Chat;
+        let assembled = assembler
+            .assemble_two_tier(
+                &state,
+                &ephemeral,
+                &gatekeeper,
+                &["system:health".to_string()],
+                &[],
+            )
+            .await
+            .expect("assemble_two_tier");
+
+        assert!(assembled.contains("Tier 1"));
+        assert!(assembled.contains("Tier 2"));
+        assert!(assembled.contains("Schema request protocol"));
+        assert!(assembled.contains("system:health"));
+    }
 
     #[tokio::test]
     async fn test_assembler_reads_identity_and_cache() {

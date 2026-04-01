@@ -10,11 +10,18 @@ use crate::orchestrator::r#loop::recovery_policy::{classify_tool_failure, ToolFa
 use crate::orchestrator::r#loop::tool_batch::ToolBatchDecision;
 use crate::orchestrator::r#loop::transition::{StateTransition, TransitionControl};
 use crate::orchestrator::tool_router::ToolRouter;
+use crate::telemetry::routing_codes;
+use crate::ui::events::SYSTEM_ALARM_PREFIX;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::path::Path;
 use std::time::Instant;
+
+/// Marker string in `thought` / `message_to_user` when the last user line was empty (debuggable in logs and TUI).
+pub const EMPTY_USER_MESSAGE_TAG: &str = "SY FNORD";
+
+const EMPTY_USER_SHRUGS: &[&str] = &["¯\\_(ツ)_/¯", "(・_・)", "(╯°□°）╯︵ ┻━┻"];
 
 pub struct Orchestrator<E: LlmEngine> {
     pub state: AgentState,
@@ -44,9 +51,12 @@ pub struct Orchestrator<E: LlmEngine> {
     pub last_tool_ms: u64,
     pub last_total_ms: u64,
     pub last_top_tool_match: Option<String>,
-    pub descriptor_jit_top_k: usize,
+    /// Max tools that receive full JSON schemas in Tier 1 (plus all targeted recovery tools).
+    pub tool_schema_top_k: usize,
     pub descriptor_jit_max_chars: usize,
     pub descriptor_registry: Option<Arc<ToolDescriptorRegistry>>,
+    /// Monotonic counter incremented once per `step()` entry (log correlation; no span across await in `spawn`).
+    pub turn_seq: u64,
 }
 
 impl<E: LlmEngine> Orchestrator<E> {
@@ -111,6 +121,101 @@ impl<E: LlmEngine> Orchestrator<E> {
         out
     }
 
+    fn last_user_content(&self) -> &str {
+        self.chat_stack
+            .iter()
+            .rev()
+            .find(|m| m.role == "user")
+            .map(|m| m.content.as_str())
+            .unwrap_or("")
+    }
+
+    fn allowed_tool_names_sorted(gatekeeper: &Gatekeeper, state: &AgentState) -> Vec<String> {
+        let mut names: Vec<String> = gatekeeper
+            .get_allowed_tools(state)
+            .into_iter()
+            .filter_map(|t| {
+                t.get("function")
+                    .and_then(|f| f.get("name"))
+                    .and_then(|n| n.as_str())
+                    .map(|s| s.to_string())
+            })
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// Tier 1 = targeted recovery tools (all) plus Top-K router matches; Tier 2 = remaining allowed names.
+    fn compute_tier1_roster(
+        gatekeeper: &Gatekeeper,
+        state: &AgentState,
+        router_matches: &[String],
+        targeted: &HashSet<String>,
+        k: usize,
+    ) -> (Vec<String>, Vec<String>) {
+        let allowed_sorted = Self::allowed_tool_names_sorted(gatekeeper, state);
+        let allowed_set: HashSet<String> = allowed_sorted.iter().cloned().collect();
+        let k = k.max(1);
+        let mut tier1 = Vec::new();
+        let mut seen = HashSet::new();
+
+        let mut targeted_sorted: Vec<String> = targeted
+            .iter()
+            .filter(|t| allowed_set.contains(t.as_str()))
+            .cloned()
+            .collect();
+        targeted_sorted.sort();
+        for t in targeted_sorted {
+            seen.insert(t.clone());
+            tier1.push(t);
+        }
+
+        for name in router_matches {
+            if seen.contains(name) {
+                continue;
+            }
+            if !allowed_set.contains(name) {
+                continue;
+            }
+            if tier1.len() >= targeted.len() + k {
+                break;
+            }
+            tier1.push(name.clone());
+            seen.insert(name.clone());
+        }
+
+        let tier1_set: HashSet<String> = tier1.iter().cloned().collect();
+        let roster: Vec<String> = allowed_sorted
+            .into_iter()
+            .filter(|n| !tier1_set.contains(n))
+            .collect();
+        (tier1, roster)
+    }
+
+    async fn handle_empty_user_turn(&mut self) -> Result<()> {
+        let idx = self.chat_stack.len() % EMPTY_USER_SHRUGS.len().max(1);
+        let face = EMPTY_USER_SHRUGS[idx];
+        let thought = format!("{} — empty last user message", EMPTY_USER_MESSAGE_TAG);
+        let message_to_user = format!("{face} {}", EMPTY_USER_MESSAGE_TAG);
+        let value = serde_json::json!({
+            "thought": thought,
+            "status": "Idle",
+            "message_to_user": message_to_user,
+            "tool_calls": []
+        });
+        let content = serde_json::to_string(&value)?;
+        self.emit_optional_user_message(&content).await;
+        self.chat_stack.push(crate::engine::Message {
+            role: "assistant".to_string(),
+            content,
+        });
+        self.state = AgentState::Idle;
+        self.last_llm_ms = 0;
+        self.last_total_ms = 0;
+        self.broadcast_state().await;
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         engine: E,
@@ -122,7 +227,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         max_tool_rounds: u8,
         condensation_threshold: f32,
         num_ctx: usize,
-        descriptor_jit_top_k: usize,
+        tool_schema_top_k: usize,
         descriptor_jit_max_chars: usize,
         interrupt_rx: tokio::sync::watch::Receiver<()>,
         tui_tx: Option<tokio::sync::mpsc::Sender<crate::ui::events::TuiEvent>>,
@@ -152,28 +257,21 @@ impl<E: LlmEngine> Orchestrator<E> {
             last_tool_ms: 0,
             last_total_ms: 0,
             last_top_tool_match: None,
-            descriptor_jit_top_k,
+            tool_schema_top_k,
             descriptor_jit_max_chars,
             descriptor_registry,
+            turn_seq: 0,
         }
     }
 
+    /// Descriptor JIT hints only for tools that have full JSON schemas in the system prompt (Tier 1).
     fn build_descriptor_jit_guidance(
         &self,
         state: &AgentState,
-        router_matches: &[String],
-        targeted_tools: &HashSet<String>,
+        tier1_tool_names: &[String],
     ) -> Option<String> {
         let registry = self.descriptor_registry.as_ref()?;
-        let mut selected = if !targeted_tools.is_empty() {
-            targeted_tools.iter().cloned().collect::<Vec<_>>()
-        } else {
-            router_matches
-                .iter()
-                .take(self.descriptor_jit_top_k.max(1))
-                .cloned()
-                .collect::<Vec<_>>()
-        };
+        let mut selected: Vec<String> = tier1_tool_names.to_vec();
         if selected.is_empty() {
             return None;
         }
@@ -262,20 +360,43 @@ impl<E: LlmEngine> Orchestrator<E> {
 
     /// The main cognitive loop.
     ///
-    /// Pre-LLM routing: embed the user's input with nomic *before* calling the
-    /// LLM. If no tool matches, use `assemble_conversational()` (no tool
-    /// schemas). If tools match, use `assemble()` (full schemas). Always
-    /// exactly one LLM generation per user turn.
+    /// Pre-LLM routing: alarm prefix and short-input guard → conversational; else
+    /// semantic Top-K for Tier 1 schemas and full roster in Tier 2 (never
+    /// conversational on empty semantic match). Always exactly one LLM
+    /// generation per user turn unless interrupted.
     #[allow(clippy::never_loop)]
     pub async fn step(&mut self, _user_input: Option<String>) -> Result<()> {
+        self.turn_seq = self.turn_seq.saturating_add(1);
+        let turn_seq = self.turn_seq;
+        // No `info_span!().entered()` here: `EnteredSpan` is not `Send` and `step()` awaits
+        // inside `tokio::spawn`. Correlation uses `turn_seq` on every routing event instead.
+
         let step_start = Instant::now();
         let mut llm_ms_acc = 0u64;
         let mut tool_ms_acc = 0u64;
         self.recovery_count = 0;
         self.tool_rounds = 0;
         let mut web_tool_activity = false;
-        tracing::info!(state = ?self.state, chat_stack_len = self.chat_stack.len(), "step() entered");
+        tracing::info!(
+            turn_seq,
+            state = ?self.state,
+            chat_stack_len = self.chat_stack.len(),
+            "step() entered"
+        );
         self.broadcast_state().await;
+
+        if self.last_user_content().trim().is_empty() {
+            tracing::info!(
+                category = routing_codes::CATEGORY_ROUTING,
+                issue = routing_codes::ISSUE_STEP_EMPTY_USER_SY_FNORD,
+                outcome = routing_codes::OUTCOME_CONVERSATIONAL,
+                turn_seq,
+                tools_needed = false,
+                router_match_count = 0usize,
+                "no user text in last message; SY FNORD synthetic reply"
+            );
+            return self.handle_empty_user_turn().await;
+        }
 
         // ── Pre-LLM semantic routing ─────────────────────────────────
         let (mut tools_needed, pre_llm_matched_tools) = self.run_pre_llm_routing().await;
@@ -299,25 +420,49 @@ impl<E: LlmEngine> Orchestrator<E> {
                 return Ok(());
             }
 
-            // 2. Context Assembly (WITH tool schemas)
+            // 2. Context Assembly (Tier 1 full schemas + Tier 2 roster, or conversational)
+            let (tier1_names, roster_names) = if tools_needed {
+                Self::compute_tier1_roster(
+                    &self.gatekeeper,
+                    &self.state,
+                    &pre_llm_matched_tools,
+                    &targeted_tools,
+                    self.tool_schema_top_k,
+                )
+            } else {
+                (Vec::new(), Vec::new())
+            };
+            if tools_needed {
+                let jit_enabled =
+                    self.descriptor_registry.is_some() && !tier1_names.is_empty();
+                tracing::debug!(
+                    category = routing_codes::CATEGORY_ROUTING,
+                    turn_seq = self.turn_seq,
+                    tier1_count = tier1_names.len(),
+                    tier2_count = roster_names.len(),
+                    jit_enabled,
+                    tools_needed,
+                    "context tier assembly"
+                );
+            }
             let system_prompt = if !tools_needed {
                 self.context_assembler.assemble_conversational(&self.ephemeral).await?
-            } else if !targeted_tools.is_empty() {
-                let tool_names = targeted_tools.iter().cloned().collect::<Vec<_>>();
-                self.context_assembler
-                    .assemble_with_selected_tools(&self.state, &self.ephemeral, &self.gatekeeper, &tool_names)
-                    .await?
             } else {
-                self.context_assembler.assemble(&self.state, &self.ephemeral, &self.gatekeeper).await?
+                self.context_assembler
+                    .assemble_two_tier(
+                        &self.state,
+                        &self.ephemeral,
+                        &self.gatekeeper,
+                        &tier1_names,
+                        &roster_names,
+                    )
+                    .await?
             };
             tracing::debug!(prompt_len = system_prompt.len(), "System prompt assembled");
             Self::upsert_system_prompt(&mut self.chat_stack, system_prompt);
             if tools_needed
-                && let Some(jit_guidance) = self.build_descriptor_jit_guidance(
-                    &self.state,
-                    &pre_llm_matched_tools,
-                    &targeted_tools,
-                )
+                && let Some(jit_guidance) =
+                    self.build_descriptor_jit_guidance(&self.state, &tier1_names)
             {
                 self.chat_stack.push(crate::engine::Message {
                     role: "system".to_string(),
@@ -506,42 +651,106 @@ impl<E: LlmEngine> Orchestrator<E> {
         }
     }
 
-    /// Computes whether this turn should run in tool-enabled mode, plus top
-    /// router matches used for JIT descriptor guidance.
+    /// Conversational vs tool mode, plus ordered router names for Tier 1 (Top-K).
     async fn run_pre_llm_routing(&mut self) -> (bool, Vec<String>) {
+        let user_input = self.last_user_content();
+        let turn_seq = self.turn_seq;
+
+        if user_input.starts_with(SYSTEM_ALARM_PREFIX) {
+            self.last_router_ms = 0;
+            self.last_top_tool_match = None;
+            tracing::info!(
+                category = routing_codes::CATEGORY_ROUTING,
+                issue = routing_codes::ISSUE_PRELLM_CONV_ALARM,
+                outcome = routing_codes::OUTCOME_CONVERSATIONAL,
+                turn_seq,
+                tools_needed = false,
+                router_match_count = 0usize,
+                "system alarm prefix; conversational mode"
+            );
+            return (false, Vec::new());
+        }
+
+        if ToolRouter::short_input_guard_conversational_only(user_input) {
+            self.last_router_ms = 0;
+            self.last_top_tool_match = None;
+            tracing::info!(
+                category = routing_codes::CATEGORY_ROUTING,
+                issue = routing_codes::ISSUE_PRELLM_CONV_SHORT_INPUT,
+                outcome = routing_codes::OUTCOME_CONVERSATIONAL,
+                turn_seq,
+                tools_needed = false,
+                router_match_count = 0usize,
+                "short-input guard; conversational mode"
+            );
+            return (false, Vec::new());
+        }
+
         let Some(router) = &self.tool_router else {
+            self.last_router_ms = 0;
+            self.last_top_tool_match = None;
+            tracing::warn!(
+                category = routing_codes::CATEGORY_ROUTING,
+                issue = routing_codes::ISSUE_PRELLM_ROUTER_UNAVAILABLE,
+                outcome = routing_codes::outcome_from_pre_llm_tuple(true, 0),
+                turn_seq,
+                tools_needed = true,
+                router_match_count = 0usize,
+                "no tool router; roster-only tool mode"
+            );
             return (true, Vec::new());
         };
-
-        let user_input = self
-            .chat_stack
-            .iter()
-            .rev()
-            .find(|m| m.role == "user")
-            .map(|m| m.content.as_str())
-            .unwrap_or("");
 
         let router_started = Instant::now();
         match router.match_tools(user_input).await {
             Ok(matches) if matches.is_empty() => {
                 self.last_router_ms = router_started.elapsed().as_millis() as u64;
                 self.last_top_tool_match = None;
-                tracing::info!("Pre-LLM routing: no tool match → conversational mode");
-                (false, Vec::new())
+                tracing::info!(
+                    category = routing_codes::CATEGORY_ROUTING,
+                    issue = routing_codes::ISSUE_PRELLM_SEMANTIC_EMPTY,
+                    outcome = routing_codes::outcome_from_pre_llm_tuple(true, 0),
+                    turn_seq,
+                    tools_needed = true,
+                    router_match_count = 0usize,
+                    "no semantic tool match; roster-only tool mode"
+                );
+                (true, Vec::new())
             }
             Ok(matches) => {
                 self.last_router_ms = router_started.elapsed().as_millis() as u64;
                 self.last_top_tool_match = matches.first().map(|(name, score)| format!("{name}({score:.3})"));
+                let matched_preview: Vec<String> = matches
+                    .iter()
+                    .map(|(n, s)| format!("{}({:.3})", n, s))
+                    .collect();
+                let names: Vec<String> = matches.into_iter().map(|(name, _)| name).collect();
+                let router_match_count = names.len();
                 tracing::info!(
-                    matched = ?matches.iter().map(|(n,s)| format!("{}({:.3})", n, s)).collect::<Vec<_>>(),
-                    "Pre-LLM routing: tool match → tool mode"
+                    category = routing_codes::CATEGORY_ROUTING,
+                    issue = routing_codes::ISSUE_PRELLM_SEMANTIC_HIT,
+                    outcome = routing_codes::outcome_from_pre_llm_tuple(true, router_match_count),
+                    turn_seq,
+                    tools_needed = true,
+                    router_match_count,
+                    matched = ?matched_preview,
+                    "semantic tool match; Tier1 + roster"
                 );
-                (true, matches.into_iter().map(|(name, _)| name).collect())
+                (true, names)
             }
             Err(e) => {
                 self.last_router_ms = router_started.elapsed().as_millis() as u64;
                 self.last_top_tool_match = None;
-                tracing::warn!(error = %e, "Pre-LLM routing failed, defaulting to tool mode");
+                tracing::warn!(
+                    category = routing_codes::CATEGORY_ROUTING,
+                    issue = routing_codes::ISSUE_PRELLM_MATCH_ERROR,
+                    outcome = routing_codes::outcome_from_pre_llm_tuple(true, 0),
+                    turn_seq,
+                    tools_needed = true,
+                    router_match_count = 0usize,
+                    fcp_error = %e,
+                    "pre-LLM match_tools failed; roster-only tool mode"
+                );
                 (true, Vec::new())
             }
         }
@@ -1178,11 +1387,35 @@ mod tests {
         let engine = MockEngine::with_network_fault("daemon offline");
         let mut orchestrator = setup_orchestrator_with_engine(engine);
         orchestrator.state = AgentState::Chat;
-        
+        orchestrator.chat_stack.push(Message {
+            role: "user".to_string(),
+            content: "exercise engine error path".to_string(),
+        });
+
         let result = orchestrator.step(None).await;
         
         assert!(result.is_err());
         assert_eq!(orchestrator.state, AgentState::Idle);
+    }
+
+    #[tokio::test]
+    async fn test_step_empty_user_line_sy_fnord_no_llm() {
+        let json = r#"{"status":"Idle","message_to_user":"engine should not run"}"#;
+        let engine = MockEngine::with_content(json);
+        let mut orchestrator = setup_orchestrator_with_engine(engine);
+        orchestrator.state = AgentState::Chat;
+        orchestrator.chat_stack.push(Message {
+            role: "user".to_string(),
+            content: "   ".to_string(),
+        });
+
+        let result = orchestrator.step(None).await;
+        assert!(result.is_ok());
+        let last = orchestrator
+            .chat_stack
+            .last()
+            .expect("assistant reply for empty user line");
+        assert!(last.content.contains(EMPTY_USER_MESSAGE_TAG));
     }
 
     #[tokio::test]

@@ -59,3 +59,5 @@
 - [x] IMPROVEMENT (S04 / memory): orchestrator tools-first JSON handling // commit_all vs semantic skew fix
 - [x] Improvement (S09): add user name to ignation process
 - [x] feature (S06): add clock and alarm tool
+- [x] REFACTORING(S06): Tier1+Tier2 tool prompt + routing fixes
+- [x] IMPROVEMENT (S08 / telemetry): structured pre-LLM routing logs

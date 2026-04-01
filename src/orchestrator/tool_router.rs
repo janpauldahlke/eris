@@ -12,6 +12,11 @@ pub struct ToolRouter {
 }
 
 impl ToolRouter {
+    /// Short greetings and tiny utterances: conversational only (evaluated in orchestrator **before** embedding).
+    pub fn short_input_guard_conversational_only(text: &str) -> bool {
+        Self::is_short_input_without_explicit_tool_intent(text)
+    }
+
     fn is_short_input_without_explicit_tool_intent(text: &str) -> bool {
         let trimmed = text.trim();
         let token_count = trimmed.split_whitespace().count();
@@ -160,14 +165,6 @@ impl ToolRouter {
         if thought.trim().is_empty() {
             return Ok(Vec::new());
         }
-        if Self::is_short_input_without_explicit_tool_intent(thought) {
-            tracing::info!(
-                event = "SHORT_INPUT_GUARD",
-                thought_preview = %thought.chars().take(80).collect::<String>(),
-                "Short input without explicit tool intent forced to conversational mode"
-            );
-            return Ok(Vec::new());
-        }
 
         let thought_vec = Self::embed(&self.ollama, &self.embed_model, thought).await?;
 
@@ -265,8 +262,8 @@ mod tests {
 
     #[test]
     fn test_short_input_guard_without_explicit_intent() {
-        assert!(ToolRouter::is_short_input_without_explicit_tool_intent("test"));
-        assert!(!ToolRouter::is_short_input_without_explicit_tool_intent("https://example.com"));
-        assert!(!ToolRouter::is_short_input_without_explicit_tool_intent("/health"));
+        assert!(ToolRouter::short_input_guard_conversational_only("test"));
+        assert!(!ToolRouter::short_input_guard_conversational_only("https://example.com"));
+        assert!(!ToolRouter::short_input_guard_conversational_only("/health"));
     }
 }

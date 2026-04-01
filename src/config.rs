@@ -30,6 +30,9 @@ pub struct AppConfig {
     pub llm_context_window: usize,
     pub vault_read_ratio: f32,
     pub tool_match_threshold: f32,
+    /// Max number of tools that receive full JSON schemas in Tier 1 (semantic Top-K).
+    #[serde(default = "default_tool_schema_top_k")]
+    pub tool_schema_top_k: usize,
     #[serde(default = "default_tool_descriptor_jit_top_k")]
     pub tool_descriptor_jit_top_k: usize,
     #[serde(default = "default_tool_descriptor_jit_max_chars")]
@@ -59,6 +62,10 @@ fn default_qdrant_daemon() -> DaemonCommand {
         command: "qdrant".into(),
         args: Vec::new(),
     }
+}
+
+fn default_tool_schema_top_k() -> usize {
+    3
 }
 
 fn default_tool_descriptor_jit_top_k() -> usize {
@@ -96,6 +103,7 @@ impl Default for AppConfig {
             llm_context_window: 16384,
             vault_read_ratio: 0.25,
             tool_match_threshold: 0.50,
+            tool_schema_top_k: 3,
             tool_descriptor_jit_top_k: 3,
             tool_descriptor_jit_max_chars: 6000,
             ollama_daemon: default_ollama_daemon(),

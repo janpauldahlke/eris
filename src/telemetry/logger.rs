@@ -17,6 +17,8 @@ pub fn init_tracing(workspace_root: &Path) -> Result<WorkerGuard> {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("eris=debug,fcp=debug"));
 
+    // `with_target(false)`: target strings are not printed. Orchestrator routing events use
+    // `category = "routing"` (see `telemetry::routing_codes`) so operators can grep log files.
     let subscriber = fmt::Subscriber::builder()
         .with_env_filter(filter)
         .with_thread_ids(true)
