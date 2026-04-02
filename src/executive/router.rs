@@ -110,6 +110,8 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                 }
             };
 
+            let api_http = Arc::new(crate::api::ApiHttpClient::new(config.clone())?);
+
             // 5. Register ALL tools with the Gatekeeper
             let mut gatekeeper = Gatekeeper::new();
             let (alarm_reschedule_tx, alarm_reschedule_rx) =
@@ -176,6 +178,13 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
             gatekeeper.register(Arc::new(crate::tools::clock::ClockWallAlarmTool {
                 workspace_root: workspace_root.clone(),
                 reschedule_tx: alarm_reschedule_tx,
+            }));
+
+            gatekeeper.register(Arc::new(crate::tools::weather::WeatherCurrentTool {
+                api: api_http.clone(),
+            }));
+            gatekeeper.register(Arc::new(crate::tools::weather::WeatherForecastTool {
+                api: api_http,
             }));
 
             let max_content_chars = config.num_ctx * 3;

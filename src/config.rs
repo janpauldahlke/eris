@@ -1,5 +1,27 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
+
+/// HTTP API profile for [`crate::api::ApiHttpClient`] (URL/query/header templates). Map keys are profile ids (`[apis.<id>]` in `fcp.toml`).
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct ApiProfile {
+    #[serde(default = "default_api_profile_enabled")]
+    pub enabled: bool,
+    pub base_url: String,
+    #[serde(default)]
+    pub query: HashMap<String, String>,
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    /// When unset, [`AppConfig::web_fetch_max_bytes`] is used.
+    #[serde(default)]
+    pub max_response_bytes: Option<usize>,
+    #[serde(default)]
+    pub stale_after_secs: Option<u64>,
+}
+
+fn default_api_profile_enabled() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct AppConfig {
@@ -47,6 +69,8 @@ pub struct AppConfig {
     /// Delay between failed gRPC connect attempts (milliseconds).
     #[serde(default = "default_semantic_brain_connect_retry_delay_ms")]
     pub semantic_brain_connect_retry_delay_ms: u64,
+    #[serde(default)]
+    pub apis: HashMap<String, ApiProfile>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -90,6 +114,85 @@ fn default_semantic_brain_connect_retry_delay_ms() -> u64 {
     500
 }
 
+/// Built-in Open-Meteo (non-commercial) API profiles for [`crate::tools::weather`]. Override or extend via `fcp.toml` `[apis.*]`.
+pub fn default_open_meteo_apis() -> HashMap<String, ApiProfile> {
+    let mut m = HashMap::new();
+    m.insert(
+        "open_meteo_geocode".into(),
+        ApiProfile {
+            enabled: true,
+            base_url: "https://geocoding-api.open-meteo.com/v1/search".into(),
+            query: [
+                ("name".into(), "{city}".into()),
+                ("count".into(), "1".into()),
+            ]
+            .into_iter()
+            .collect(),
+            headers: HashMap::new(),
+            max_response_bytes: Some(65_536),
+            stale_after_secs: None,
+        },
+    );
+    m.insert(
+        "open_meteo_geocode_cc".into(),
+        ApiProfile {
+            enabled: true,
+            base_url: "https://geocoding-api.open-meteo.com/v1/search".into(),
+            query: [
+                ("name".into(), "{city}".into()),
+                ("count".into(), "1".into()),
+                ("countryCode".into(), "{country_code}".into()),
+            ]
+            .into_iter()
+            .collect(),
+            headers: HashMap::new(),
+            max_response_bytes: Some(65_536),
+            stale_after_secs: None,
+        },
+    );
+    m.insert(
+        "open_meteo_forecast_current".into(),
+        ApiProfile {
+            enabled: true,
+            base_url: "https://api.open-meteo.com/v1/forecast".into(),
+            query: [
+                ("latitude".into(), "{lat}".into()),
+                ("longitude".into(), "{lon}".into()),
+                (
+                    "current".into(),
+                    "temperature_2m,weather_code,relative_humidity_2m".into(),
+                ),
+                ("timezone".into(), "auto".into()),
+            ]
+            .into_iter()
+            .collect(),
+            headers: HashMap::new(),
+            max_response_bytes: None,
+            stale_after_secs: None,
+        },
+    );
+    m.insert(
+        "open_meteo_forecast_hourly".into(),
+        ApiProfile {
+            enabled: true,
+            base_url: "https://api.open-meteo.com/v1/forecast".into(),
+            query: [
+                ("latitude".into(), "{lat}".into()),
+                ("longitude".into(), "{lon}".into()),
+                ("hourly".into(), "temperature_2m".into()),
+                ("forecast_days".into(), "3".into()),
+                ("timezone".into(), "auto".into()),
+            ]
+            .into_iter()
+            .collect(),
+            headers: HashMap::new(),
+            max_response_bytes: None,
+            stale_after_secs: None,
+        },
+    );
+    m
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -124,6 +227,7 @@ impl Default for AppConfig {
             require_semantic_brain: default_require_semantic_brain(),
             semantic_brain_connect_attempts: default_semantic_brain_connect_attempts(),
             semantic_brain_connect_retry_delay_ms: default_semantic_brain_connect_retry_delay_ms(),
+            apis: default_open_meteo_apis(),
         }
     }
 }
@@ -276,5 +380,16 @@ mod tests {
         assert_eq!(parsed_config.ollama_daemon.args, vec!["serve"]);
         assert_eq!(parsed_config.qdrant_daemon.command, "qdrant");
         assert!(parsed_config.qdrant_daemon.args.is_empty());
+        assert!(parsed_config.apis.is_empty());
+    }
+
+    #[test]
+    fn default_config_includes_open_meteo_api_profiles() {
+        let c = AppConfig::default();
+        assert_eq!(c.apis.len(), 4);
+        assert!(c.apis.contains_key("open_meteo_geocode"));
+        assert!(c.apis.contains_key("open_meteo_geocode_cc"));
+        assert!(c.apis.contains_key("open_meteo_forecast_current"));
+        assert!(c.apis.contains_key("open_meteo_forecast_hourly"));
     }
 }

@@ -71,3 +71,5 @@
 - [x] IMPROVEMENT (S08TUI): tweak and improve UI, sync states in status as SSOT
 - [x] feature (S06_tool): add remove action to agenda tool
 - [x] feature (S06_tool): linking agenda and reminder to trigger with content / DONE vs SNOOZE
+- [x] feature (S06_http_middleware): API tool below surface
+- [x] feature (S06_tool): weather:forecast surface tool

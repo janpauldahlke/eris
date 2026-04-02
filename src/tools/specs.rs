@@ -347,4 +347,43 @@ name = "bad_hour"
 args = { hour = 25, minute = 0, label = "x" }
 rationale = "hour must be 0-23."
 "#,
+    r#"descriptor_version = 1
+tool_name = "weather:current"
+short_description = "Current weather (instant variables) for a city via Open-Meteo geocoding + forecast."
+when_to_use = "Use when the user wants present conditions: temperature, weather code, humidity at a named place. Use city name; add country_code if the name is ambiguous (e.g. Springfield)."
+when_not_to_use = "Do not use for multi-day hourly series; use weather:forecast. Do not use for arbitrary URLs."
+routing_hints = ["weather now", "temperature outside", "is it raining", "current conditions", "humidity today"]
+
+[[examples_good]]
+name = "city"
+args = { city = "Hamburg" }
+rationale = "Resolve a major city without country filter."
+
+[[examples_good]]
+name = "city_and_country"
+args = { city = "Springfield", country_code = "US" }
+rationale = "Disambiguate with ISO country code."
+
+[[examples_bad]]
+name = "empty_city"
+args = { city = "" }
+rationale = "city must be non-empty."
+"#,
+    r#"descriptor_version = 1
+tool_name = "weather:forecast"
+short_description = "Hourly temperature forecast for a city (several days) via Open-Meteo."
+when_to_use = "Use when the user wants upcoming hours/days of temperature (or a time series), not only instant conditions."
+when_not_to_use = "Do not use for only current conditions; use weather:current. Do not use for arbitrary URLs."
+routing_hints = ["weather forecast", "hourly temperature", "next days weather", "will it rain tomorrow"]
+
+[[examples_good]]
+name = "forecast_city"
+args = { city = "Berlin" }
+rationale = "Hourly series for a named city."
+
+[[examples_bad]]
+name = "empty_city"
+args = { city = "" }
+rationale = "city must be non-empty."
+"#,
 ];

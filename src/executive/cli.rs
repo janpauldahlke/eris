@@ -52,7 +52,8 @@ mod tests {
 
     #[test]
     fn test_cli_default_vault() {
-        let args = vec!["fcp", "chat"];
+        // Pass `-w default` so this test does not depend on `FCP_WORKSPACE` in the environment.
+        let args = vec!["fcp", "-w", "default", "chat"];
         let cli = parse_from(args).unwrap();
         assert_eq!(cli.vault, None);
         assert_eq!(cli.workspace, "default");

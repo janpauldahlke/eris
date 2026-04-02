@@ -18,6 +18,7 @@ pub mod engine;
 pub mod memory;
 pub mod tools;
 pub mod ingest;
+pub mod api;
 pub mod orchestrator;
 pub mod ui;
 

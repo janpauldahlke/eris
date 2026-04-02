@@ -135,6 +135,8 @@ impl ToolRouter {
             "clock:now" => "what time is it, current time, timezone, date now, local time",
             "clock:timer" => "generic timer in 30 minutes, countdown, stretch break, ping me in, not tied to agenda list, label-only reminder",
             "clock:alarm" => "wake me at seven, alarm at wall clock time, 7am tomorrow, fixed o'clock time, not an agenda task reminder",
+            "weather:current" => "weather now, temperature outside, is it raining, conditions today, current conditions, what's the weather like",
+            "weather:forecast" => "weather forecast, hourly temperature, next days weather, will it rain tomorrow, upcoming weather",
             _ => "",
         };
         if hints.is_empty() {

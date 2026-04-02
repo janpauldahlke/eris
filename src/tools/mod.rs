@@ -7,6 +7,7 @@ pub mod system;
 pub mod agenda;
 pub mod clock;
 pub mod web;
+pub mod weather;
 pub mod descriptors;
 pub mod specs;
 
