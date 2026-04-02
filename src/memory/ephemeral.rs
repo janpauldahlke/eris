@@ -77,6 +77,31 @@ impl EphemeralMemory {
         None
     }
 
+    /// Removes all cache rows with this title (e.g. before replacing with [`Self::upsert_by_title`]).
+    pub async fn invalidate_by_title(&self, title: &str) {
+        let keys: Vec<String> = self
+            .cache
+            .iter()
+            .filter(|(_, v)| v.title == title)
+            .map(|(k, _)| k.to_string())
+            .collect();
+        for k in keys {
+            self.cache.invalidate(&k).await;
+        }
+    }
+
+    /// Replaces any existing entry with `title` by inserting a fresh value.
+    pub async fn upsert_by_title(
+        &self,
+        title: &str,
+        value: &str,
+        tags: Vec<String>,
+        ttl_secs: u64,
+    ) -> Result<CacheValue> {
+        self.invalidate_by_title(title).await;
+        self.insert(title, value, tags, ttl_secs).await
+    }
+
     pub fn list_entries(&self) -> Vec<CacheValue> {
         self.cache
             .iter()
@@ -278,6 +303,24 @@ mod tests {
 
         let entry = memory.get_by_id(&staged.staged_id).await.unwrap();
         assert_eq!(entry.tags, vec!["tag1".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_upsert_by_title_replaces_prior() {
+        let memory = EphemeralMemory::new("test_ws".to_string());
+        memory.insert("same", "a", vec![], 60).await.unwrap();
+        memory
+            .upsert_by_title("same", "b", vec![], 60)
+            .await
+            .unwrap();
+        let v = memory.get("same").await;
+        assert_eq!(v.as_deref(), Some("b"));
+        let count = memory
+            .list_entries()
+            .into_iter()
+            .filter(|e| e.title == "same")
+            .count();
+        assert_eq!(count, 1);
     }
 
     #[tokio::test]

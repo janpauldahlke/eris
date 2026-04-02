@@ -1,19 +1,38 @@
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use async_trait::async_trait;
 use ollama_rs::Ollama;
 use crate::config::AppConfig;
 use crate::engine::{LlmEngine, Message, EngineResponse};
+use crate::engine::token_metrics::{self, LlmTokenSnapshot};
 use crate::executive::error::Result;
 
 pub struct OllamaClient {
     pub client: Ollama,
     pub config: Arc<AppConfig>,
+    /// When set, every successful `generate` publishes [`LlmTokenSnapshot`] for the last Ollama response.
+    pub token_metrics_tx: Option<watch::Sender<LlmTokenSnapshot>>,
 }
 
 impl OllamaClient {
     pub fn new(client: Ollama, config: Arc<AppConfig>) -> Self {
-        Self { client, config }
+        Self {
+            client,
+            config,
+            token_metrics_tx: None,
+        }
+    }
+
+    pub fn with_token_metrics(
+        client: Ollama,
+        config: Arc<AppConfig>,
+        token_metrics_tx: watch::Sender<LlmTokenSnapshot>,
+    ) -> Self {
+        Self {
+            client,
+            config,
+            token_metrics_tx: Some(token_metrics_tx),
+        }
     }
 }
 
@@ -123,6 +142,8 @@ impl LlmEngine for OllamaClient {
                 }
             }
 
+            token_metrics::publish(&self.token_metrics_tx, prompt_tokens, generated_tokens);
+
             Ok(EngineResponse {
                 content: full_content,
                 prompt_tokens,
@@ -139,6 +160,7 @@ impl LlmEngine for OllamaClient {
                         (0, 0)
                     };
                     tracing::info!(prompt_tokens, generated_tokens, content_len = content.len(), "Ollama non-stream response received");
+                    token_metrics::publish(&self.token_metrics_tx, prompt_tokens, generated_tokens);
                     Ok(EngineResponse {
                         content,
                         prompt_tokens,

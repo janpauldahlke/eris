@@ -62,9 +62,10 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
             let host = format!("{}://{}", parsed_url.scheme(), parsed_url.host_str().unwrap_or("localhost"));
             let port = parsed_url.port().unwrap_or(11434);
 
-            // 4. Build Engine
+            // 4. Build Engine + shared last-token snapshot (watch channel; see `engine::token_metrics`)
             let client = Ollama::new(host, port);
-            let engine = OllamaClient::new(client.clone(), config.clone());
+            let (token_metrics_tx, token_metrics_rx) = crate::engine::token_metrics::channel();
+            let engine = OllamaClient::with_token_metrics(client.clone(), config.clone(), token_metrics_tx);
             let ollama_arc = Arc::new(client);
             let ephemeral = Arc::new(EphemeralMemory::new(config.workspace.clone()));
             let connect_attempts = config.semantic_brain_connect_attempts;
@@ -398,7 +399,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
 
             // 10. Run TUI App
             let mut app = TuiApp::new(tui_rx, action_tx);
-            let result = app.run(terminal).await;
+            let result = app.run(terminal, Some(token_metrics_rx)).await;
 
             // 11. Teardown
             cancel_token.cancel();

@@ -1018,30 +1018,69 @@ impl<E: LlmEngine> Orchestrator<E> {
         }
     }
 
-    /// Forces the LLM to summarize the active chat stack, then replaces the stack with the summary.
+    /// Folds older `chat_stack` tail into a rolling JSON summary (sliding window), persists it to
+    /// ephemeral, and retains recent messages under a token budget.
     pub async fn execute_condensation(&mut self) -> Result<()> {
-        // 1. Push a system message to `self.chat_stack` asking for a JSON summary.
-        self.chat_stack.push(crate::engine::Message {
-            role: "system".to_string(),
-            content: "Please summarize the current conversation as a JSON object.".to_string(),
-        });
+        if self.chat_stack.is_empty() {
+            tracing::warn!("execute_condensation: empty chat stack");
+            return Err(FcpError::EngineFault(
+                "condensation: empty chat stack".to_string(),
+            ));
+        }
 
-        // 2. Call `self.engine.generate(&self.chat_stack, ...)`.
-        let response = self.engine.generate(&self.chat_stack, "", None).await?;
+        let ep_prev = self
+            .ephemeral
+            .get(crate::orchestrator::context_window::ROLLING_SUMMARY_TITLE)
+            .await;
 
-        // 3. Extract the summary text from the response.
-        let summary = response.content;
+        let plan = match crate::orchestrator::context_window::plan_sliding_condensation(
+            &self.chat_stack,
+            self.num_ctx,
+            ep_prev,
+        )? {
+            Some(p) => p,
+            None => {
+                tracing::info!("condensation: nothing to fold; skipping LLM summarizer");
+                self.state = AgentState::Chat;
+                self.broadcast_state().await;
+                return Ok(());
+            }
+        };
 
-        // 4. Clear `self.chat_stack`.
-        self.chat_stack.clear();
+        let instr = crate::orchestrator::context_window::condensation_system_instruction();
+        let summarize_stack = crate::orchestrator::context_window::build_summarization_stack(
+            instr,
+            plan.previous_rolling_json.as_deref(),
+            &plan.messages_to_fold,
+        );
 
-        // 5. Push a single Message containing the summary back to `self.chat_stack`.
-        self.chat_stack.push(crate::engine::Message {
-            role: "system".to_string(),
-            content: summary,
-        });
+        let response = self.engine.generate(&summarize_stack, "", None).await?;
+        let json_out = crate::orchestrator::context_window::normalize_rolling_summary_response(
+            &response.content,
+        )?;
 
-        // 6. Set `self.state = AgentState::Chat`.
+        self.ephemeral
+            .upsert_by_title(
+                crate::orchestrator::context_window::ROLLING_SUMMARY_TITLE,
+                &json_out,
+                vec!["context".to_string(), "rolling_summary".to_string()],
+                crate::orchestrator::context_window::ROLLING_SUMMARY_TTL_SECS,
+            )
+            .await?;
+
+        let mut new_stack = Vec::new();
+        new_stack.push(plan.main_system.clone());
+        if let Some(jit) = plan.jit.clone() {
+            new_stack.push(jit);
+        }
+        new_stack.push(crate::orchestrator::context_window::rolling_summary_system_message(
+            &json_out,
+        ));
+        for m in plan.kept_tail {
+            new_stack.push(m);
+        }
+        self.chat_stack = new_stack;
+
         self.state = AgentState::Chat;
         self.broadcast_state().await;
 
@@ -1424,22 +1463,47 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_execute_condensation_replaces_stack() {
-        let json = r#"{
-            "thought": "Summarizing",
-            "status": "Task",
-            "tool_calls": []
-        }"#;
-        let engine = MockEngine::with_content(json);
+    async fn test_execute_condensation_sliding_window_and_ephemeral() {
+        let rolling_json = r#"{"kind":"rolling_summary_v1","summary":"folded","key_facts":[],"open_threads":[],"last_updated":"2026-01-01T00:00:00+00:00"}"#;
+        let engine = MockEngine::with_content(rolling_json);
         let mut orchestrator = setup_orchestrator_with_engine(engine);
-        orchestrator.chat_stack.push(Message { role: "user".to_string(), content: "hello".to_string() });
-        orchestrator.chat_stack.push(Message { role: "assistant".to_string(), content: "world".to_string() });
+        orchestrator.num_ctx = 48;
+        orchestrator.chat_stack.clear();
+        orchestrator.chat_stack.push(Message {
+            role: "system".to_string(),
+            content: "system prompt".to_string(),
+        });
+        for i in 0..8 {
+            orchestrator.chat_stack.push(Message {
+                role: "user".to_string(),
+                content: format!("user-{i}-{}", "x".repeat(40)),
+            });
+            orchestrator.chat_stack.push(Message {
+                role: "assistant".to_string(),
+                content: format!("assistant-{i}-{}", "y".repeat(40)),
+            });
+        }
 
         let result = orchestrator.execute_condensation().await;
-        
+
         assert!(result.is_ok());
-        assert_eq!(orchestrator.chat_stack.len(), 1);
-        assert_eq!(orchestrator.chat_stack[0].content, json);
+        let head = crate::orchestrator::context_window::split_stack_head(&orchestrator.chat_stack)
+            .expect("split head");
+        assert!(head.rolling.is_some());
+        assert!(orchestrator.chat_stack.len() >= 3);
+
+        let stored = orchestrator
+            .ephemeral
+            .get(crate::orchestrator::context_window::ROLLING_SUMMARY_TITLE)
+            .await;
+        let Some(stored) = stored else {
+            panic!("expected rolling summary in ephemeral");
+        };
+        let parsed: crate::orchestrator::context_window::RollingSummaryV1 =
+            serde_json::from_str(&stored).expect("rolling json");
+        assert_eq!(parsed.kind, crate::orchestrator::context_window::ROLLING_SUMMARY_KIND);
+        assert_eq!(parsed.summary, "folded");
+
         assert_eq!(orchestrator.state, AgentState::Chat);
     }
 

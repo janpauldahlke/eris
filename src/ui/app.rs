@@ -1,4 +1,5 @@
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
+use crate::engine::token_metrics::LlmTokenSnapshot;
 use crate::executive::error::{Result, FcpError};
 use crate::ui::events::{TuiEvent, AgentStateUpdate, UserAction};
 use crossterm::event::{Event as CrosstermEvent, EventStream, KeyCode};
@@ -71,7 +72,13 @@ impl TuiApp {
         }
     }
 
-    pub async fn run(&mut self, mut terminal: Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+    /// `token_metrics_rx` is optional; when present it is the UI-side clone of the watch receiver
+    /// created with the engine in [`crate::executive::router`]. Metrics are engine-sourced, not owned here.
+    pub async fn run(
+        &mut self,
+        mut terminal: Terminal<CrosstermBackend<Stdout>>,
+        token_metrics_rx: Option<watch::Receiver<LlmTokenSnapshot>>,
+    ) -> Result<()> {
         let mut reader = EventStream::new();
         let mut tick_interval = tokio::time::interval(Duration::from_millis(100));
 
@@ -79,7 +86,11 @@ impl TuiApp {
             tokio::select! {
                 _ = tick_interval.tick() => {
                     self.tick_count = self.tick_count.wrapping_add(1);
-                    terminal.draw(|f| crate::ui::render::draw(f, self))
+                    let llm_tokens = token_metrics_rx
+                        .as_ref()
+                        .map(|rx| rx.borrow().clone())
+                        .unwrap_or_default();
+                    terminal.draw(|f| crate::ui::render::draw(f, self, &llm_tokens))
                         .map_err(|e| FcpError::Config(format!("Draw failed: {}", e)))?;
                 }
                 Some(Ok(evt)) = reader.next() => {

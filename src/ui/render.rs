@@ -6,6 +6,7 @@ use ratatui::{
     Frame,
 };
 use crate::ui::TuiApp;
+use crate::engine::token_metrics::LlmTokenSnapshot;
 use crate::orchestrator::state::AgentState;
 use crate::ui::app::ActivePane;
 
@@ -92,7 +93,7 @@ fn wrap_input_lines(input: &str, width: usize) -> Vec<String> {
     }
 }
 
-pub fn draw(f: &mut Frame, app: &TuiApp) {
+pub fn draw(f: &mut Frame, app: &TuiApp, llm_tokens: &LlmTokenSnapshot) {
     let background = Block::default().style(Style::default().bg(Color::Rgb(8, 10, 18)));
     f.render_widget(background, f.size());
 
@@ -237,7 +238,7 @@ pub fn draw(f: &mut Frame, app: &TuiApp) {
     };
 
     let status_text = format!(
-        "{}\n{}\nT:{}/5 R:{}/3\nQ:{}\nrt:{}ms llm:{}ms\ntool:{}ms total:{}ms\nmatch:{}",
+        "{}\n{}\nT:{}/5 R:{}/3\nQ:{}\nrt:{}ms llm:{}ms\ntool:{}ms total:{}ms\nmatch:{}\nollama tok: p{} g{} sum{}",
         pulse_str, state_label,
         app.state.tool_rounds, app.state.recovery_count,
         app.state.queued_inputs.max(app.pending_inputs),
@@ -246,6 +247,9 @@ pub fn draw(f: &mut Frame, app: &TuiApp) {
         app.state.tool_ms,
         app.state.total_ms,
         app.state.top_tool_match.as_deref().unwrap_or("-"),
+        llm_tokens.prompt_tokens,
+        llm_tokens.generated_tokens,
+        llm_tokens.total(),
     );
     let status = Paragraph::new(status_text)
         .style(Style::default().fg(state_color).bg(Color::Rgb(14, 16, 28)).add_modifier(Modifier::BOLD))
