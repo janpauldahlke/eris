@@ -63,3 +63,4 @@
 - [x] IMPROVEMENT (S08 / telemetry): structured pre-LLM routing logs
 - [x] fix (s02): give semantic brain retry attempts and make app fail if it istn ready
 - [x] improvement (s02): harden memory query recall on ingest also uses title and tags
+- [x] REFACTOR (S)05: revert top-k tool usage approach, it is harmfull

@@ -6,8 +6,8 @@
 pub const CATEGORY_ROUTING: &str = "routing";
 
 pub const OUTCOME_CONVERSATIONAL: &str = "conversational";
-pub const OUTCOME_TOOL_ROSTER_ONLY: &str = "tool_roster_only";
-pub const OUTCOME_TOOL_TIERED: &str = "tool_tiered";
+pub const OUTCOME_TOOL_FALLBACK: &str = "tool_fallback";
+pub const OUTCOME_TOOL_MATCHED: &str = "tool_matched";
 
 pub const ISSUE_STEP_EMPTY_USER_SY_FNORD: &str = "STEP_EMPTY_USER_SY_FNORD";
 pub const ISSUE_PRELLM_CONV_ALARM: &str = "PRELLM_CONV_ALARM";
@@ -24,9 +24,9 @@ pub fn outcome_from_pre_llm_tuple(tools_needed: bool, router_match_len: usize) -
     if !tools_needed {
         OUTCOME_CONVERSATIONAL
     } else if router_match_len == 0 {
-        OUTCOME_TOOL_ROSTER_ONLY
+        OUTCOME_TOOL_FALLBACK
     } else {
-        OUTCOME_TOOL_TIERED
+        OUTCOME_TOOL_MATCHED
     }
 }
 
@@ -38,8 +38,8 @@ mod tests {
     fn outcome_from_pre_llm_tuple_maps_physical_state() {
         assert_eq!(outcome_from_pre_llm_tuple(false, 0), OUTCOME_CONVERSATIONAL);
         assert_eq!(outcome_from_pre_llm_tuple(false, 99), OUTCOME_CONVERSATIONAL);
-        assert_eq!(outcome_from_pre_llm_tuple(true, 0), OUTCOME_TOOL_ROSTER_ONLY);
-        assert_eq!(outcome_from_pre_llm_tuple(true, 1), OUTCOME_TOOL_TIERED);
-        assert_eq!(outcome_from_pre_llm_tuple(true, 5), OUTCOME_TOOL_TIERED);
+        assert_eq!(outcome_from_pre_llm_tuple(true, 0), OUTCOME_TOOL_FALLBACK);
+        assert_eq!(outcome_from_pre_llm_tuple(true, 1), OUTCOME_TOOL_MATCHED);
+        assert_eq!(outcome_from_pre_llm_tuple(true, 5), OUTCOME_TOOL_MATCHED);
     }
 }

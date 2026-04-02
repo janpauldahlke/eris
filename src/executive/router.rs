@@ -272,7 +272,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                 config.max_tool_rounds,
                 config.condensation_threshold,
                 config.num_ctx,
-                config.tool_schema_top_k,
+                config.tool_descriptor_jit_top_k,
                 config.tool_descriptor_jit_max_chars,
                 interrupt_rx,
                 Some(tui_tx.clone()),

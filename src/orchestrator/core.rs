@@ -51,8 +51,10 @@ pub struct Orchestrator<E: LlmEngine> {
     pub last_tool_ms: u64,
     pub last_total_ms: u64,
     pub last_top_tool_match: Option<String>,
-    /// Max tools that receive full JSON schemas in Tier 1 (plus all targeted recovery tools).
-    pub tool_schema_top_k: usize,
+    /// Whether the most recent LLM generation was executed in tool-enabled mode (tool schemas in prompt).
+    /// Used to enforce stricter response invariants only when tools are available.
+    pub last_turn_tools_enabled: bool,
+    pub descriptor_jit_top_k: usize,
     pub descriptor_jit_max_chars: usize,
     pub descriptor_registry: Option<Arc<ToolDescriptorRegistry>>,
     /// Monotonic counter incremented once per `step()` entry (log correlation; no span across await in `spawn`).
@@ -130,68 +132,6 @@ impl<E: LlmEngine> Orchestrator<E> {
             .unwrap_or("")
     }
 
-    fn allowed_tool_names_sorted(gatekeeper: &Gatekeeper, state: &AgentState) -> Vec<String> {
-        let mut names: Vec<String> = gatekeeper
-            .get_allowed_tools(state)
-            .into_iter()
-            .filter_map(|t| {
-                t.get("function")
-                    .and_then(|f| f.get("name"))
-                    .and_then(|n| n.as_str())
-                    .map(|s| s.to_string())
-            })
-            .collect();
-        names.sort();
-        names
-    }
-
-    /// Tier 1 = targeted recovery tools (all) plus Top-K router matches; Tier 2 = remaining allowed names.
-    fn compute_tier1_roster(
-        gatekeeper: &Gatekeeper,
-        state: &AgentState,
-        router_matches: &[String],
-        targeted: &HashSet<String>,
-        k: usize,
-    ) -> (Vec<String>, Vec<String>) {
-        let allowed_sorted = Self::allowed_tool_names_sorted(gatekeeper, state);
-        let allowed_set: HashSet<String> = allowed_sorted.iter().cloned().collect();
-        let k = k.max(1);
-        let mut tier1 = Vec::new();
-        let mut seen = HashSet::new();
-
-        let mut targeted_sorted: Vec<String> = targeted
-            .iter()
-            .filter(|t| allowed_set.contains(t.as_str()))
-            .cloned()
-            .collect();
-        targeted_sorted.sort();
-        for t in targeted_sorted {
-            seen.insert(t.clone());
-            tier1.push(t);
-        }
-
-        for name in router_matches {
-            if seen.contains(name) {
-                continue;
-            }
-            if !allowed_set.contains(name) {
-                continue;
-            }
-            if tier1.len() >= targeted.len() + k {
-                break;
-            }
-            tier1.push(name.clone());
-            seen.insert(name.clone());
-        }
-
-        let tier1_set: HashSet<String> = tier1.iter().cloned().collect();
-        let roster: Vec<String> = allowed_sorted
-            .into_iter()
-            .filter(|n| !tier1_set.contains(n))
-            .collect();
-        (tier1, roster)
-    }
-
     async fn handle_empty_user_turn(&mut self) -> Result<()> {
         let idx = self.chat_stack.len() % EMPTY_USER_SHRUGS.len().max(1);
         let face = EMPTY_USER_SHRUGS[idx];
@@ -216,62 +156,22 @@ impl<E: LlmEngine> Orchestrator<E> {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        engine: E,
-        gatekeeper: Gatekeeper,
-        ephemeral: Arc<EphemeralMemory>,
-        vault_root: &Path,
-        workspace: &str,
-        max_recovery_attempts: u8,
-        max_tool_rounds: u8,
-        condensation_threshold: f32,
-        num_ctx: usize,
-        tool_schema_top_k: usize,
-        descriptor_jit_max_chars: usize,
-        interrupt_rx: tokio::sync::watch::Receiver<()>,
-        tui_tx: Option<tokio::sync::mpsc::Sender<crate::ui::events::TuiEvent>>,
-        tool_router: Option<ToolRouter>,
-        descriptor_registry: Option<Arc<ToolDescriptorRegistry>>,
-    ) -> Self {
-        Self {
-            state: AgentState::Idle,
-            engine,
-            gatekeeper,
-            ephemeral,
-            context_assembler: ContextAssembler::new(vault_root, workspace),
-            tool_router,
-            max_recovery_attempts,
-            max_tool_rounds,
-            condensation_threshold,
-            num_ctx,
-            recovery_count: 0,
-            tool_rounds: 0,
-            chat_stack: Vec::new(),
-            saved_chat_state: None,
-            interrupt_rx,
-            tui_tx,
-            queued_inputs: 0,
-            last_router_ms: 0,
-            last_llm_ms: 0,
-            last_tool_ms: 0,
-            last_total_ms: 0,
-            last_top_tool_match: None,
-            tool_schema_top_k,
-            descriptor_jit_max_chars,
-            descriptor_registry,
-            turn_seq: 0,
-        }
-    }
-
-    /// Descriptor JIT hints only for tools that have full JSON schemas in the system prompt (Tier 1).
     fn build_descriptor_jit_guidance(
         &self,
         state: &AgentState,
-        tier1_tool_names: &[String],
+        router_matches: &[String],
+        targeted_tools: &HashSet<String>,
     ) -> Option<String> {
         let registry = self.descriptor_registry.as_ref()?;
-        let mut selected: Vec<String> = tier1_tool_names.to_vec();
+        let mut selected = if !targeted_tools.is_empty() {
+            targeted_tools.iter().cloned().collect::<Vec<_>>()
+        } else {
+            router_matches
+                .iter()
+                .take(self.descriptor_jit_top_k.max(1))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
         if selected.is_empty() {
             return None;
         }
@@ -339,7 +239,6 @@ impl<E: LlmEngine> Orchestrator<E> {
         ))
     }
 
-
     pub async fn broadcast_state(&self) {
         if let Some(tx) = &self.tui_tx {
             let update = crate::ui::events::AgentStateUpdate {
@@ -355,6 +254,55 @@ impl<E: LlmEngine> Orchestrator<E> {
                 top_tool_match: self.last_top_tool_match.clone(),
             };
             let _ = tx.send(crate::ui::events::TuiEvent::StateUpdate(update)).await;
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        engine: E,
+        gatekeeper: Gatekeeper,
+        ephemeral: Arc<EphemeralMemory>,
+        vault_root: &Path,
+        workspace: &str,
+        max_recovery_attempts: u8,
+        max_tool_rounds: u8,
+        condensation_threshold: f32,
+        num_ctx: usize,
+        descriptor_jit_top_k: usize,
+        descriptor_jit_max_chars: usize,
+        interrupt_rx: tokio::sync::watch::Receiver<()>,
+        tui_tx: Option<tokio::sync::mpsc::Sender<crate::ui::events::TuiEvent>>,
+        tool_router: Option<ToolRouter>,
+        descriptor_registry: Option<Arc<ToolDescriptorRegistry>>,
+    ) -> Self {
+        Self {
+            state: AgentState::Idle,
+            engine,
+            gatekeeper,
+            ephemeral,
+            context_assembler: ContextAssembler::new(vault_root, workspace),
+            tool_router,
+            max_recovery_attempts,
+            max_tool_rounds,
+            condensation_threshold,
+            num_ctx,
+            recovery_count: 0,
+            tool_rounds: 0,
+            chat_stack: Vec::new(),
+            saved_chat_state: None,
+            interrupt_rx,
+            tui_tx,
+            queued_inputs: 0,
+            last_router_ms: 0,
+            last_llm_ms: 0,
+            last_tool_ms: 0,
+            last_total_ms: 0,
+            last_top_tool_match: None,
+            last_turn_tools_enabled: false,
+            descriptor_jit_top_k,
+            descriptor_jit_max_chars,
+            descriptor_registry,
+            turn_seq: 0,
         }
     }
 
@@ -420,51 +368,28 @@ impl<E: LlmEngine> Orchestrator<E> {
                 return Ok(());
             }
 
-            // 2. Context Assembly (Tier 1 full schemas + Tier 2 roster, or conversational)
-            let (tier1_names, roster_names) = if tools_needed {
-                Self::compute_tier1_roster(
-                    &self.gatekeeper,
-                    &self.state,
-                    &pre_llm_matched_tools,
-                    &targeted_tools,
-                    self.tool_schema_top_k,
-                )
-            } else {
-                (Vec::new(), Vec::new())
-            };
-            if tools_needed {
-                let jit_enabled =
-                    self.descriptor_registry.is_some() && !tier1_names.is_empty();
-                tracing::debug!(
-                    category = routing_codes::CATEGORY_ROUTING,
-                    turn_seq = self.turn_seq,
-                    tier1_count = tier1_names.len(),
-                    tier2_count = roster_names.len(),
-                    jit_enabled,
-                    tools_needed,
-                    "context tier assembly"
-                );
-            }
-            let system_prompt = if !tools_needed {
-                self.context_assembler.assemble_conversational(&self.ephemeral).await?
-            } else {
-                self.context_assembler
-                    .assemble_two_tier(
-                        &self.state,
-                        &self.ephemeral,
-                        &self.gatekeeper,
-                        &tier1_names,
-                        &roster_names,
-                    )
-                    .await?
-            };
-            tracing::debug!(prompt_len = system_prompt.len(), "System prompt assembled");
-            Self::upsert_system_prompt(&mut self.chat_stack, system_prompt);
-            if tools_needed
-                && let Some(jit_guidance) =
-                    self.build_descriptor_jit_guidance(&self.state, &tier1_names)
-            {
-                self.chat_stack.push(crate::engine::Message {
+        // 2. Context Assembly (WITH tool schemas)
+        self.last_turn_tools_enabled = tools_needed;
+        let system_prompt = if !tools_needed {
+            self.context_assembler.assemble_conversational(&self.ephemeral).await?
+        } else if !targeted_tools.is_empty() {
+            let tool_names = targeted_tools.iter().cloned().collect::<Vec<_>>();
+            self.context_assembler
+                .assemble_with_selected_tools(&self.state, &self.ephemeral, &self.gatekeeper, &tool_names)
+                .await?
+        } else {
+            self.context_assembler.assemble(&self.state, &self.ephemeral, &self.gatekeeper).await?
+        };
+        tracing::debug!(prompt_len = system_prompt.len(), "System prompt assembled");
+        Self::upsert_system_prompt(&mut self.chat_stack, system_prompt);
+        if tools_needed
+            && let Some(jit_guidance) = self.build_descriptor_jit_guidance(
+                &self.state,
+                &pre_llm_matched_tools,
+                &targeted_tools,
+            )
+        {
+            self.chat_stack.push(crate::engine::Message {
                     role: "system".to_string(),
                     content: jit_guidance,
                 });
@@ -713,7 +638,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                     turn_seq,
                     tools_needed = true,
                     router_match_count = 0usize,
-                    "no semantic tool match; roster-only tool mode"
+                    "no semantic tool match; tool fallback mode"
                 );
                 (true, Vec::new())
             }
@@ -734,7 +659,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                     tools_needed = true,
                     router_match_count,
                     matched = ?matched_preview,
-                    "semantic tool match; Tier1 + roster"
+                    "semantic tool match; tool mode"
                 );
                 (true, names)
             }
@@ -1050,12 +975,24 @@ impl<E: LlmEngine> Orchestrator<E> {
             return LoopDirective::ExecuteTools(response.tool_calls);
         }
 
+        let tool_mode_empty_action = self.last_turn_tools_enabled
+            && response.tool_calls.is_empty()
+            && response
+                .message_to_user
+                .as_ref()
+                .is_none_or(|m| m.trim().is_empty());
+
         match status {
             LoopAction::Reflect => {
                 if let Some(msg) = response.message_to_user
                     && !msg.trim().is_empty()
                 {
                     return LoopDirective::HaltAndAwaitInput(Some(msg));
+                }
+                if tool_mode_empty_action {
+                    return LoopDirective::RecoverFromFuckup(
+                        "Tool-enabled mode forbids empty action: status Reflect with empty tool_calls and empty message_to_user. Use Reflect with tool_calls, or Idle with non-empty message_to_user.".to_string(),
+                    );
                 }
                 tracing::debug!("Reflect with empty tool_calls — treating as Task");
                 self.state = AgentState::Chat;
@@ -1068,6 +1005,11 @@ impl<E: LlmEngine> Orchestrator<E> {
                 ),
             },
             LoopAction::Task => {
+                if tool_mode_empty_action {
+                    return LoopDirective::RecoverFromFuckup(
+                        "Tool-enabled mode forbids empty action: status Task with empty tool_calls and empty message_to_user. Use Reflect with tool_calls, or Idle with non-empty message_to_user.".to_string(),
+                    );
+                }
                 self.state = AgentState::Chat;
                 LoopDirective::ShiftToReflection
             }
@@ -1267,6 +1209,7 @@ mod tests {
     #[test]
     fn test_router_reflect_empty_tools_shifts_to_reflection() {
         let mut orchestrator = setup_orchestrator();
+        orchestrator.last_turn_tools_enabled = false;
         let json = r#"{
             "thought": "test",
             "status": "Reflect",
@@ -1276,6 +1219,25 @@ mod tests {
         let directive = orchestrator.process_llm_response(json);
         assert_eq!(directive, LoopDirective::ShiftToReflection);
         assert_eq!(orchestrator.state, AgentState::Chat);
+    }
+
+    #[test]
+    fn test_router_reflect_empty_tools_in_tool_mode_yields_fuckup() {
+        let mut orchestrator = setup_orchestrator();
+        orchestrator.last_turn_tools_enabled = true;
+        let json = r#"{
+            "thought": "test",
+            "status": "Reflect",
+            "tool_calls": []
+        }"#;
+
+        let directive = orchestrator.process_llm_response(json);
+        match directive {
+            LoopDirective::RecoverFromFuckup(msg) => {
+                assert!(msg.contains("Tool-enabled mode forbids empty action"));
+            }
+            _ => panic!("Expected RecoverFromFuckup, got {:?}", directive),
+        }
     }
 
     #[test]
@@ -1314,6 +1276,7 @@ mod tests {
     #[test]
     fn test_router_initiate_reflection_mutates_state() {
         let mut orchestrator = setup_orchestrator();
+        orchestrator.last_turn_tools_enabled = false;
         let json = r#"{
             "thought": "test",
             "status": "Task",
@@ -1323,6 +1286,25 @@ mod tests {
         let directive = orchestrator.process_llm_response(json);
         assert_eq!(directive, LoopDirective::ShiftToReflection);
         assert_eq!(orchestrator.state, AgentState::Chat);
+    }
+
+    #[test]
+    fn test_router_task_empty_tools_in_tool_mode_yields_fuckup() {
+        let mut orchestrator = setup_orchestrator();
+        orchestrator.last_turn_tools_enabled = true;
+        let json = r#"{
+            "thought": "test",
+            "status": "Task",
+            "tool_calls": []
+        }"#;
+
+        let directive = orchestrator.process_llm_response(json);
+        match directive {
+            LoopDirective::RecoverFromFuckup(msg) => {
+                assert!(msg.contains("Tool-enabled mode forbids empty action"));
+            }
+            _ => panic!("Expected RecoverFromFuckup, got {:?}", directive),
+        }
     }
 
     #[test]
