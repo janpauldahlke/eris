@@ -51,6 +51,7 @@ impl TuiApp {
                 tool_rounds: 0,
                 recovery_count: 0,
                 active_task: None,
+                activity_line: None,
                 queued_inputs: 0,
                 router_ms: 0,
                 llm_ms: 0,
@@ -105,8 +106,12 @@ impl TuiApp {
                     }
                 }
                 Some(evt) = self.rx.recv() => {
+                    let mut redraw_now = false;
                     match evt {
-                        TuiEvent::StateUpdate(update) => self.state = update,
+                        TuiEvent::StateUpdate(update) => {
+                            self.state = update;
+                            redraw_now = true;
+                        }
                         TuiEvent::IncomingMessage(msg) => {
                             let before_len = self.chat_stack.len();
                             self.chat_stack.push(msg);
@@ -122,14 +127,27 @@ impl TuiApp {
                                 "Incoming message appended to deck"
                             );
                             self.pending_inputs = self.pending_inputs.saturating_sub(1);
+                            redraw_now = true;
                         }
-                        TuiEvent::SystemError(err) => self.system_messages.push(err),
+                        TuiEvent::SystemError(err) => {
+                            self.system_messages.push(err);
+                            redraw_now = true;
+                        }
                         TuiEvent::SystemAlarm(label) => {
                             if self.action_tx.try_send(UserAction::SystemInject(label)).is_err() {
                                 tracing::error!("Dropped alarm due to TUI→Orchestrator action channel backpressure");
                             }
                         }
                         _ => {}
+                    }
+                    if redraw_now {
+                        let llm_tokens = token_metrics_rx
+                            .as_ref()
+                            .map(|rx| rx.borrow().clone())
+                            .unwrap_or_default();
+                        terminal
+                            .draw(|f| crate::ui::render::draw(f, self, &llm_tokens))
+                            .map_err(|e| FcpError::Config(format!("Draw failed: {}", e)))?;
                     }
                 }
             }
@@ -157,7 +175,12 @@ impl TuiApp {
                     self.chat_stack.push(format!("You: {}", trimmed));
                     let normalized = trimmed.to_lowercase();
                     let now = Instant::now();
-                    let busy = self.state.state != crate::orchestrator::state::AgentState::Idle;
+                    let queued = self
+                        .state
+                        .queued_inputs
+                        .max(self.pending_inputs);
+                    let busy = self.state.state != crate::orchestrator::state::AgentState::Idle
+                        || queued > 0;
                     if busy {
                         if let Some((last_text, last_time)) = &self.last_submit
                             && *last_text == normalized

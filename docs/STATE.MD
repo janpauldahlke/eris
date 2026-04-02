@@ -63,5 +63,9 @@
 - [x] IMPROVEMENT (S08 / telemetry): structured pre-LLM routing logs
 - [x] fix (s02): give semantic brain retry attempts and make app fail if it istn ready
 - [x] improvement (s02): harden memory query recall on ingest also uses title and tags
+
+02/04/2026
+
 - [x] REFACTOR (S05): revert top-k tool usage approach, it is harmfull
 - [x] IMPROVEMENT (S0x): change context handlign to dynamic cts slider approach, condensatoi will be injected
+- [] IMPROVEMENT (S08TUI): tweak and improve UI, sync states in status as SSOT

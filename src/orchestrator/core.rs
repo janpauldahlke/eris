@@ -59,6 +59,8 @@ pub struct Orchestrator<E: LlmEngine> {
     pub descriptor_registry: Option<Arc<ToolDescriptorRegistry>>,
     /// Monotonic counter incremented once per `step()` entry (log correlation; no span across await in `spawn`).
     pub turn_seq: u64,
+    /// Shown in TUI Status while tools are pending; cleared when a final deck message is emitted or at `step` entry.
+    pub activity_line: Option<String>,
 }
 
 impl<E: LlmEngine> Orchestrator<E> {
@@ -246,6 +248,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                 tool_rounds: self.tool_rounds,
                 recovery_count: self.recovery_count,
                 active_task: None,
+                activity_line: self.activity_line.clone(),
                 queued_inputs: self.queued_inputs,
                 router_ms: self.last_router_ms,
                 llm_ms: self.last_llm_ms,
@@ -303,6 +306,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             descriptor_jit_max_chars,
             descriptor_registry,
             turn_seq: 0,
+            activity_line: None,
         }
     }
 
@@ -324,6 +328,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         let mut tool_ms_acc = 0u64;
         self.recovery_count = 0;
         self.tool_rounds = 0;
+        self.activity_line = None;
         let mut web_tool_activity = false;
         tracing::info!(
             turn_seq,
@@ -682,35 +687,57 @@ impl<E: LlmEngine> Orchestrator<E> {
     }
 
     /// Emits an assistant-facing message to TUI when present in the model JSON.
-    async fn emit_optional_user_message(&self, response_content: &str) {
+    /// Tool rounds: activity goes to Status only; final lines without tools go to the main deck.
+    async fn emit_optional_user_message(&mut self, response_content: &str) {
         let Some(tx) = &self.tui_tx else {
             return;
         };
 
         let json_slice = Self::extract_json_slice(response_content);
-        if let Ok(parsed) = serde_json::from_str::<LlmResponse>(json_slice)
-            && let Some(msg) = parsed.message_to_user
-            && !msg.trim().is_empty()
-        {
-            let agent_name = self.agent_name();
-            let out_line = if parsed.tool_calls.is_empty() {
-                msg
-            } else {
-                format!("{} [running tools…]", msg)
+        let Ok(parsed) = serde_json::from_str::<LlmResponse>(json_slice) else {
+            return;
+        };
+
+        let has_tools = !parsed.tool_calls.is_empty();
+        let msg_opt = parsed
+            .message_to_user
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        if has_tools {
+            let line = match msg_opt {
+                Some(ref m) => format!("{} · tools…", Self::trim_chars(m, 100)),
+                None => String::from("Running tools…"),
             };
-            tracing::info!(
-                event = "UI_EMIT_INCOMING_MESSAGE",
-                agent = %agent_name,
-                msg_len = out_line.len(),
-                preview = %out_line.chars().take(120).collect::<String>(),
-                "Emitting assistant message to TUI deck"
-            );
-            let _ = tx
-                .send(crate::ui::events::TuiEvent::IncomingMessage(
-                    format!("[{}]: {}", agent_name, out_line),
-                ))
-                .await;
+            self.activity_line = Some(line);
+            self.broadcast_state().await;
+            return;
         }
+
+        let Some(msg) = msg_opt else {
+            self.activity_line = None;
+            self.broadcast_state().await;
+            return;
+        };
+
+        self.activity_line = None;
+        let agent_name = self.agent_name();
+        tracing::info!(
+            event = "UI_EMIT_INCOMING_MESSAGE",
+            agent = %agent_name,
+            msg_len = msg.len(),
+            preview = %msg.chars().take(120).collect::<String>(),
+            "Emitting assistant message to TUI deck"
+        );
+        let _ = tx
+            .send(crate::ui::events::TuiEvent::IncomingMessage(format!(
+                "[{}]: {}",
+                agent_name, msg
+            )))
+            .await;
+        self.broadcast_state().await;
     }
 
     #[allow(clippy::too_many_arguments)]

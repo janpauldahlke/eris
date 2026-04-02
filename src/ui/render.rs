@@ -10,6 +10,18 @@ use crate::engine::token_metrics::LlmTokenSnapshot;
 use crate::orchestrator::state::AgentState;
 use crate::ui::app::ActivePane;
 
+const STATUS_ACTIVITY_MAX_CHARS: usize = 100;
+
+fn truncate_status_line(s: &str, max_chars: usize) -> String {
+    let count = s.chars().count();
+    if count <= max_chars {
+        return s.to_string();
+    }
+    let mut out = s.chars().take(max_chars).collect::<String>();
+    out.push('…');
+    out
+}
+
 fn push_multiline(
     chat_lines: &mut Vec<Line>,
     prefix: Option<(String, Style)>,
@@ -204,53 +216,91 @@ pub fn draw(f: &mut Frame, app: &TuiApp, llm_tokens: &LlmTokenSnapshot) {
 
     // ── Status / Pulse (25%) ─────────────────────────────────────
     let phase = (app.tick_count as usize / 2) % 4;
-    let pulse_str = match app.state.state {
-        AgentState::Idle => {
-            let frames = ["[ - _ - ]", "[ . _ . ]", "[ - _ - ]", "[ . _ . ]"];
-            frames[phase]
-        }
-        AgentState::Chat => {
-            let frames = ["[ ^ _ ^ ]", "[ ^ o ^ ]", "[ ^ _ ^ ]", "[ ^ o ^ ]"];
-            frames[phase]
-        }
-        AgentState::Reflect => {
-            let frames = ["[ ~ _ ~ ]", "[ * _ * ]", "[ ~ _ ~ ]", "[ * _ * ]"];
-            frames[phase]
-        }
-        AgentState::Recover => {
-            let frames = ["[ O _ O ]", "[ X _ X ]", "[ O _ O ]", "[ X _ X ]"];
-            frames[phase]
-        }
+    let queued = app.state.queued_inputs.max(app.pending_inputs);
+    let is_queued_idle = queued > 0 && app.state.state == AgentState::Idle;
+
+    let (pulse_str, state_label, state_color): (&str, &str, Color) = if is_queued_idle {
+        let frames = ["[ … ]", "[ · ]", "[ … ]", "[ · ]"];
+        (frames[phase], "Queued", Color::Rgb(200, 190, 120))
+    } else {
+        let pulse_str = match app.state.state {
+            AgentState::Idle => {
+                let frames = ["[ - _ - ]", "[ . _ . ]", "[ - _ - ]", "[ . _ . ]"];
+                frames[phase]
+            }
+            AgentState::Chat => {
+                let frames = ["[ ^ _ ^ ]", "[ ^ o ^ ]", "[ ^ _ ^ ]", "[ ^ o ^ ]"];
+                frames[phase]
+            }
+            AgentState::Reflect => {
+                let frames = ["[ ~ _ ~ ]", "[ * _ * ]", "[ ~ _ ~ ]", "[ * _ * ]"];
+                frames[phase]
+            }
+            AgentState::Recover => {
+                let frames = ["[ O _ O ]", "[ X _ X ]", "[ O _ O ]", "[ X _ X ]"];
+                frames[phase]
+            }
+        };
+
+        let state_color = match app.state.state {
+            AgentState::Idle => Color::Rgb(120, 180, 255),
+            AgentState::Chat => Color::Rgb(92, 229, 190),
+            AgentState::Reflect => Color::Rgb(255, 209, 102),
+            AgentState::Recover => Color::Rgb(255, 107, 129),
+        };
+
+        let state_label = match app.state.state {
+            AgentState::Idle => "Idle",
+            AgentState::Chat => "Chat",
+            AgentState::Reflect => "Reflect",
+            AgentState::Recover => "Recover",
+        };
+
+        (pulse_str, state_label, state_color)
     };
 
-    let state_color = match app.state.state {
-        AgentState::Idle => Color::Rgb(120, 180, 255),
-        AgentState::Chat => Color::Rgb(92, 229, 190),
-        AgentState::Reflect => Color::Rgb(255, 209, 102),
-        AgentState::Recover => Color::Rgb(255, 107, 129),
-    };
+    let activity_line = app
+        .state
+        .activity_line
+        .as_deref()
+        .map(|s| truncate_status_line(s, STATUS_ACTIVITY_MAX_CHARS));
 
-    let state_label = match app.state.state {
-        AgentState::Idle => "Idle",
-        AgentState::Chat => "Chat",
-        AgentState::Reflect => "Reflect",
-        AgentState::Recover => "Recover",
+    let status_text = if let Some(ref act) = activity_line {
+        format!(
+            "{}\n{}\n{}\nT:{}/5 R:{}/3\nQ:{}\nrt:{}ms llm:{}ms\ntool:{}ms total:{}ms\nmatch:{}\nollama tok: p{} g{} sum{}",
+            pulse_str,
+            state_label,
+            act,
+            app.state.tool_rounds,
+            app.state.recovery_count,
+            queued,
+            app.state.router_ms,
+            app.state.llm_ms,
+            app.state.tool_ms,
+            app.state.total_ms,
+            app.state.top_tool_match.as_deref().unwrap_or("-"),
+            llm_tokens.prompt_tokens,
+            llm_tokens.generated_tokens,
+            llm_tokens.total(),
+        )
+    } else {
+        format!(
+            "{}\n{}\nT:{}/5 R:{}/3\nQ:{}\nrt:{}ms llm:{}ms\ntool:{}ms total:{}ms\nmatch:{}\nollama tok: p{} g{} sum{}",
+            pulse_str,
+            state_label,
+            app.state.tool_rounds,
+            app.state.recovery_count,
+            queued,
+            app.state.router_ms,
+            app.state.llm_ms,
+            app.state.tool_ms,
+            app.state.total_ms,
+            app.state.top_tool_match.as_deref().unwrap_or("-"),
+            llm_tokens.prompt_tokens,
+            llm_tokens.generated_tokens,
+            llm_tokens.total(),
+        )
     };
-
-    let status_text = format!(
-        "{}\n{}\nT:{}/5 R:{}/3\nQ:{}\nrt:{}ms llm:{}ms\ntool:{}ms total:{}ms\nmatch:{}\nollama tok: p{} g{} sum{}",
-        pulse_str, state_label,
-        app.state.tool_rounds, app.state.recovery_count,
-        app.state.queued_inputs.max(app.pending_inputs),
-        app.state.router_ms,
-        app.state.llm_ms,
-        app.state.tool_ms,
-        app.state.total_ms,
-        app.state.top_tool_match.as_deref().unwrap_or("-"),
-        llm_tokens.prompt_tokens,
-        llm_tokens.generated_tokens,
-        llm_tokens.total(),
-    );
     let status = Paragraph::new(status_text)
         .style(Style::default().fg(state_color).bg(Color::Rgb(14, 16, 28)).add_modifier(Modifier::BOLD))
         .block(Block::default()
@@ -259,26 +309,9 @@ pub fn draw(f: &mut Frame, app: &TuiApp, llm_tokens: &LlmTokenSnapshot) {
             .title(" Status "));
     f.render_widget(status, bottom_bar[1]);
 
-    // ── Input / Command Deck ─────────────────────────────────────
-    let queued = app.state.queued_inputs.max(app.pending_inputs);
-    let busy = app.state.state != AgentState::Idle || queued > 0;
-    let badge_face = if busy {
-        let frames = ["(>_<)", "(o_o)", "(>_<)", "(o_o)"];
-        frames[phase]
-    } else {
-        let frames = ["(^_^)", "(-_-)", "(^_^)", "(-_-)"];
-        frames[phase]
-    };
-    let badge_text = if busy {
-        format!(" BUSY q:{} ", queued)
-    } else {
-        " IDLE ".to_string()
-    };
-    let badge_color = if busy {
-        Color::Rgb(255, 209, 102)
-    } else {
-        Color::Rgb(92, 229, 190)
-    };
+    // ── Input / Command Deck (minimal chrome; lifecycle lives in Status) ─
+    let deck_frames = ["-", "\\", "|", "/"];
+    let deck_mini = deck_frames[phase % 4];
 
     let input_chunk = chunks[2];
     let inner_width = input_chunk.width.saturating_sub(2) as usize;
@@ -309,8 +342,10 @@ pub fn draw(f: &mut Frame, app: &TuiApp, llm_tokens: &LlmTokenSnapshot) {
             .border_style(get_border_style(ActivePane::CommandDeck))
             .title(Line::from(vec![
                 Span::styled(" Cmd ", Style::default().fg(Color::Rgb(120, 180, 255)).add_modifier(Modifier::BOLD)),
-                Span::styled(format!("{} ", badge_face), Style::default().fg(badge_color).add_modifier(Modifier::BOLD)),
-                Span::styled(badge_text, Style::default().fg(badge_color).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format!(" {} ", deck_mini),
+                    Style::default().fg(Color::Rgb(100, 110, 140)).add_modifier(Modifier::BOLD),
+                ),
             ])))
         .scroll((input_scroll, 0))
         .wrap(Wrap { trim: false });
