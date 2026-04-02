@@ -872,8 +872,10 @@ impl<E: LlmEngine> Orchestrator<E> {
             && fatal_fail_count == 0
             && suppressed_duplicate_count > 0
         {
-            tracing::info!("All tool intents in batch were duplicate-suppressed; halting turn early");
-            return Ok(ToolBatchDecision::Halt);
+            tracing::info!("All tool intents in batch were duplicate-suppressed; forcing user-facing reply via recover");
+            let msg = "[SYSTEM OVERRIDE] All requested tool calls in this batch were suppressed as duplicates (already executed earlier). Do NOT repeat those tool calls again. Respond to the user now with status Idle and a non-empty message_to_user confirming the outcome. tool_calls MUST be [].".to_string();
+            // IMPORTANT: route through Recover so retry is bounded by `max_recovery_attempts`.
+            return Ok(ToolBatchDecision::Recover { message: msg });
         }
 
         if targeted_recovery_requested {
@@ -1587,10 +1589,16 @@ mod tests {
             }]
         }"#.to_string();
         let second_duplicate = first.clone();
+        let third_reply = r#"{
+            "thought": "duplicate tool call was suppressed; reply to user",
+            "status": "Idle",
+            "message_to_user": "Got it — I already staged that memory, so I won’t repeat the tool call.",
+            "tool_calls": []
+        }"#.to_string();
 
         let calls = Arc::new(AtomicUsize::new(0));
         let engine = SequenceEngine {
-            responses: Arc::new(vec![first, second_duplicate]),
+            responses: Arc::new(vec![first, second_duplicate, third_reply]),
             calls: calls.clone(),
         };
 
@@ -1628,7 +1636,7 @@ mod tests {
 
         let result = orchestrator.step(None).await;
         assert!(result.is_ok());
-        assert_eq!(calls.load(Ordering::SeqCst), 2, "expected no extra LLM round after duplicate-only suppression");
+        assert_eq!(calls.load(Ordering::SeqCst), 3, "expected one extra LLM round to produce a user-facing reply after duplicate-only suppression");
         assert_eq!(orchestrator.state, AgentState::Idle);
     }
 }
