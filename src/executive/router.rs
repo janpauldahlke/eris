@@ -112,6 +112,8 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
 
             // 5. Register ALL tools with the Gatekeeper
             let mut gatekeeper = Gatekeeper::new();
+            let (alarm_reschedule_tx, alarm_reschedule_rx) =
+                tokio::sync::mpsc::unbounded_channel::<()>();
             let read_limit = (config.llm_context_window as f32 * config.vault_read_ratio) as usize;
             let web_chunk_chars = read_limit.max(512);
             let web_preview_chars = (web_chunk_chars / 2).max(256);
@@ -137,11 +139,17 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
             gatekeeper.register(Arc::new(crate::tools::agenda::AgendaListTool {
                 workspace_root: workspace_root.clone(),
             }));
+            gatekeeper.register(Arc::new(crate::tools::agenda::AgendaRemindAtTool {
+                workspace_root: workspace_root.clone(),
+                reschedule_tx: alarm_reschedule_tx.clone(),
+            }));
             gatekeeper.register(Arc::new(crate::tools::agenda::AgendaCompleteTool {
                 workspace_root: workspace_root.clone(),
+                reschedule_tx: alarm_reschedule_tx.clone(),
             }));
             gatekeeper.register(Arc::new(crate::tools::agenda::AgendaRemoveTool {
                 workspace_root: workspace_root.clone(),
+                reschedule_tx: alarm_reschedule_tx.clone(),
             }));
             gatekeeper.register(Arc::new(crate::tools::web::WebFetchTool::new(
                 config.web_fetch_timeout_secs,
@@ -160,7 +168,6 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
             }));
             gatekeeper.register(Arc::new(crate::tools::system::SystemHealthTool));
 
-            let (alarm_reschedule_tx, alarm_reschedule_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
             gatekeeper.register(Arc::new(crate::tools::clock::ClockNowTool));
             gatekeeper.register(Arc::new(crate::tools::clock::ClockTimerTool {
                 workspace_root: workspace_root.clone(),
@@ -254,6 +261,18 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                 cancel_token.clone(),
             );
 
+            let startup_wp = workspace_root.clone();
+            let startup_tui = tui_tx.clone();
+            tokio::spawn(async move {
+                if let Some(msg) =
+                    crate::orchestrator::missed_agenda::startup_overdue_agenda_hint(&startup_wp).await
+                {
+                    let _ = startup_tui
+                        .send(crate::ui::events::TuiEvent::SystemError(msg))
+                        .await;
+                }
+            });
+
             // 7. Snapshot + promotion daemon
             crate::memory::ephemeral::spawn_snapshot_daemon(
                 ephemeral.clone(),
@@ -331,6 +350,60 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                                     );
                                     orchestrator.broadcast_state().await;
                                     tracing::info!("SystemInject alarm turn");
+                                    if let Err(e) = orchestrator.step(None).await {
+                                        if matches!(e, FcpError::Interrupted) {
+                                            tracing::info!("Orchestrator interrupted during alarm turn");
+                                            continue;
+                                        }
+                                        let err_msg = format!("[FATAL ERROR] Orchestrator halted: {}", e);
+                                        tracing::error!(error = %e, "Orchestrator fatal error");
+                                        let _ = tui_tx_err.send(crate::ui::events::TuiEvent::SystemError(err_msg)).await;
+                                        break;
+                                    }
+                                    orchestrator.broadcast_state().await;
+                                }
+                                crate::ui::events::UserAction::AgendaAlarmPending {
+                                    agenda_task_id,
+                                    label,
+                                    alarm_record_id,
+                                    seconds_late,
+                                } => {
+                                    let trimmed = label.trim().to_string();
+                                    if trimmed.is_empty() {
+                                        continue;
+                                    }
+                                    let late_note = if seconds_late > 60 {
+                                        format!(" (~{} min late)", seconds_late / 60)
+                                    } else {
+                                        String::new()
+                                    };
+                                    let content = format!(
+                                        "{}{}{}\n\n\
+This is a linked agenda reminder — please answer explicitly:\n\
+• Done — you finished this task now. Say clearly (e.g. \"done\" or \"finished\") so the assistant can mark it complete with agenda:complete.\n\
+• Snooze — you still need a later nudge. Say when (e.g. \"in 10 minutes\" or \"at 15:00\") so the assistant can reschedule with agenda:remind_at using task_id below.\n\n\
+[AGENDA_CONFIRM task_id={} alarm_id={} late_sec={}]",
+                                        crate::ui::events::SYSTEM_ALARM_PREFIX,
+                                        trimmed,
+                                        late_note,
+                                        agenda_task_id,
+                                        alarm_record_id,
+                                        seconds_late
+                                    );
+                                    orchestrator.chat_stack.push(crate::engine::Message {
+                                        role: "user".to_string(),
+                                        content,
+                                    });
+                                    orchestrator.state = crate::orchestrator::state::AgentState::Chat;
+                                    last_input_time.store(
+                                        std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .map(|d| d.as_secs())
+                                            .unwrap_or(0),
+                                        std::sync::atomic::Ordering::Relaxed,
+                                    );
+                                    orchestrator.broadcast_state().await;
+                                    tracing::info!("Agenda-linked alarm turn");
                                     if let Err(e) = orchestrator.step(None).await {
                                         if matches!(e, FcpError::Interrupted) {
                                             tracing::info!("Orchestrator interrupted during alarm turn");
@@ -621,6 +694,7 @@ mod tests {
                     orchestrator.step(None).await.expect("alarm step");
                 }
                 UserAction::CancelCurrentTurn => {}
+                UserAction::AgendaAlarmPending { .. } => {}
             }
             while let Some(msg) = pending.pop_front() {
                 orchestrator.chat_stack.push(Message {

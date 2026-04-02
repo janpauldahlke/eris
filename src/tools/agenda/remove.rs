@@ -4,8 +4,10 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::path::PathBuf;
 use tokio::fs;
+use tokio::sync::mpsc;
 
 use crate::executive::error::{FcpError, Result};
+use crate::tools::clock::{remove_alarm_by_id, FCP_ALARMS_FILE};
 use crate::tools::traits::Tool;
 use super::AgendaTask;
 
@@ -21,6 +23,7 @@ pub struct AgendaRemoveArgs {
 
 pub struct AgendaRemoveTool {
     pub workspace_root: PathBuf,
+    pub reschedule_tx: mpsc::UnboundedSender<()>,
 }
 
 #[async_trait]
@@ -87,12 +90,21 @@ impl Tool for AgendaRemoveTool {
 
         if let Some(id) = tid {
             let initial_len = tasks.len();
+            let victim = tasks.iter().find(|t| t.id == id).cloned();
             tasks.retain(|t| t.id != id);
             if tasks.len() == initial_len {
                 return Err(FcpError::ToolFault {
                     tool_name: self.name().into(),
                     reason: format!("Task ID {} not found", id),
                 });
+            }
+            if let Some(t) = victim {
+                if let Some(aid) = t.alarm_id {
+                    let alarm_path = self.workspace_root.join(FCP_ALARMS_FILE);
+                    if remove_alarm_by_id(&alarm_path, &aid).await? {
+                        let _ = self.reschedule_tx.send(());
+                    }
+                }
             }
             let new_content =
                 serde_json::to_string_pretty(&tasks).map_err(|e| FcpError::Config(e.to_string()))?;
@@ -120,6 +132,12 @@ impl Tool for AgendaRemoveTool {
             1 => {
                 let idx = matches[0];
                 let removed = tasks.remove(idx);
+                if let Some(aid) = removed.alarm_id {
+                    let alarm_path = self.workspace_root.join(FCP_ALARMS_FILE);
+                    if remove_alarm_by_id(&alarm_path, &aid).await? {
+                        let _ = self.reschedule_tx.send(());
+                    }
+                }
                 let new_content =
                     serde_json::to_string_pretty(&tasks).map_err(|e| FcpError::Config(e.to_string()))?;
                 fs::write(&agenda_path, new_content).await.map_err(FcpError::Io)?;
@@ -151,6 +169,14 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    fn make_tool(dir: &std::path::Path) -> AgendaRemoveTool {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        AgendaRemoveTool {
+            workspace_root: dir.to_path_buf(),
+            reschedule_tx: tx,
+        }
+    }
+
     async fn write_agenda(dir: &std::path::Path, json: &str) -> Result<()> {
         let path = dir.join(".fcp_agenda.json");
         fs::write(&path, json).await.map_err(FcpError::Io)?;
@@ -165,9 +191,7 @@ mod tests {
             r#"[{"id":"a03e","created_at":1,"description":"Look for fish","status":"pending"}]"#,
         )
         .await?;
-        let tool = AgendaRemoveTool {
-            workspace_root: dir.path().to_path_buf(),
-        };
+        let tool = make_tool(dir.path());
         let out = tool
             .execute(serde_json::json!({ "task_id": "a03e" }))
             .await?;
@@ -188,9 +212,7 @@ mod tests {
             r#"[{"id":"a03e","created_at":1,"description":"Look for Hagbard's goldfish","status":"pending"}]"#,
         )
         .await?;
-        let tool = AgendaRemoveTool {
-            workspace_root: dir.path().to_path_buf(),
-        };
+        let tool = make_tool(dir.path());
         let out = tool
             .execute(serde_json::json!({ "description_match": "goldfish" }))
             .await?;
@@ -206,9 +228,7 @@ mod tests {
             r#"[{"id":"a03e","created_at":1,"description":"x","status":"pending"}]"#,
         )
         .await?;
-        let tool = AgendaRemoveTool {
-            workspace_root: dir.path().to_path_buf(),
-        };
+        let tool = make_tool(dir.path());
         let r = tool
             .execute(serde_json::json!({ "task_id": "ffff" }))
             .await;
@@ -224,9 +244,7 @@ mod tests {
             r#"[{"id":"a03e","created_at":1,"description":"alpha","status":"pending"}]"#,
         )
         .await?;
-        let tool = AgendaRemoveTool {
-            workspace_root: dir.path().to_path_buf(),
-        };
+        let tool = make_tool(dir.path());
         let r = tool
             .execute(serde_json::json!({ "description_match": "beta" }))
             .await;
@@ -242,9 +260,7 @@ mod tests {
             r#"[{"id":"a1","created_at":1,"description":"buy milk","status":"pending"},{"id":"a2","created_at":2,"description":"buy milk later","status":"pending"}]"#,
         )
         .await?;
-        let tool = AgendaRemoveTool {
-            workspace_root: dir.path().to_path_buf(),
-        };
+        let tool = make_tool(dir.path());
         let r = tool
             .execute(serde_json::json!({ "description_match": "milk" }))
             .await;
@@ -260,9 +276,7 @@ mod tests {
             r#"[{"id":"a03e","created_at":1,"description":"x","status":"pending"}]"#,
         )
         .await?;
-        let tool = AgendaRemoveTool {
-            workspace_root: dir.path().to_path_buf(),
-        };
+        let tool = make_tool(dir.path());
         let r = tool
             .execute(serde_json::json!({ "task_id": "a03e", "description_match": "x" }))
             .await;
@@ -278,9 +292,7 @@ mod tests {
             r#"[{"id":"a03e","created_at":1,"description":"x","status":"pending"}]"#,
         )
         .await?;
-        let tool = AgendaRemoveTool {
-            workspace_root: dir.path().to_path_buf(),
-        };
+        let tool = make_tool(dir.path());
         let r = tool.execute(serde_json::json!({})).await;
         assert!(r.is_err());
         Ok(())

@@ -2,19 +2,19 @@ pub const DESCRIPTOR_TOMLS: &[&str] = &[
     r#"descriptor_version = 1
 tool_name = "agenda:complete"
 short_description = "Mark a queued agenda task as completed."
-when_to_use = "Use after finishing a background task to close it."
-when_not_to_use = "Do not use to create tasks."
-routing_hints = ["task done", "complete task", "mark done"]
+when_to_use = "Use when the user clearly finished the task (especially after an agenda-linked alarm): call with task_id from agenda:list or AGENDA_CONFIRM line. Prefer explicit user wording (\"done\", \"finished\") before closing."
+when_not_to_use = "Do not use to create tasks. Do not infer completion from vague one-line replies; ask or use agenda:remind_at if they need another reminder."
+routing_hints = ["task done", "complete task", "mark done", "done with reminder", "alarm task finished", "finished the goldfish check"]
 
 [[examples_good]]
 name = "complete_task"
-args = { id = "task-uuid", result = "Completed successfully" }
-rationale = "Closes an existing task by id."
+args = { task_id = "a03e", result_summary = "Completed successfully" }
+rationale = "Closes an existing task by task_id."
 
 [[examples_bad]]
 name = "missing_id"
-args = { result = "done" }
-rationale = "id is required."
+args = { result_summary = "done" }
+rationale = "task_id is required."
 "#,
     r#"descriptor_version = 1
 tool_name = "agenda:list"
@@ -37,7 +37,7 @@ rationale = "Tool does not require args."
 tool_name = "agenda:push"
 short_description = "Queue a background agenda task."
 when_to_use = "Use to create a new background task for later completion."
-when_not_to_use = "Do not use to read tasks, mark completion, remove, or cancel items; use agenda:list, agenda:complete, or agenda:remove."
+when_not_to_use = "Do not use to read tasks, mark completion, remove, cancel, or schedule reminders; use agenda:list, agenda:complete, agenda:remove, or agenda:remind_at."
 routing_hints = ["add task", "remind me", "todo", "queue task"]
 
 [[examples_good]]
@@ -76,6 +76,33 @@ rationale = "Pass a substring of the task description, not meta-instructions."
 name = "both_selectors"
 args = { task_id = "a03e", description_match = "foo" }
 rationale = "Provide only one of task_id or description_match."
+"#,
+    r#"descriptor_version = 1
+tool_name = "agenda:remind_at"
+short_description = "Create or update an agenda row and link it to a fire time in .fcp_alarms.json (task + alarm, not a generic clock label)."
+when_to_use = "Use when the user ties the reminder to their agenda/todo list: task_id or new description, plus minutes or hour:minute. After AGENDA_CONFIRM, snooze with same task_id. This is the only tool that writes both agenda and linked alarm."
+when_not_to_use = "Do not use for a generic timer or wall alarm with no agenda row (use clock:timer or clock:alarm). Do not use for listing or completing tasks alone; use agenda:list or agenda:complete."
+routing_hints = ["remind me about this agenda item", "todo on my list", "snooze this task", "alarm for queued task", "agenda task_id reminder", "in 10 minutes for this todo", "at 3pm for agenda item"]
+
+[[examples_good]]
+name = "relative_minutes"
+args = { task_id = "a03e", minutes = 30 }
+rationale = "Existing task, relative reminder."
+
+[[examples_good]]
+name = "snooze_after_alarm"
+args = { task_id = "a03e", minutes = 10 }
+rationale = "Same task_id as AGENDA_CONFIRM; replaces prior linked alarm."
+
+[[examples_good]]
+name = "wall_clock_new_task"
+args = { description = "Call dentist", hour = 14, minute = 30 }
+rationale = "New agenda row plus wall-clock alarm."
+
+[[examples_bad]]
+name = "both_schedules"
+args = { task_id = "a03e", minutes = 10, hour = 9, minute = 0 }
+rationale = "Provide either minutes or hour+minute, not both."
 "#,
     r#"descriptor_version = 1
 tool_name = "memory:commit"
@@ -273,7 +300,7 @@ rationale = "URL must start with http:// or https://."
 tool_name = "clock:now"
 short_description = "Return current local time as HH:MM : DD/MM/YY plus timezone/offset."
 when_to_use = "Use to ground scheduling in the real-world clock before setting timers or alarms; when answering the user, prefer that time format."
-when_not_to_use = "Do not use to schedule; use clock:timer or clock:alarm."
+when_not_to_use = "Do not use to schedule alarms or timers; use clock:timer, clock:alarm, or agenda:remind_at for agenda tasks."
 routing_hints = ["what time is it", "current time", "timezone", "now", "date and time"]
 
 [[examples_good]]
@@ -288,10 +315,10 @@ rationale = "Tool takes no parameters."
 "#,
     r#"descriptor_version = 1
 tool_name = "clock:timer"
-short_description = "Schedule a relative timer (in N minutes) with a label."
-when_to_use = "Use for remind me in X minutes, stretch timer, drink water soon."
-when_not_to_use = "Do not use for wall-clock at 7am; use clock:alarm."
-routing_hints = ["in 30 minutes", "timer", "remind me in", "half an hour", "countdown"]
+short_description = "Schedule a relative timer (in N minutes) with a free-text label — not tied to the agenda file."
+when_to_use = "Use for generic one-off pings: stretch, drink water, eye break — label only, no agenda row in .fcp_agenda.json."
+when_not_to_use = "Do not use for wall-clock at 7am (use clock:alarm). Do not use to attach a reminder to a queued agenda task or to create an agenda-linked alarm (use agenda:remind_at with task_id or description + schedule)."
+routing_hints = ["in 30 minutes generic timer", "countdown", "timer with label only", "half an hour ping", "not my agenda list"]
 
 [[examples_good]]
 name = "stretch"
@@ -305,10 +332,10 @@ rationale = "minutes must be positive."
 "#,
     r#"descriptor_version = 1
 tool_name = "clock:alarm"
-short_description = "Schedule a wall-clock alarm at hour:minute local (24h)."
-when_to_use = "Use for wake me at 7:00, alarm at 14:30, at eight am tomorrow logic."
-when_not_to_use = "Do not use for in N minutes; use clock:timer."
-routing_hints = ["at 7am", "wake me", "alarm at", "remind me at", "o'clock", "tomorrow morning"]
+short_description = "Schedule a wall-clock alarm at hour:minute local (24h) — standalone, not tied to an agenda row."
+when_to_use = "Use for wake at 7:00, alarm at 14:30 — fixed local time, label only, no agenda linkage."
+when_not_to_use = "Do not use for in N minutes (use clock:timer). Do not use to schedule a reminder for a specific agenda task id (use agenda:remind_at)."
+routing_hints = ["at 7am wake", "alarm at o'clock", "tomorrow morning fixed time", "wall clock reminder without agenda task"]
 
 [[examples_good]]
 name = "morning"

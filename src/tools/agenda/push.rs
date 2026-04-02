@@ -49,6 +49,7 @@ impl Tool for AgendaPushTool {
             created_at: timestamp,
             description: args.description,
             status: "pending".to_string(),
+            alarm_id: None,
         });
 
         let new_content = serde_json::to_string_pretty(&tasks).map_err(|e| FcpError::Config(e.to_string()))?;

@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::executive::error::Result;
 use crate::tools::clock::{load_alarms, save_alarms, AlarmRecord};
-use crate::ui::events::TuiEvent;
+use crate::ui::events::{AlarmPayload, TuiEvent};
 
 fn unix_now_secs() -> u64 {
     std::time::SystemTime::now()
@@ -55,11 +55,17 @@ async fn fire_due_and_persist(
     }
     save_alarms(path, &remaining).await?;
     for a in due {
-        let label = a.label;
-        if tui_tx
-            .try_send(TuiEvent::SystemAlarm(label))
-            .is_err()
-        {
+        let payload = if let Some(tid) = a.agenda_task_id.clone() {
+            AlarmPayload::AgendaLinked {
+                agenda_task_id: tid,
+                label: a.label,
+                alarm_record_id: a.id,
+                seconds_late: now.saturating_sub(a.fire_at_unix),
+            }
+        } else {
+            AlarmPayload::Plain(a.label)
+        };
+        if tui_tx.try_send(TuiEvent::SystemAlarm(payload)).is_err() {
             tracing::error!("Dropped alarm due to TUI backpressure");
         }
     }

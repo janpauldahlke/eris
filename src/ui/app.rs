@@ -1,7 +1,7 @@
 use tokio::sync::{mpsc, watch};
 use crate::engine::token_metrics::LlmTokenSnapshot;
 use crate::executive::error::{Result, FcpError};
-use crate::ui::events::{TuiEvent, AgentStateUpdate, UserAction};
+use crate::ui::events::{AlarmPayload, TuiEvent, AgentStateUpdate, UserAction};
 use crossterm::event::{Event as CrosstermEvent, EventStream, KeyCode};
 use tokio_stream::StreamExt;
 use std::time::Duration;
@@ -133,8 +133,22 @@ impl TuiApp {
                             self.system_messages.push(err);
                             redraw_now = true;
                         }
-                        TuiEvent::SystemAlarm(label) => {
-                            if self.action_tx.try_send(UserAction::SystemInject(label)).is_err() {
+                        TuiEvent::SystemAlarm(payload) => {
+                            let action = match payload {
+                                AlarmPayload::Plain(label) => UserAction::SystemInject(label),
+                                AlarmPayload::AgendaLinked {
+                                    agenda_task_id,
+                                    label,
+                                    alarm_record_id,
+                                    seconds_late,
+                                } => UserAction::AgendaAlarmPending {
+                                    agenda_task_id,
+                                    label,
+                                    alarm_record_id,
+                                    seconds_late,
+                                },
+                            };
+                            if self.action_tx.try_send(action).is_err() {
                                 tracing::error!("Dropped alarm due to TUI→Orchestrator action channel backpressure");
                             }
                         }

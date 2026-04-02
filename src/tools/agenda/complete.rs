@@ -4,8 +4,10 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::path::PathBuf;
 use tokio::fs;
+use tokio::sync::mpsc;
 
 use crate::executive::error::{FcpError, Result};
+use crate::tools::clock::{remove_alarm_by_id, FCP_ALARMS_FILE};
 use crate::tools::traits::Tool;
 use super::AgendaTask;
 
@@ -17,6 +19,7 @@ pub struct AgendaCompleteArgs {
 
 pub struct AgendaCompleteTool {
     pub workspace_root: PathBuf,
+    pub reschedule_tx: mpsc::UnboundedSender<()>,
 }
 
 #[async_trait]
@@ -35,12 +38,22 @@ impl Tool for AgendaCompleteTool {
 
         let content = fs::read_to_string(&agenda_path).await.map_err(FcpError::Io)?;
         let mut tasks: Vec<AgendaTask> = serde_json::from_str(&content).map_err(FcpError::ParseFault)?;
-        
+
         let initial_len = tasks.len();
+        let removed = tasks.iter().find(|t| t.id == args.task_id).cloned();
         tasks.retain(|t| t.id != args.task_id);
-        
+
         if tasks.len() == initial_len {
             return Err(FcpError::ToolFault { tool_name: self.name().into(), reason: format!("Task ID {} not found", args.task_id) });
+        }
+
+        if let Some(t) = removed {
+            if let Some(aid) = t.alarm_id {
+                let alarm_path = self.workspace_root.join(FCP_ALARMS_FILE);
+                if remove_alarm_by_id(&alarm_path, &aid).await? {
+                    let _ = self.reschedule_tx.send(());
+                }
+            }
         }
 
         let new_content = serde_json::to_string_pretty(&tasks).map_err(|e| FcpError::Config(e.to_string()))?;
@@ -72,7 +85,11 @@ mod tests {
     #[tokio::test]
     async fn test_agenda_complete_missing_task() -> Result<()> {
         let dir = tempdir().unwrap();
-        let tool = AgendaCompleteTool { workspace_root: dir.path().to_path_buf() };
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let tool = AgendaCompleteTool {
+            workspace_root: dir.path().to_path_buf(),
+            reschedule_tx: tx,
+        };
         let result = tool.execute(serde_json::json!({ "task_id": "1234", "result_summary": "done" })).await;
         assert!(result.is_err());
         Ok(())

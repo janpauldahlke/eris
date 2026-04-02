@@ -30,7 +30,7 @@ impl Tool for ClockTimerTool {
     }
 
     fn description(&self) -> &'static str {
-        "Schedule a relative timer: fires after N minutes with the given label."
+        "Generic relative timer (N minutes + label only); does not create or link an agenda row. Use agenda:remind_at for todo/agenda-linked reminders."
     }
 
     fn parameters_schema(&self) -> schemars::schema::RootSchema {
@@ -61,6 +61,7 @@ impl Tool for ClockTimerTool {
             id,
             fire_at_unix: fire_at,
             label: args.label.clone(),
+            agenda_task_id: None,
         });
         save_alarms(&path, &alarms).await?;
         let _ = self.reschedule_tx.send(());

@@ -8,6 +8,7 @@ pub use now::ClockNowTool;
 pub use timer::ClockTimerTool;
 pub use wall::ClockWallAlarmTool;
 
+use chrono::{Local, LocalResult, NaiveTime};
 use serde::{Deserialize, Serialize};
 
 use crate::executive::error::{FcpError, Result};
@@ -23,6 +24,49 @@ pub struct AlarmRecord {
     pub id: String,
     pub fire_at_unix: u64,
     pub label: String,
+    /// When set, this alarm is tied to a row in `.fcp_agenda.json` for confirmation/removal flows.
+    #[serde(default)]
+    pub agenda_task_id: Option<String>,
+}
+
+/// Next local wall-clock fire time for hour:minute (24h). If that time already passed today, tomorrow.
+pub(crate) fn next_wall_alarm_fire_local(hour: u8, minute: u8) -> Result<chrono::DateTime<Local>> {
+    if hour > 23 {
+        return Err(FcpError::SchemaViolation("hour must be 0..=23".into()));
+    }
+    if minute > 59 {
+        return Err(FcpError::SchemaViolation("minute must be 0..=59".into()));
+    }
+    let t = NaiveTime::from_hms_opt(u32::from(hour), u32::from(minute), 0)
+        .ok_or_else(|| FcpError::SchemaViolation("invalid time".into()))?;
+    let now = Local::now();
+    let naive_day = now.date_naive().and_time(t);
+    let dt = match naive_day.and_local_timezone(Local) {
+        LocalResult::Single(d) => d,
+        LocalResult::None => {
+            return Err(FcpError::Config(
+                "local time does not exist for this date (DST gap)".into(),
+            ));
+        }
+        LocalResult::Ambiguous(earliest, _) => earliest,
+    };
+    if dt <= now {
+        Ok(dt + chrono::Duration::days(1))
+    } else {
+        Ok(dt)
+    }
+}
+
+/// Removes one alarm by `id`. Returns `Ok(true)` if a row was removed.
+pub async fn remove_alarm_by_id(path: &std::path::Path, alarm_id: &str) -> Result<bool> {
+    let mut alarms = load_alarms(path).await?;
+    let initial = alarms.len();
+    alarms.retain(|a| a.id != alarm_id);
+    if alarms.len() == initial {
+        return Ok(false);
+    }
+    save_alarms(path, &alarms).await?;
+    Ok(true)
 }
 
 pub async fn load_alarms(path: &std::path::Path) -> Result<Vec<AlarmRecord>> {
