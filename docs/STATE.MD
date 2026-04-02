@@ -62,4 +62,4 @@
 - [x] REFACTORING(S06): Tier1+Tier2 tool prompt + routing fixes
 - [x] IMPROVEMENT (S08 / telemetry): structured pre-LLM routing logs
 - [x] fix (s02): give semantic brain retry attempts and make app fail if it istn ready
-- [] improvement (s02): harden memory query recall on ingest also uses title and tags
+- [x] improvement (s02): harden memory query recall on ingest also uses title and tags
