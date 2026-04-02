@@ -279,13 +279,14 @@ impl<E: LlmEngine> Orchestrator<E> {
         tui_tx: Option<tokio::sync::mpsc::Sender<crate::ui::events::TuiEvent>>,
         tool_router: Option<ToolRouter>,
         descriptor_registry: Option<Arc<ToolDescriptorRegistry>>,
+        identity: tokio::sync::watch::Receiver<Arc<str>>,
     ) -> Self {
         Self {
             state: AgentState::Idle,
             engine,
             gatekeeper,
             ephemeral,
-            context_assembler: ContextAssembler::new(vault_root, workspace),
+            context_assembler: ContextAssembler::new(vault_root, workspace, identity),
             tool_router,
             max_recovery_attempts,
             max_tool_rounds,
@@ -419,7 +420,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                     self.chat_stack.clear();
 
                     let workspace_root = self.context_assembler.core_dir.parent().unwrap_or(&self.context_assembler.core_dir);
-                    let agenda_path = workspace_root.join(".fcp_agenda.json");
+                    let agenda_path = crate::vault_layout::agenda_json(workspace_root);
                     
                     let mut active_task = None;
                     if let Ok(content) = tokio::fs::read_to_string(&agenda_path).await
@@ -1213,6 +1214,8 @@ mod tests {
         let vault_root = Path::new("/tmp/vault");
         let (tx, rx) = tokio::sync::watch::channel(());
         Box::leak(Box::new(tx));
+        let (id_tx, id_rx) = tokio::sync::watch::channel(Arc::from("test identity"));
+        Box::leak(Box::new(id_tx));
 
         let orchestrator = Orchestrator::new(
             engine,
@@ -1230,6 +1233,7 @@ mod tests {
             None,
             None,
             None,
+            id_rx,
         );
 
         assert_eq!(orchestrator.state, AgentState::Idle);
@@ -1251,7 +1255,26 @@ mod tests {
         let vault_root = Path::new("/tmp/vault");
         let (tx, rx) = tokio::sync::watch::channel(());
         Box::leak(Box::new(tx)); // Prevent sender from dropping, which would trigger `rx.changed()`
-        Orchestrator::new(engine, gatekeeper, ephemeral, vault_root, "test_ws", 3, 5, 0.8, 4096, 3, 6000, rx, None, None, None)
+        let (id_tx, id_rx) = tokio::sync::watch::channel(Arc::from("test identity"));
+        Box::leak(Box::new(id_tx));
+        Orchestrator::new(
+            engine,
+            gatekeeper,
+            ephemeral,
+            vault_root,
+            "test_ws",
+            3,
+            5,
+            0.8,
+            4096,
+            3,
+            6000,
+            rx,
+            None,
+            None,
+            None,
+            id_rx,
+        )
     }
 
     #[test]
@@ -1612,12 +1635,18 @@ mod tests {
         tokio::fs::create_dir_all(&core_dir).await.unwrap();
 
         // Write a mock agenda file
-        let agenda_path = vault_root.join(workspace).join(".fcp_agenda.json");
+        let ws = vault_root.join(workspace);
+        let agenda_path = crate::vault_layout::agenda_json(&ws);
+        tokio::fs::create_dir_all(crate::vault_layout::tools_dir(&ws))
+            .await
+            .unwrap();
         let agenda_content = r#"[{"id": "1234", "created_at": 123456, "description": "Test agenda task", "status": "pending"}]"#;
         tokio::fs::write(&agenda_path, agenda_content).await.unwrap();
 
         let (tx, rx) = tokio::sync::watch::channel(());
-        
+        let (id_tx, id_rx) = tokio::sync::watch::channel(Arc::from("test identity"));
+        Box::leak(Box::new(id_tx));
+
         let mut orchestrator = Orchestrator::new(
             engine,
             gatekeeper,
@@ -1634,6 +1663,7 @@ mod tests {
             None,
             None,
             None,
+            id_rx,
         );
 
         orchestrator.state = AgentState::Chat;
@@ -1723,6 +1753,8 @@ mod tests {
         let vault_root = Path::new("/tmp/vault");
         let (tx, rx) = tokio::sync::watch::channel(());
         Box::leak(Box::new(tx));
+        let (id_tx, id_rx) = tokio::sync::watch::channel(Arc::from("test identity"));
+        Box::leak(Box::new(id_tx));
 
         let mut orchestrator = Orchestrator::new(
             engine,
@@ -1740,6 +1772,7 @@ mod tests {
             None,
             None,
             None,
+            id_rx,
         );
         orchestrator.state = AgentState::Chat;
         orchestrator.chat_stack.push(Message { role: "user".to_string(), content: "remember my name".to_string() });

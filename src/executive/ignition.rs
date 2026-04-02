@@ -67,12 +67,14 @@ pub async fn run_ignition_sequence(workspace_root: &Path) -> Result<AppConfig> {
 
     // 3. The Scaffold
     let dirs_to_create = [
-        workspace_root.join(".fcp/logs"),
+        crate::vault_layout::telemetry_logs_dir(workspace_root),
+        crate::vault_layout::tools_dir(workspace_root),
         workspace_root.join("00_Core"),
         workspace_root.join("10_Episodic"),
         workspace_root.join("20_Semantic"),
         workspace_root.join("30_Persons"),
         workspace_root.join("40_User"),
+        workspace_root.join("99_USER_UPLOADED"),
     ];
 
     for dir in &dirs_to_create {
@@ -95,6 +97,17 @@ pub async fn run_ignition_sequence(workspace_root: &Path) -> Result<AppConfig> {
     }
     fs::write(&identity_path, identity_content).await?;
 
+    fs::metadata(&identity_path).await.map_err(|e| {
+        FcpError::WorkspaceFault {
+            workspace: workspace_root.display().to_string(),
+            reason: format!(
+                "Identity.md missing after write (verify failed): {}: {}",
+                identity_path.display(),
+                e
+            ),
+        }
+    })?;
+
     // 5. The Seal
     let config = AppConfig {
         model_name,
@@ -102,12 +115,14 @@ pub async fn run_ignition_sequence(workspace_root: &Path) -> Result<AppConfig> {
         ..Default::default()
     };
     
-    // Note: Writing to fcp.toml instead of config.toml because config.rs relies on fcp.toml
     let config_toml = toml::to_string(&config).map_err(|e| FcpError::Config(format!("Failed to serialize config: {}", e)))?;
-    let config_path = workspace_root.join("fcp.toml");
+    let config_path = crate::vault_layout::config_toml(workspace_root);
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent).await?;
+    }
     fs::write(&config_path, config_toml).await?;
 
-    let seal_path = workspace_root.join(".fcp_seal");
+    let seal_path = crate::vault_layout::seal(workspace_root);
     let seal_content = format!(
         "agent={}\nmodel={}\nsealed_at={}",
         agent_name,

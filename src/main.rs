@@ -12,13 +12,14 @@ use crate::config::AppConfig;
 
 pub mod executive;
 pub mod telemetry;
+pub mod vault_layout;
 pub mod config;
 pub mod workspace;
 pub mod engine;
 pub mod memory;
 pub mod tools;
 pub mod ingest;
-pub mod api;
+pub mod util;
 pub mod orchestrator;
 pub mod ui;
 
@@ -28,11 +29,18 @@ async fn main() -> ExitCode {
     // Uses clap's native parse() to properly handle --help and exit correctly
     let cli = Cli::parse();
 
-    // 2. Resolve Workspace Root
-    let workspace_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    // 2. Load configuration first (`.fcp/config.toml` relative to cwd).
+    let config = match AppConfig::load(cli.clone()) {
+        Ok(c) => std::sync::Arc::new(c),
+        Err(e) => {
+            eprintln!("Configuration error: {}", e);
+            return ExitCode::FAILURE;
+        }
+    };
 
-    // 3. Initialize Telemetry (Black Box)
-    let _guard = match crate::telemetry::logger::init_tracing(&workspace_root) {
+    // 3. Telemetry under the same directory as chat (launch cwd).
+    let log_vault_root = config.active_vault();
+    let _guard = match crate::telemetry::logger::init_tracing(&log_vault_root) {
         Ok(guard) => guard,
         Err(e) => {
             eprintln!("Failed to initialize telemetry: {}", e);
@@ -41,19 +49,12 @@ async fn main() -> ExitCode {
     };
 
     tracing::info!("Starting FCP Subconscious Orchestrator...");
-
-    // 4. Load Configuration
-    let config = match AppConfig::load(cli.clone()) {
-        Ok(c) => {
-            tracing::info!(model = %c.model_name, workspace = %c.workspace, vault = %c.vault_root.display(), "Configuration loaded");
-            std::sync::Arc::new(c)
-        }
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to load configuration");
-            eprintln!("Configuration error: {}", e);
-            return ExitCode::FAILURE;
-        }
-    };
+    tracing::info!(
+        model = %config.model_name,
+        workspace = %config.workspace,
+        vault_dir = %log_vault_root.display(),
+        "Configuration loaded"
+    );
 
     // 5. Pre-Flight Checks
     if let Err(e) = crate::telemetry::preflight::run_preflight_checks(&cli.command, &config).await {

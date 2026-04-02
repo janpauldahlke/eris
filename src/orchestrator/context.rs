@@ -1,4 +1,6 @@
 use std::path::PathBuf;
+use std::sync::Arc;
+
 use crate::executive::error::Result;
 use crate::memory::ephemeral::EphemeralMemory;
 use crate::orchestrator::state::AgentState;
@@ -6,29 +8,29 @@ use crate::tools::gatekeeper::Gatekeeper;
 
 pub struct ContextAssembler {
     pub core_dir: PathBuf,
+    identity: tokio::sync::watch::Receiver<Arc<str>>,
 }
 
 impl ContextAssembler {
-    pub fn new(vault_root: &std::path::Path, workspace: &str) -> Self {
-        Self { core_dir: vault_root.join(workspace).join("00_Core") }
+    pub fn new(
+        vault_root: &std::path::Path,
+        workspace: &str,
+        identity: tokio::sync::watch::Receiver<Arc<str>>,
+    ) -> Self {
+        Self {
+            core_dir: vault_root.join(workspace).join("00_Core"),
+            identity,
+        }
+    }
+
+    fn identity_text(&self) -> String {
+        (*self.identity.borrow()).as_ref().to_string()
     }
 
     /// Reads Identity.md and formats the Ephemeral cache into a single string.
     /// CRITICAL: `ephemeral.cache` is an async moka cache. You must iterate it safely.
     pub async fn assemble(&self, state: &AgentState, _ephemeral: &EphemeralMemory, gatekeeper: &Gatekeeper) -> Result<String> {
-        let identity_path = self.core_dir.join("Identity.md");
-        tracing::debug!(path = %identity_path.display(), "Loading identity file");
-        let identity_content = match tokio::fs::read_to_string(&identity_path).await {
-            Ok(content) => {
-                tracing::info!(len = content.len(), "Identity loaded from vault");
-                content
-            }
-            Err(e) => {
-                tracing::warn!(path = %identity_path.display(), error = %e, "Identity file not found, using hardcoded fallback");
-                "You are E.R.I.S., an autonomous AI agent.".to_string()
-            }
-        };
-
+        let identity_content = self.identity_text();
         let allowed_tools = gatekeeper.get_allowed_tools(state);
         Self::build_tool_prompt(identity_content, allowed_tools)
     }
@@ -40,18 +42,7 @@ impl ContextAssembler {
         gatekeeper: &Gatekeeper,
         selected_tools: &[String],
     ) -> Result<String> {
-        let identity_path = self.core_dir.join("Identity.md");
-        tracing::debug!(path = %identity_path.display(), "Loading identity file");
-        let identity_content = match tokio::fs::read_to_string(&identity_path).await {
-            Ok(content) => {
-                tracing::info!(len = content.len(), "Identity loaded from vault");
-                content
-            }
-            Err(e) => {
-                tracing::warn!(path = %identity_path.display(), error = %e, "Identity file not found, using hardcoded fallback");
-                "You are E.R.I.S., an autonomous AI agent.".to_string()
-            }
-        };
+        let identity_content = self.identity_text();
 
         let allowed_tools = gatekeeper
             .get_allowed_tools(state)
@@ -146,11 +137,7 @@ impl ContextAssembler {
     /// The LLM responds naturally; its `thought` field is later fed to the
     /// ToolRouter for semantic gating.
     pub async fn assemble_conversational(&self, _ephemeral: &EphemeralMemory) -> Result<String> {
-        let identity_path = self.core_dir.join("Identity.md");
-        let identity_content = match tokio::fs::read_to_string(&identity_path).await {
-            Ok(c) => c,
-            Err(_) => "You are E.R.I.S., an autonomous AI agent.".to_string(),
-        };
+        let identity_content = self.identity_text();
 
         let system_prompt = format!(
             "{identity}\n\n\
@@ -178,60 +165,56 @@ impl ContextAssembler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
-    use tokio::fs;
 
     #[tokio::test]
-    async fn test_assembler_reads_identity_and_cache() {
-        let temp_dir = tempdir().unwrap();
-        let vault_root = temp_dir.path();
+    async fn test_assembler_reads_identity_snapshot() {
+        let vault_root = std::path::Path::new("/tmp/unused_for_snapshot_test");
         let workspace = "test_workspace";
-        
-        // Setup 00_Core directory and Identity.md
-        let core_dir = vault_root.join(workspace).join("00_Core");
-        fs::create_dir_all(&core_dir).await.unwrap();
-        let identity_path = core_dir.join("Identity.md");
-        fs::write(&identity_path, "I am the test agent.").await.unwrap();
-
-        let assembler = ContextAssembler::new(vault_root, workspace);
+        let (_tx, rx) = tokio::sync::watch::channel(Arc::from("I am the test agent."));
+        let assembler = ContextAssembler::new(vault_root, workspace, rx);
         let ephemeral = EphemeralMemory::new(workspace.to_string());
-        
-        ephemeral.insert("test_key", "test_value_data", vec![], 60).await.unwrap();
-        
+
+        ephemeral
+            .insert("test_key", "test_value_data", vec![], 60)
+            .await
+            .expect("insert");
+
         let state = AgentState::Idle;
         let gatekeeper = crate::tools::gatekeeper::Gatekeeper::new();
-        let assembled = assembler.assemble(&state, &ephemeral, &gatekeeper).await.unwrap();
-        
+        let assembled = assembler
+            .assemble(&state, &ephemeral, &gatekeeper)
+            .await
+            .expect("assemble");
+
         assert!(assembled.contains("I am the test agent."));
         assert!(assembled.contains("Reply with ONE valid JSON object only"));
         assert!(assembled.contains("\"status\": \"Task|Reflect|Idle\""));
     }
 
     #[tokio::test]
-    async fn test_assembler_identity_hot_reload() {
-        let temp_dir = tempdir().unwrap();
-        let vault_root = temp_dir.path();
+    async fn test_assembler_identity_hot_reload_via_watch() {
+        let vault_root = std::path::Path::new("/tmp/unused_for_snapshot_test");
         let workspace = "test_workspace";
-        
-        // Setup 00_Core directory and Identity.md
-        let core_dir = vault_root.join(workspace).join("00_Core");
-        fs::create_dir_all(&core_dir).await.unwrap();
-        let identity_path = core_dir.join("Identity.md");
-        fs::write(&identity_path, "I am version 1.").await.unwrap();
-
-        let assembler = ContextAssembler::new(vault_root, workspace);
+        let (tx, rx) = tokio::sync::watch::channel(Arc::from("I am version 1."));
+        let assembler = ContextAssembler::new(vault_root, workspace, rx);
         let ephemeral = EphemeralMemory::new(workspace.to_string());
         let state = AgentState::Idle;
         let gatekeeper = crate::tools::gatekeeper::Gatekeeper::new();
-        
-        let assembled_v1 = assembler.assemble(&state, &ephemeral, &gatekeeper).await.unwrap();
+
+        let assembled_v1 = assembler
+            .assemble(&state, &ephemeral, &gatekeeper)
+            .await
+            .expect("assemble v1");
         assert!(assembled_v1.contains("I am version 1."));
-        
-        // Mutate Identity.md
-        fs::write(&identity_path, "I am version 2.").await.unwrap();
-        
-        let assembled_v2 = assembler.assemble(&state, &ephemeral, &gatekeeper).await.unwrap();
+
+        tx.send(Arc::from("I am version 2."))
+            .expect("send updated identity");
+
+        let assembled_v2 = assembler
+            .assemble(&state, &ephemeral, &gatekeeper)
+            .await
+            .expect("assemble v2");
         assert!(assembled_v2.contains("I am version 2."));
-        assert!(assembled_v1 != assembled_v2);
+        assert_ne!(assembled_v1, assembled_v2);
     }
 }

@@ -7,7 +7,7 @@ use tokio::fs;
 use tokio::sync::mpsc;
 
 use crate::executive::error::{FcpError, Result};
-use crate::tools::clock::{remove_alarm_by_id, FCP_ALARMS_FILE};
+use crate::tools::clock::remove_alarm_by_id;
 use crate::tools::traits::Tool;
 use super::AgendaTask;
 
@@ -76,7 +76,7 @@ impl Tool for AgendaRemoveTool {
             }
         }
 
-        let agenda_path = self.workspace_root.join(".fcp_agenda.json");
+        let agenda_path = crate::vault_layout::agenda_json(&self.workspace_root);
 
         if !agenda_path.exists() {
             return Err(FcpError::ToolFault {
@@ -100,7 +100,7 @@ impl Tool for AgendaRemoveTool {
             }
             if let Some(t) = victim {
                 if let Some(aid) = t.alarm_id {
-                    let alarm_path = self.workspace_root.join(FCP_ALARMS_FILE);
+                    let alarm_path = crate::vault_layout::alarms_json(&self.workspace_root);
                     if remove_alarm_by_id(&alarm_path, &aid).await? {
                         let _ = self.reschedule_tx.send(());
                     }
@@ -108,6 +108,9 @@ impl Tool for AgendaRemoveTool {
             }
             let new_content =
                 serde_json::to_string_pretty(&tasks).map_err(|e| FcpError::Config(e.to_string()))?;
+            fs::create_dir_all(crate::vault_layout::tools_dir(&self.workspace_root))
+                .await
+                .map_err(FcpError::Io)?;
             fs::write(&agenda_path, new_content).await.map_err(FcpError::Io)?;
             return Ok(format!("SUCCESS: Task [{}] removed from agenda.", id));
         }
@@ -133,13 +136,16 @@ impl Tool for AgendaRemoveTool {
                 let idx = matches[0];
                 let removed = tasks.remove(idx);
                 if let Some(aid) = removed.alarm_id {
-                    let alarm_path = self.workspace_root.join(FCP_ALARMS_FILE);
+                    let alarm_path = crate::vault_layout::alarms_json(&self.workspace_root);
                     if remove_alarm_by_id(&alarm_path, &aid).await? {
                         let _ = self.reschedule_tx.send(());
                     }
                 }
                 let new_content =
                     serde_json::to_string_pretty(&tasks).map_err(|e| FcpError::Config(e.to_string()))?;
+                fs::create_dir_all(crate::vault_layout::tools_dir(&self.workspace_root))
+                    .await
+                    .map_err(FcpError::Io)?;
                 fs::write(&agenda_path, new_content).await.map_err(FcpError::Io)?;
                 Ok(format!(
                     "SUCCESS: Task [{}] removed from agenda (matched description).",
@@ -178,7 +184,10 @@ mod tests {
     }
 
     async fn write_agenda(dir: &std::path::Path, json: &str) -> Result<()> {
-        let path = dir.join(".fcp_agenda.json");
+        let path = crate::vault_layout::agenda_json(dir);
+        fs::create_dir_all(crate::vault_layout::tools_dir(dir))
+            .await
+            .map_err(FcpError::Io)?;
         fs::write(&path, json).await.map_err(FcpError::Io)?;
         Ok(())
     }
@@ -196,7 +205,7 @@ mod tests {
             .execute(serde_json::json!({ "task_id": "a03e" }))
             .await?;
         assert!(out.contains("a03e"));
-        let content = fs::read_to_string(dir.path().join(".fcp_agenda.json"))
+        let content = fs::read_to_string(crate::vault_layout::agenda_json(dir.path()))
             .await
             .unwrap();
         let tasks: Vec<AgendaTask> = serde_json::from_str(&content).unwrap();

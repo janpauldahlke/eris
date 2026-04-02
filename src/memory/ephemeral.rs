@@ -141,7 +141,7 @@ impl EphemeralMemory {
             .filter_map(|(_, v)| (v.expires_at > now).then_some(v.clone()))
             .collect();
         
-        let path = vault_root.join(format!(".fcp/ephemeral_{}.bin", self.workspace));
+        let path = crate::vault_layout::ephemeral_bin(vault_root, &self.workspace);
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await.map_err(|e| crate::executive::error::FcpError::WorkspaceFault {
                 workspace: self.workspace.clone(),
@@ -174,7 +174,7 @@ impl EphemeralMemory {
             .max_capacity(max_capacity)
             .build();
             
-        let path = vault_root.join(format!(".fcp/ephemeral_{}.bin", workspace));
+        let path = crate::vault_layout::ephemeral_bin(vault_root, workspace);
         
         if path.exists() {
             let data = tokio::fs::read(path).await.map_err(|e| crate::executive::error::FcpError::WorkspaceFault {
@@ -427,7 +427,7 @@ mod tests {
         // Yield to let the daemon finish writing
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         
-        let path = vault_root.join(".fcp/ephemeral_daemon_test_ws.bin");
+        let path = crate::vault_layout::ephemeral_bin(&vault_root, "daemon_test_ws");
         assert!(path.exists(), "Snapshot file must exist after cancellation");
         
         let loaded = EphemeralMemory::load_from_disk("daemon_test_ws", &vault_root, 10_000).await.unwrap();

@@ -4,3 +4,4 @@ pub mod router;
 pub mod ignition;
 pub mod identity_md;
 pub mod peripherals;
+pub mod vault_identity;

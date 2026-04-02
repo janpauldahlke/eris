@@ -14,8 +14,6 @@ use serde::{Deserialize, Serialize};
 use crate::executive::error::{FcpError, Result};
 use tokio::fs;
 
-/// Workspace file storing pending alarms (JSON array).
-pub const FCP_ALARMS_FILE: &str = ".fcp_alarms.json";
 pub const MAX_LABEL_CHARS: usize = 200;
 pub const MAX_TIMER_MINUTES: u32 = 24 * 60;
 
@@ -24,7 +22,7 @@ pub struct AlarmRecord {
     pub id: String,
     pub fire_at_unix: u64,
     pub label: String,
-    /// When set, this alarm is tied to a row in `.fcp_agenda.json` for confirmation/removal flows.
+    /// When set, this alarm is tied to a row in `.fcp/tools/agenda.json` for confirmation/removal flows.
     #[serde(default)]
     pub agenda_task_id: Option<String>,
 }
@@ -82,6 +80,9 @@ pub async fn load_alarms(path: &std::path::Path) -> Result<Vec<AlarmRecord>> {
 
 pub async fn save_alarms(path: &std::path::Path, alarms: &[AlarmRecord]) -> Result<()> {
     let data = serde_json::to_string_pretty(alarms).map_err(|e| FcpError::Config(e.to_string()))?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).await.map_err(FcpError::Io)?;
+    }
     fs::write(path, data).await.map_err(FcpError::Io)?;
     Ok(())
 }

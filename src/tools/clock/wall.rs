@@ -6,8 +6,7 @@ use std::path::PathBuf;
 
 use crate::executive::error::{FcpError, Result};
 use crate::tools::clock::{
-    load_alarms, next_wall_alarm_fire_local, save_alarms, AlarmRecord, FCP_ALARMS_FILE,
-    MAX_LABEL_CHARS,
+    load_alarms, next_wall_alarm_fire_local, save_alarms, AlarmRecord, MAX_LABEL_CHARS,
 };
 use crate::tools::traits::Tool;
 use tokio::sync::mpsc;
@@ -48,7 +47,7 @@ impl Tool for ClockWallAlarmTool {
         let fire_dt = next_wall_alarm_fire_local(args.hour, args.minute)?;
         let fire_at = fire_dt.timestamp() as u64;
 
-        let path = self.workspace_root.join(FCP_ALARMS_FILE);
+        let path = crate::vault_layout::alarms_json(&self.workspace_root);
         let mut alarms = load_alarms(&path).await?;
         let id = uuid::Uuid::new_v4().to_string();
         alarms.push(AlarmRecord {

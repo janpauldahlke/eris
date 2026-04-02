@@ -1,4 +1,4 @@
-//! Sync `00_Core/Identity.md` with `AppConfig::user_name` (fcp.toml is source of truth).
+//! Sync `00_Core/Identity.md` with `AppConfig::user_name` (`.fcp/config.toml` is source of truth).
 
 use std::path::Path;
 

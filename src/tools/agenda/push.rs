@@ -31,9 +31,9 @@ impl Tool for AgendaPushTool {
             return Err(FcpError::SchemaViolation("Description must be <= 200 chars".to_string()));
         }
 
-        let agenda_path = self.workspace_root.join(".fcp_agenda.json");
+        let agenda_path = crate::vault_layout::agenda_json(&self.workspace_root);
         let mut tasks: Vec<AgendaTask> = Vec::new();
-        
+
         if agenda_path.exists() {
             let content = fs::read_to_string(&agenda_path).await.map_err(FcpError::Io)?;
             if !content.trim().is_empty() {
@@ -53,6 +53,9 @@ impl Tool for AgendaPushTool {
         });
 
         let new_content = serde_json::to_string_pretty(&tasks).map_err(|e| FcpError::Config(e.to_string()))?;
+        fs::create_dir_all(crate::vault_layout::tools_dir(&self.workspace_root))
+            .await
+            .map_err(FcpError::Io)?;
         fs::write(&agenda_path, new_content).await.map_err(FcpError::Io)?;
 
         Ok(format!("SUCCESS: Task [{}] queued for background execution.", id))
@@ -73,7 +76,9 @@ mod tests {
         let result = tool.execute(args).await?;
         assert!(result.starts_with("SUCCESS: Task ["));
         
-        let content = fs::read_to_string(dir.path().join(".fcp_agenda.json")).await.unwrap();
+        let content = fs::read_to_string(crate::vault_layout::agenda_json(dir.path()))
+            .await
+            .unwrap();
         let tasks: Vec<AgendaTask> = serde_json::from_str(&content).unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].description, "Test task");

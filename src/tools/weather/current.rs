@@ -5,7 +5,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::api::ApiHttpClient;
+use crate::util::ApiHttpClient;
 use crate::executive::error::{FcpError, Result};
 use crate::tools::traits::Tool;
 use crate::tools::weather::open_meteo::{self, HINT_CURRENT, PROFILE_FORECAST_CURRENT};

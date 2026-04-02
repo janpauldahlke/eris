@@ -13,7 +13,7 @@ mod integration_tests {
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    use crate::api::ApiHttpClient;
+    use crate::util::ApiHttpClient;
     use crate::config::{ApiProfile, AppConfig};
     use crate::tools::traits::Tool;
 

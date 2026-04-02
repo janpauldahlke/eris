@@ -75,3 +75,4 @@
 - [x] feature (S06_tool): weather:forecast surface tool
 - [x] feature (S06_tool): knowledge gather wiki tool
 - [x] DOCS adding TODO about new yield/sleep mode
+- [x] feature (S0x util): create fs dir and file watcher

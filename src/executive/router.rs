@@ -15,10 +15,15 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
             use crate::engine::ollama::OllamaClient;
             use crate::memory::ephemeral::EphemeralMemory;
             use crate::tools::Gatekeeper;
-            use std::path::PathBuf;
             use ollama_rs::Ollama;
 
-            let workspace_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            // Physical vault = directory the user `cd`d into before starting chat (see `AppConfig::active_vault`).
+            let workspace_root = config.active_vault();
+            tracing::info!(
+                path = %workspace_root.display(),
+                workspace = %config.workspace,
+                "chat vault root (launch cwd)"
+            );
             // 1. Setup channels + terminal early so startup status is visible in TUI telemetry.
             let (tui_tx, tui_rx) = mpsc::channel(100);
             let (action_tx, mut action_rx) = mpsc::channel::<crate::ui::events::UserAction>(100);
@@ -30,13 +35,63 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                 .await;
 
             let mut config = config;
-            let seal_path = workspace_root.join(".fcp_seal");
+            let seal_path = crate::vault_layout::seal(&workspace_root);
             if !seal_path.exists() {
                 crate::executive::ignition::run_ignition_sequence(&workspace_root).await?;
                 config = Arc::new(AppConfig::load(cli.clone())?);
             }
             crate::executive::identity_md::sync_identity_user_line(&workspace_root, &config.user_name)
                 .await?;
+
+            let default_identity = workspace_root.join("00_Core/Identity.md");
+            let mut identity_path = default_identity.clone();
+            let mut upload_dirs: Vec<std::path::PathBuf> = Vec::new();
+            let mut extra_watched_files: Vec<std::path::PathBuf> = Vec::new();
+
+            for rel in &config.vault_watch.paths {
+                let p = workspace_root.join(rel);
+                let norm = rel.replace('\\', "/");
+                let norm_trim = norm.trim_end_matches('/');
+                if norm_trim.ends_with("Identity.md") {
+                    identity_path = p;
+                } else if norm_trim == "99_USER_UPLOADED" || norm_trim.ends_with("/99_USER_UPLOADED") {
+                    upload_dirs.push(p);
+                } else {
+                    extra_watched_files.push(p);
+                }
+            }
+
+            let mut watched_files = vec![identity_path.clone()];
+            watched_files.extend(extra_watched_files);
+            watched_files.sort();
+            watched_files.dedup();
+            let initial_identity = crate::executive::vault_identity::read_identity_markdown_strict(
+                &config.workspace,
+                &identity_path,
+            )
+            .await?;
+            tracing::info!(
+                target: "fcp.vault_watch",
+                path = %identity_path.display(),
+                len = initial_identity.len(),
+                phase = "initial_load",
+                "identity snapshot loaded for chat"
+            );
+            let (identity_tx, identity_rx) = tokio::sync::watch::channel(initial_identity);
+
+            if config.vault_watch.enabled {
+                let debounce = std::time::Duration::from_millis(config.vault_watch.debounce_ms.max(1));
+                crate::util::fs_watch::spawn_vault_identity_watch(
+                    cancel_token.child_token(),
+                    debounce,
+                    identity_path.clone(),
+                    watched_files,
+                    upload_dirs,
+                    identity_tx,
+                );
+            } else {
+                drop(identity_tx);
+            }
 
             let mut peripheral_lifecycle =
                 crate::executive::peripherals::ensure_peripherals_for_chat(&config).await?;
@@ -110,7 +165,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                 }
             };
 
-            let api_http = Arc::new(crate::api::ApiHttpClient::new(config.clone())?);
+            let api_http = Arc::new(crate::util::ApiHttpClient::new(config.clone())?);
 
             // 5. Register ALL tools with the Gatekeeper
             let mut gatekeeper = Gatekeeper::new();
@@ -313,6 +368,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                 Some(tui_tx.clone()),
                 tool_router,
                 descriptor_registry,
+                identity_rx,
             );
 
             tracing::info!(
@@ -647,6 +703,10 @@ mod tests {
         let (watch_tx, watch_rx) = tokio::sync::watch::channel(());
         let _keep_watch = watch_tx;
 
+        let (_id_tx, id_rx) = tokio::sync::watch::channel(std::sync::Arc::from(
+            "relay test identity for orchestrator",
+        ));
+
         let mut orchestrator = Orchestrator::new(
             engine,
             gatekeeper,
@@ -663,6 +723,7 @@ mod tests {
             None,
             None,
             None,
+            id_rx,
         );
 
         let (action_tx, mut action_rx) = mpsc::channel::<UserAction>(100);

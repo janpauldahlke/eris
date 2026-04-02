@@ -1,4 +1,4 @@
-//! English Wikipedia REST `page/summary` via [`crate::api::ApiHttpClient`].
+//! English Wikipedia REST `page/summary` via [`crate::util::ApiHttpClient`].
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -9,7 +9,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::api::ApiHttpClient;
+use crate::util::ApiHttpClient;
 use crate::executive::error::{FcpError, Result};
 use crate::tools::traits::Tool;
 

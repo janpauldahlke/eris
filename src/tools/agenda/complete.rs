@@ -7,7 +7,7 @@ use tokio::fs;
 use tokio::sync::mpsc;
 
 use crate::executive::error::{FcpError, Result};
-use crate::tools::clock::{remove_alarm_by_id, FCP_ALARMS_FILE};
+use crate::tools::clock::remove_alarm_by_id;
 use crate::tools::traits::Tool;
 use super::AgendaTask;
 
@@ -30,7 +30,7 @@ impl Tool for AgendaCompleteTool {
 
     async fn execute(&self, args: Value) -> Result<String> {
         let args: AgendaCompleteArgs = serde_json::from_value(args).map_err(FcpError::ParseFault)?;
-        let agenda_path = self.workspace_root.join(".fcp_agenda.json");
+        let agenda_path = crate::vault_layout::agenda_json(&self.workspace_root);
         
         if !agenda_path.exists() {
             return Err(FcpError::ToolFault { tool_name: self.name().into(), reason: "Agenda file not found".into() });
@@ -49,7 +49,7 @@ impl Tool for AgendaCompleteTool {
 
         if let Some(t) = removed {
             if let Some(aid) = t.alarm_id {
-                let alarm_path = self.workspace_root.join(FCP_ALARMS_FILE);
+                let alarm_path = crate::vault_layout::alarms_json(&self.workspace_root);
                 if remove_alarm_by_id(&alarm_path, &aid).await? {
                     let _ = self.reschedule_tx.send(());
                 }
@@ -57,6 +57,9 @@ impl Tool for AgendaCompleteTool {
         }
 
         let new_content = serde_json::to_string_pretty(&tasks).map_err(|e| FcpError::Config(e.to_string()))?;
+        fs::create_dir_all(crate::vault_layout::tools_dir(&self.workspace_root))
+            .await
+            .map_err(FcpError::Io)?;
         fs::write(&agenda_path, new_content).await.map_err(FcpError::Io)?;
 
         let episodic_dir = self.workspace_root.join("10_Episodic");

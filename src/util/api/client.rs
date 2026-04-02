@@ -4,9 +4,9 @@ use std::time::Duration;
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
-use crate::api::template::apply_template;
 use crate::config::AppConfig;
 use crate::executive::error::{FcpError, Result};
+use crate::util::api::template::apply_template;
 
 const TRUNCATION_SUFFIX: &str = "\n\n[SYSTEM: RESPONSE TRUNCATED DUE TO LENGTH LIMITS]";
 

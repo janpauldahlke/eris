@@ -1,4 +1,4 @@
-//! Open-Meteo weather tools: geocode then forecast (two HTTP calls via [`crate::api::ApiHttpClient`]).
+//! Open-Meteo weather tools: geocode then forecast (two HTTP calls via [`crate::util::ApiHttpClient`]).
 
 mod open_meteo;
 
@@ -17,7 +17,7 @@ mod integration_tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    use crate::api::ApiHttpClient;
+    use crate::util::ApiHttpClient;
     use crate::config::{ApiProfile, AppConfig};
     use crate::tools::traits::Tool;
 

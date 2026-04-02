@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 use crate::executive::error::{FcpError, Result};
 use crate::tools::clock::{
     load_alarms, next_wall_alarm_fire_local, remove_alarm_by_id, save_alarms, AlarmRecord,
-    FCP_ALARMS_FILE, MAX_TIMER_MINUTES,
+    MAX_TIMER_MINUTES,
 };
 use crate::tools::traits::Tool;
 use super::AgendaTask;
@@ -40,7 +40,7 @@ impl Tool for AgendaRemindAtTool {
     }
 
     fn description(&self) -> &'static str {
-        "Agenda-linked reminder: writes/updates `.fcp_agenda.json` and `.fcp_alarms.json` (task_id or new description + relative minutes or wall-clock time). Not a generic clock/timer label."
+        "Agenda-linked reminder: writes/updates `.fcp/tools/agenda.json` and `.fcp/tools/alarms.json` (task_id or new description + relative minutes or wall-clock time). Not a generic clock/timer label."
     }
 
     fn parameters_schema(&self) -> schemars::schema::RootSchema {
@@ -99,7 +99,7 @@ impl Tool for AgendaRemindAtTool {
             }
         };
 
-        let agenda_path = self.workspace_root.join(".fcp_agenda.json");
+        let agenda_path = crate::vault_layout::agenda_json(&self.workspace_root);
         let mut tasks: Vec<AgendaTask> = Vec::new();
         if agenda_path.exists() {
             let content = fs::read_to_string(&agenda_path).await.map_err(FcpError::Io)?;
@@ -108,7 +108,7 @@ impl Tool for AgendaRemindAtTool {
             }
         }
 
-        let alarms_path = self.workspace_root.join(FCP_ALARMS_FILE);
+        let alarms_path = crate::vault_layout::alarms_json(&self.workspace_root);
         let task_id: String;
         let label: String;
 
@@ -184,6 +184,9 @@ impl Tool for AgendaRemindAtTool {
 
         let new_content =
             serde_json::to_string_pretty(&tasks).map_err(|e| FcpError::Config(e.to_string()))?;
+        fs::create_dir_all(crate::vault_layout::tools_dir(&self.workspace_root))
+            .await
+            .map_err(FcpError::Io)?;
         fs::write(&agenda_path, new_content).await.map_err(FcpError::Io)?;
 
         let _ = self.reschedule_tx.send(());
@@ -206,7 +209,10 @@ mod tests {
     use tempfile::tempdir;
 
     async fn write_agenda(dir: &std::path::Path, json: &str) -> Result<()> {
-        let path = dir.join(".fcp_agenda.json");
+        let path = crate::vault_layout::agenda_json(dir);
+        fs::create_dir_all(crate::vault_layout::tools_dir(dir))
+            .await
+            .map_err(FcpError::Io)?;
         fs::write(&path, json).await.map_err(FcpError::Io)?;
         Ok(())
     }
@@ -226,7 +232,7 @@ mod tests {
             }))
             .await?;
         assert!(out.contains("SUCCESS"));
-        let agenda = fs::read_to_string(dir.path().join(".fcp_agenda.json"))
+        let agenda = fs::read_to_string(crate::vault_layout::agenda_json(dir.path()))
             .await
             .unwrap();
         let tasks: Vec<AgendaTask> = serde_json::from_str(&agenda).unwrap();
@@ -244,7 +250,10 @@ mod tests {
             r#"[{"id":"a1","created_at":1,"description":"x","status":"pending","alarm_id":"old-alarm"}]"#,
         )
         .await?;
-        let alarms_path = dir.path().join(FCP_ALARMS_FILE);
+        let alarms_path = crate::vault_layout::alarms_json(dir.path());
+        fs::create_dir_all(crate::vault_layout::tools_dir(dir.path()))
+            .await
+            .unwrap();
         fs::write(
             &alarms_path,
             r#"[{"id":"old-alarm","fire_at_unix":9999999999,"label":"x","agenda_task_id":"a1"}]"#,

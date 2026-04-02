@@ -1,11 +1,24 @@
-use serde::{Deserialize, Serialize};
+pub const DEFAULT_IDENTITY: &str = "- **Role:** Senior Rust Engineer\n- **Tone:** Clinical and concise\n- **Logic:** Chain of Thought\n- **Constraint:** State 'Data unavailable' if unsure.\n- **Formatting:** High-scannability, no engagement loops";
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
-pub struct FcpSeal {
-    pub model: String,
+fn format_workspace_seal(model: &str) -> String {
+    format!(
+        "agent=FCP\nmodel={}\nsealed_at={}",
+        model,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    )
 }
 
-pub const DEFAULT_IDENTITY: &str = "- **Role:** Senior Rust Engineer\n- **Tone:** Clinical and concise\n- **Logic:** Chain of Thought\n- **Constraint:** State 'Data unavailable' if unsure.\n- **Formatting:** High-scannability, no engagement loops";
+fn model_from_seal_text(content: &str) -> Option<String> {
+    for line in content.lines() {
+        if let Some(v) = line.strip_prefix("model=") {
+            return Some(v.trim().to_string());
+        }
+    }
+    None
+}
 
 pub async fn init_workspace(
     vault_root: &std::path::Path,
@@ -13,22 +26,31 @@ pub async fn init_workspace(
     model: &str,
 ) -> crate::executive::error::Result<()> {
     let workspace_dir = vault_root.join(workspace);
-    let seal_file = workspace_dir.join(".fcp_seal.json");
+    let seal_file = crate::vault_layout::seal(&workspace_dir);
 
     if workspace_dir.exists() {
         if !seal_file.exists() {
-            return Err(crate::executive::error::FcpError::Config(
-                format!("Workspace '{}' exists but missing .fcp_seal.json", workspace)
-            ));
+            return Err(crate::executive::error::FcpError::Config(format!(
+                "Workspace '{}' exists but missing {}",
+                workspace,
+                seal_file.display()
+            )));
         }
 
         let seal_content = tokio::fs::read_to_string(&seal_file).await?;
-        let seal: FcpSeal = serde_json::from_str(&seal_content)?;
+        let sealed_model = model_from_seal_text(&seal_content).ok_or_else(|| {
+            crate::executive::error::FcpError::Config(format!(
+                "Workspace '{}' seal missing model= line: {}",
+                workspace,
+                seal_file.display()
+            ))
+        })?;
 
-        if seal.model != model {
-            return Err(crate::executive::error::FcpError::Config(
-                format!("Workspace seal model mismatch: got '{}', requested '{}'", seal.model, model)
-            ));
+        if sealed_model != model {
+            return Err(crate::executive::error::FcpError::Config(format!(
+                "Workspace seal model mismatch: got '{}', requested '{}'",
+                sealed_model, model
+            )));
         }
 
         return Ok(());
@@ -39,17 +61,37 @@ pub async fn init_workspace(
     let core_dir = workspace_dir.join("00_Core");
     tokio::fs::create_dir_all(&core_dir).await?;
 
-    for sub in ["10_Episodic", "20_Semantic", "30_Persons", "40_User"] {
+    for sub in [
+        "10_Episodic",
+        "20_Semantic",
+        "30_Persons",
+        "40_User",
+        "99_USER_UPLOADED",
+    ] {
         tokio::fs::create_dir_all(workspace_dir.join(sub)).await?;
     }
 
     let identity_file = core_dir.join("Identity.md");
     tokio::fs::write(&identity_file, DEFAULT_IDENTITY).await?;
 
-    let seal = FcpSeal {
-        model: model.to_string(),
-    };
-    tokio::fs::write(&seal_file, serde_json::to_string(&seal)?).await?;
+    tokio::fs::metadata(&identity_file).await.map_err(|e| {
+        crate::executive::error::FcpError::WorkspaceFault {
+            workspace: workspace.to_string(),
+            reason: format!(
+                "Identity.md missing after init_workspace write: {}: {}",
+                identity_file.display(),
+                e
+            ),
+        }
+    })?;
+
+    let tools = crate::vault_layout::tools_dir(&workspace_dir);
+    tokio::fs::create_dir_all(&tools).await?;
+
+    if let Some(parent) = seal_file.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    tokio::fs::write(&seal_file, format_workspace_seal(model)).await?;
 
     Ok(())
 }
@@ -57,38 +99,43 @@ pub async fn init_workspace(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use tempfile::tempdir;
 
     #[tokio::test]
     async fn test_boot_creates_identity_and_seal() {
         let temp_dir = tempdir().unwrap();
         let vault_root = temp_dir.path();
-        
+
         let workspace = "test_workspace";
         let model = "test_model";
-        
+
         init_workspace(vault_root, workspace, model).await.unwrap();
-        
+
         let workspace_dir = vault_root.join(workspace);
-        
-        // Assert 00_Core/ is created
+
         let core_dir = workspace_dir.join("00_Core");
         assert!(core_dir.exists(), "00_Core directory should exist");
-        
-        // Assert Identity.md exists
+
+        assert!(
+            workspace_dir.join("99_USER_UPLOADED").exists(),
+            "99_USER_UPLOADED directory should exist"
+        );
+
         let identity_file = core_dir.join("Identity.md");
         assert!(identity_file.exists(), "Identity.md should exist");
-        
+
         let identity_content = tokio::fs::read_to_string(&identity_file).await.unwrap();
         assert_eq!(identity_content, DEFAULT_IDENTITY);
-        
-        // Assert .fcp_seal.json contains the requested model
-        let seal_file = workspace_dir.join(".fcp_seal.json");
-        assert!(seal_file.exists(), ".fcp_seal.json should exist");
-        
+
+        let seal_file = crate::vault_layout::seal(&workspace_dir);
+        assert!(seal_file.exists(), "seal file should exist");
+
         let seal_content = tokio::fs::read_to_string(&seal_file).await.unwrap();
-        let seal: FcpSeal = serde_json::from_str(&seal_content).unwrap();
-        assert_eq!(seal.model, model);
+        assert_eq!(
+            model_from_seal_text(&seal_content).as_deref(),
+            Some(model)
+        );
     }
 
     #[tokio::test]
@@ -97,16 +144,20 @@ mod tests {
         let vault_root = temp_dir.path();
         let workspace = "test_workspace";
         let workspace_dir = vault_root.join(workspace);
-        
+
         tokio::fs::create_dir_all(&workspace_dir).await.unwrap();
-        
-        let seal = FcpSeal {
-            model: "old_model".to_string(),
-        };
-        let seal_file = workspace_dir.join(".fcp_seal.json");
-        tokio::fs::write(&seal_file, serde_json::to_string(&seal).unwrap()).await.unwrap();
-        
-        let err = init_workspace(vault_root, workspace, "new_model").await.unwrap_err();
+
+        let seal_file = crate::vault_layout::seal(&workspace_dir);
+        if let Some(p) = seal_file.parent() {
+            tokio::fs::create_dir_all(p).await.unwrap();
+        }
+        tokio::fs::write(&seal_file, format_workspace_seal("old_model"))
+            .await
+            .unwrap();
+
+        let err = init_workspace(vault_root, workspace, "new_model")
+            .await
+            .unwrap_err();
         match err {
             crate::executive::error::FcpError::Config(_) => {}
             _ => panic!("Expected FcpError::Config, got {:?}", err),
@@ -119,10 +170,12 @@ mod tests {
         let vault_root = temp_dir.path();
         let workspace = "test_workspace";
         let workspace_dir = vault_root.join(workspace);
-        
+
         tokio::fs::create_dir_all(&workspace_dir).await.unwrap();
-        
-        let err = init_workspace(vault_root, workspace, "test_model").await.unwrap_err();
+
+        let err = init_workspace(vault_root, workspace, "test_model")
+            .await
+            .unwrap_err();
         match err {
             crate::executive::error::FcpError::Config(_) => {}
             _ => panic!("Expected FcpError::Config, got {:?}", err),

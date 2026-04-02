@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// HTTP API profile for [`crate::api::ApiHttpClient`] (URL/query/header templates). Map keys are profile ids (`[apis.<id>]` in `fcp.toml`).
+/// HTTP API profile for [`crate::util::ApiHttpClient`] (URL/query/header templates). Map keys are profile ids (`[apis.<id>]` in `.fcp/config.toml`).
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct ApiProfile {
     #[serde(default = "default_api_profile_enabled")]
@@ -23,14 +23,53 @@ fn default_api_profile_enabled() -> bool {
     true
 }
 
+/// Curated vault paths relative to chat `workspace_root`. Identity file paths trigger snapshot hot-reload; `99_USER_UPLOADED` is watched recursively (activity is logged, see `spawn_vault_identity_watch`).
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct VaultWatchConfig {
+    #[serde(default = "default_vault_watch_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_vault_watch_debounce_ms")]
+    pub debounce_ms: u64,
+    #[serde(default = "default_vault_watch_paths")]
+    pub paths: Vec<String>,
+}
+
+fn default_vault_watch_enabled() -> bool {
+    true
+}
+
+fn default_vault_watch_debounce_ms() -> u64 {
+    120
+}
+
+fn default_vault_watch_paths() -> Vec<String> {
+    vec![
+        "00_Core/Identity.md".to_string(),
+        "99_USER_UPLOADED".to_string(),
+    ]
+}
+
+impl Default for VaultWatchConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_vault_watch_enabled(),
+            debounce_ms: default_vault_watch_debounce_ms(),
+            paths: default_vault_watch_paths(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct AppConfig {
+    /// Logical id (Qdrant collection `fcp_vault_{workspace}`, ephemeral snapshot suffix, etc.).
+    /// **Not** joined onto paths for chat: the on-disk workspace is always [`Self::config_source_dir`].
     pub workspace: String,
+    /// Carried in config for compatibility; chat and ignition use the current directory, not `vault_root` + `workspace`.
     pub vault_root: PathBuf,
     pub log_level: String,
     pub ollama_host: String,
     pub model_name: String,
-    /// Human display name from fcp.toml / `FCP_USER_NAME`; empty = unset.
+    /// Human display name from `.fcp/config.toml` / `FCP_USER_NAME`; empty = unset.
     #[serde(default)]
     pub user_name: String,
     pub num_ctx: usize,
@@ -71,6 +110,11 @@ pub struct AppConfig {
     pub semantic_brain_connect_retry_delay_ms: u64,
     #[serde(default)]
     pub apis: HashMap<String, ApiProfile>,
+    #[serde(default)]
+    pub vault_watch: VaultWatchConfig,
+    /// Current working directory when [`AppConfig::load`] ran — this is the physical vault root for chat.
+    #[serde(skip)]
+    pub config_source_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -114,7 +158,7 @@ fn default_semantic_brain_connect_retry_delay_ms() -> u64 {
     500
 }
 
-/// Built-in Open-Meteo (non-commercial) API profiles for [`crate::tools::weather`]. Override or extend via `fcp.toml` `[apis.*]`.
+/// Built-in Open-Meteo (non-commercial) API profiles for [`crate::tools::weather`]. Override or extend via `.fcp/config.toml` `[apis.*]`.
 pub fn default_open_meteo_apis() -> HashMap<String, ApiProfile> {
     let mut m = HashMap::new();
     m.insert(
@@ -256,6 +300,8 @@ impl Default for AppConfig {
             semantic_brain_connect_attempts: default_semantic_brain_connect_attempts(),
             semantic_brain_connect_retry_delay_ms: default_semantic_brain_connect_retry_delay_ms(),
             apis: default_builtin_apis(),
+            vault_watch: VaultWatchConfig::default(),
+            config_source_dir: PathBuf::new(),
         }
     }
 }
@@ -267,10 +313,14 @@ impl AppConfig {
         let _ = dotenvy::dotenv();
 
         let figment = Figment::from(figment::providers::Serialized::defaults(AppConfig::default()))
-            .merge(Toml::file("fcp.toml"))
+            .merge(Toml::file(crate::vault_layout::config_toml(std::path::Path::new("."))))
             .merge(Env::prefixed("FCP_"));
 
         let mut config: AppConfig = figment.extract().map_err(|e| crate::executive::error::FcpError::Config(e.to_string()))?;
+
+        config.config_source_dir = std::env::current_dir().map_err(|e| {
+            crate::executive::error::FcpError::Config(format!("Could not read current directory: {}", e))
+        })?;
 
         if cli.workspace != "default" {
             config.workspace = cli.workspace;
@@ -285,8 +335,21 @@ impl AppConfig {
         Ok(config)
     }
 
+    /// Physical directory for chat, ignition, tools, and `.fcp/` — always the process working directory
+    /// at [`AppConfig::load`] (i.e. `cd` into your vault, then run `eris chat`).
+    ///
+    /// [`Self::workspace`] and [`Self::vault_root`] do **not** form this path; they remain logical / legacy config only.
     pub fn active_vault(&self) -> PathBuf {
-        self.vault_root.join(&self.workspace)
+        self.config_source_dir.clone()
+    }
+
+    /// Absolute paths under `chat_workspace_root` for vault watch (e.g. `00_Core/Identity.md`).
+    pub fn resolved_vault_watch_file_paths(&self, chat_workspace_root: &std::path::Path) -> Vec<std::path::PathBuf> {
+        self.vault_watch
+            .paths
+            .iter()
+            .map(|rel| chat_workspace_root.join(rel))
+            .collect()
     }
 }
 
@@ -300,7 +363,8 @@ mod tests {
     #[test]
     fn test_config_hierarchy_and_dynamic_resolution() {
         figment::Jail::expect_with(|jail| {
-            jail.create_file("fcp.toml", r#"
+            jail.create_dir(".fcp")?;
+            jail.create_file(".fcp/config.toml", r#"
                 workspace = "toml_workspace"
                 vault_root = "/toml/vaults"
                 log_level = "warn"
@@ -409,6 +473,15 @@ mod tests {
         assert_eq!(parsed_config.qdrant_daemon.command, "qdrant");
         assert!(parsed_config.qdrant_daemon.args.is_empty());
         assert!(parsed_config.apis.is_empty());
+    }
+
+    #[test]
+    fn active_vault_is_always_config_source_dir() {
+        let mut c = AppConfig::default();
+        c.config_source_dir = PathBuf::from("/any/adam");
+        c.workspace = "something_else".into();
+        c.vault_root = PathBuf::from("./vaults/");
+        assert_eq!(c.active_vault(), PathBuf::from("/any/adam"));
     }
 
     #[test]

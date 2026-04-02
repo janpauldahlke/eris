@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::api::ApiHttpClient;
+use crate::util::ApiHttpClient;
 use crate::executive::error::{FcpError, Result};
 
 pub const PROFILE_GEOCODE: &str = "open_meteo_geocode";

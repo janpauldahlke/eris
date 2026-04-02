@@ -79,7 +79,7 @@ rationale = "Provide only one of task_id or description_match."
 "#,
     r#"descriptor_version = 1
 tool_name = "agenda:remind_at"
-short_description = "Create or update an agenda row and link it to a fire time in .fcp_alarms.json (task + alarm, not a generic clock label)."
+short_description = "Create or update an agenda row and link it to a fire time in .fcp/tools/alarms.json (task + alarm, not a generic clock label)."
 when_to_use = "Use when the user ties the reminder to their agenda/todo list: task_id or new description, plus minutes or hour:minute. After AGENDA_CONFIRM, snooze with same task_id. This is the only tool that writes both agenda and linked alarm."
 when_not_to_use = "Do not use for a generic timer or wall alarm with no agenda row (use clock:timer or clock:alarm). Do not use for listing or completing tasks alone; use agenda:list or agenda:complete."
 routing_hints = ["remind me about this agenda item", "todo on my list", "snooze this task", "alarm for queued task", "agenda task_id reminder", "in 10 minutes for this todo", "at 3pm for agenda item"]
@@ -316,7 +316,7 @@ rationale = "Tool takes no parameters."
     r#"descriptor_version = 1
 tool_name = "clock:timer"
 short_description = "Schedule a relative timer (in N minutes) with a free-text label — not tied to the agenda file."
-when_to_use = "Use for generic one-off pings: stretch, drink water, eye break — label only, no agenda row in .fcp_agenda.json."
+when_to_use = "Use for generic one-off pings: stretch, drink water, eye break — label only, no agenda row in .fcp/tools/agenda.json."
 when_not_to_use = "Do not use for wall-clock at 7am (use clock:alarm). Do not use to attach a reminder to a queued agenda task or to create an agenda-linked alarm (use agenda:remind_at with task_id or description + schedule)."
 routing_hints = ["in 30 minutes generic timer", "countdown", "timer with label only", "half an hour ping", "not my agenda list"]
 

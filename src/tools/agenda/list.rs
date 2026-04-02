@@ -23,7 +23,7 @@ impl Tool for AgendaListTool {
     fn parameters_schema(&self) -> schemars::schema::RootSchema { schemars::schema_for!(AgendaListArgs) }
 
     async fn execute(&self, _args: Value) -> Result<String> {
-        let agenda_path = self.workspace_root.join(".fcp_agenda.json");
+        let agenda_path = crate::vault_layout::agenda_json(&self.workspace_root);
         if !agenda_path.exists() {
             return Ok("No pending tasks.".to_string());
         }

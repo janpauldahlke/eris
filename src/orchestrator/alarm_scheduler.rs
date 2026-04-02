@@ -1,4 +1,4 @@
-//! Background alarm scheduler: fires due rows from `.fcp_alarms.json` and notifies the TUI via
+//! Background alarm scheduler: fires due rows from `.fcp/tools/alarms.json` and notifies the TUI via
 //! `try_send` only (never blocks the runtime).
 
 use std::path::PathBuf;
@@ -79,7 +79,7 @@ pub fn spawn_alarm_scheduler(
     cancel_token: CancellationToken,
 ) {
     tokio::spawn(async move {
-        let path = workspace_root.join(crate::tools::clock::FCP_ALARMS_FILE);
+        let path = crate::vault_layout::alarms_json(&workspace_root);
         loop {
             let alarms = match load_alarms(&path).await {
                 Ok(a) => a,

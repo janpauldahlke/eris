@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 
 use crate::executive::error::{FcpError, Result};
 use crate::tools::clock::{
-    load_alarms, save_alarms, AlarmRecord, FCP_ALARMS_FILE, MAX_LABEL_CHARS, MAX_TIMER_MINUTES,
+    load_alarms, save_alarms, AlarmRecord, MAX_LABEL_CHARS, MAX_TIMER_MINUTES,
 };
 use crate::tools::traits::Tool;
 
@@ -50,7 +50,7 @@ impl Tool for ClockTimerTool {
             )));
         }
 
-        let path = self.workspace_root.join(FCP_ALARMS_FILE);
+        let path = crate::vault_layout::alarms_json(&self.workspace_root);
         let mut alarms = load_alarms(&path).await?;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
