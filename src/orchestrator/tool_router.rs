@@ -126,6 +126,7 @@ impl ToolRouter {
             "memory:stage" => "stage memory with ttl, temporarily hold fact before explicit commit",
             "agenda:push" => "adding tasks, to-do list, remind me to, schedule, plan, add to agenda, new task, I need to",
             "agenda:list" => "show tasks, what is on my list, pending items, show agenda, my schedule, what do I have to do",
+            "agenda:remove" => "remove task, cancel agenda item, delete from list, drop task, never mind that reminder, scratch that task",
             "agenda:complete" => "finishing tasks, mark done, complete task, check off, task finished, I did it",
             "web:fetch" => "fetching URLs, web search, look up online, check website, browse internet, search the web, what is happening, news, look this up",
             "web:artifact_query" => "query fetched web artifact by artifact id, search fetched page snippets, retrieve specific sections from buffered webpage",

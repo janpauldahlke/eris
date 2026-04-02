@@ -37,7 +37,7 @@ rationale = "Tool does not require args."
 tool_name = "agenda:push"
 short_description = "Queue a background agenda task."
 when_to_use = "Use to create a new background task for later completion."
-when_not_to_use = "Do not use to read tasks or mark completion."
+when_not_to_use = "Do not use to read tasks, mark completion, remove, or cancel items; use agenda:list, agenda:complete, or agenda:remove."
 routing_hints = ["add task", "remind me", "todo", "queue task"]
 
 [[examples_good]]
@@ -49,6 +49,33 @@ rationale = "Creates a pending task."
 name = "missing_description"
 args = {}
 rationale = "description is required."
+"#,
+    r#"descriptor_version = 1
+tool_name = "agenda:remove"
+short_description = "Remove a pending agenda task without completion logging."
+when_to_use = "Use to cancel a queued task: pass task_id from agenda:list, or description_match with a substring of the real task text (must match exactly one task)."
+when_not_to_use = "Do not use agenda:push to cancel; do not use for finished-task logging (use agenda:complete)."
+routing_hints = ["remove task", "cancel agenda", "delete from list", "drop task", "never mind"]
+
+[[examples_good]]
+name = "remove_by_id"
+args = { task_id = "a03e" }
+rationale = "Exact id from agenda:list."
+
+[[examples_good]]
+name = "remove_by_substring"
+args = { description_match = "goldfish" }
+rationale = "Substring of the stored description; must be unique among pending tasks."
+
+[[examples_bad]]
+name = "meta_instruction_as_match"
+args = { description_match = "Remove fish task from agenda" }
+rationale = "Pass a substring of the task description, not meta-instructions."
+
+[[examples_bad]]
+name = "both_selectors"
+args = { task_id = "a03e", description_match = "foo" }
+rationale = "Provide only one of task_id or description_match."
 "#,
     r#"descriptor_version = 1
 tool_name = "memory:commit"

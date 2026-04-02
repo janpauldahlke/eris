@@ -68,4 +68,5 @@
 
 - [x] REFACTOR (S05): revert top-k tool usage approach, it is harmfull
 - [x] IMPROVEMENT (S0x): change context handlign to dynamic cts slider approach, condensatoi will be injected
-- [] IMPROVEMENT (S08TUI): tweak and improve UI, sync states in status as SSOT
+- [x] IMPROVEMENT (S08TUI): tweak and improve UI, sync states in status as SSOT
+- [x] feature (S06): add remove action to agenda tool

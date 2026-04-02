@@ -140,6 +140,9 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
             gatekeeper.register(Arc::new(crate::tools::agenda::AgendaCompleteTool {
                 workspace_root: workspace_root.clone(),
             }));
+            gatekeeper.register(Arc::new(crate::tools::agenda::AgendaRemoveTool {
+                workspace_root: workspace_root.clone(),
+            }));
             gatekeeper.register(Arc::new(crate::tools::web::WebFetchTool::new(
                 config.web_fetch_timeout_secs,
                 effective_web_fetch_max_bytes,
