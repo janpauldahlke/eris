@@ -73,3 +73,5 @@
 - [x] feature (S06_tool): linking agenda and reminder to trigger with content / DONE vs SNOOZE
 - [x] feature (S06_http_middleware): API tool below surface
 - [x] feature (S06_tool): weather:forecast surface tool
+- [x] feature (S06_tool): knowledge gather wiki tool
+- [x] DOCS adding TODO about new yield/sleep mode

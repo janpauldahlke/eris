@@ -712,6 +712,7 @@ dependencies = [
  "jsonschema",
  "moka",
  "ollama-rs",
+ "percent-encoding",
  "qdrant-client",
  "ratatui",
  "reqwest 0.12.28",

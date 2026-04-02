@@ -32,6 +32,7 @@ toml = "0.8"
 qdrant-client = "1.7.0"
 uuid = { version = "1.7.0", features = ["v4", "v5"] }
 url = "2.5"
+percent-encoding = "2.3"
 sysinfo = "0.38.4"
 sha2 = "0.10"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }

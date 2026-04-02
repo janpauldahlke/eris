@@ -137,6 +137,7 @@ impl ToolRouter {
             "clock:alarm" => "wake me at seven, alarm at wall clock time, 7am tomorrow, fixed o'clock time, not an agenda task reminder",
             "weather:current" => "weather now, temperature outside, is it raining, conditions today, current conditions, what's the weather like",
             "weather:forecast" => "weather forecast, hourly temperature, next days weather, will it rain tomorrow, upcoming weather",
+            "wiki:summary" => "wikipedia, encyclopedia, what is X, who was, summary of topic, general knowledge, what does wikipedia say, define concept, historical figure, science topic overview",
             _ => "",
         };
         if hints.is_empty() {

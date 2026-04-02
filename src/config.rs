@@ -193,6 +193,34 @@ pub fn default_open_meteo_apis() -> HashMap<String, ApiProfile> {
     m
 }
 
+/// English Wikipedia REST summary profile for [`crate::tools::wiki::WikiSummaryTool`]. Wikimedia requires a descriptive User-Agent.
+pub fn default_wikipedia_page_summary_api() -> HashMap<String, ApiProfile> {
+    let mut headers = HashMap::new();
+    headers.insert(
+        "User-Agent".into(),
+        "Eris-Agent/1.0 (Local autonomous system)".into(),
+    );
+    let mut m = HashMap::new();
+    m.insert(
+        "wikipedia_page_summary".into(),
+        ApiProfile {
+            enabled: true,
+            base_url: "https://en.wikipedia.org/api/rest_v1/page/summary/{title}".into(),
+            query: HashMap::new(),
+            headers,
+            max_response_bytes: Some(65_536),
+            stale_after_secs: None,
+        },
+    );
+    m
+}
+
+fn default_builtin_apis() -> HashMap<String, ApiProfile> {
+    let mut apis = default_open_meteo_apis();
+    apis.extend(default_wikipedia_page_summary_api());
+    apis
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -227,7 +255,7 @@ impl Default for AppConfig {
             require_semantic_brain: default_require_semantic_brain(),
             semantic_brain_connect_attempts: default_semantic_brain_connect_attempts(),
             semantic_brain_connect_retry_delay_ms: default_semantic_brain_connect_retry_delay_ms(),
-            apis: default_open_meteo_apis(),
+            apis: default_builtin_apis(),
         }
     }
 }
@@ -386,10 +414,13 @@ mod tests {
     #[test]
     fn default_config_includes_open_meteo_api_profiles() {
         let c = AppConfig::default();
-        assert_eq!(c.apis.len(), 4);
+        assert_eq!(c.apis.len(), 5);
         assert!(c.apis.contains_key("open_meteo_geocode"));
         assert!(c.apis.contains_key("open_meteo_geocode_cc"));
         assert!(c.apis.contains_key("open_meteo_forecast_current"));
         assert!(c.apis.contains_key("open_meteo_forecast_hourly"));
+        assert!(c.apis.contains_key("wikipedia_page_summary"));
+        let wiki = c.apis.get("wikipedia_page_summary").expect("wiki profile");
+        assert!(wiki.headers.contains_key("User-Agent"));
     }
 }

@@ -29,8 +29,8 @@ impl Gatekeeper {
     fn state_allows_tool(state: &AgentState, tool_name: &str) -> bool {
         match state {
             AgentState::Chat => !matches!(tool_name, "agenda:complete"),
-            AgentState::Reflect => matches!(tool_name, "memory:stage" | "memory:staged_list" | "memory:commit" | "memory:commit_all" | "memory:query" | "vault:read" | "vault:list" | "agenda:push" | "agenda:list" | "agenda:remove" | "agenda:remind_at" | "web:artifact_query" | "system:health" | "clock:now" | "clock:timer" | "clock:alarm" | "weather:current" | "weather:forecast"),
-            AgentState::Idle => matches!(tool_name, "memory:staged_list" | "memory:commit" | "memory:commit_all" | "memory:query" | "vault:read" | "vault:write" | "vault:list" | "agenda:list" | "agenda:complete" | "agenda:remove" | "agenda:remind_at" | "web:fetch" | "web:artifact_query" | "system:health" | "clock:now" | "clock:timer" | "clock:alarm" | "weather:current" | "weather:forecast"),
+            AgentState::Reflect => matches!(tool_name, "memory:stage" | "memory:staged_list" | "memory:commit" | "memory:commit_all" | "memory:query" | "vault:read" | "vault:list" | "agenda:push" | "agenda:list" | "agenda:remove" | "agenda:remind_at" | "web:artifact_query" | "system:health" | "clock:now" | "clock:timer" | "clock:alarm" | "weather:current" | "weather:forecast" | "wiki:summary"),
+            AgentState::Idle => matches!(tool_name, "memory:staged_list" | "memory:commit" | "memory:commit_all" | "memory:query" | "vault:read" | "vault:write" | "vault:list" | "agenda:list" | "agenda:complete" | "agenda:remove" | "agenda:remind_at" | "web:fetch" | "web:artifact_query" | "system:health" | "clock:now" | "clock:timer" | "clock:alarm" | "weather:current" | "weather:forecast" | "wiki:summary"),
             AgentState::Recover => true,
         }
     }
@@ -292,6 +292,7 @@ mod tests {
             "clock:alarm",
             "weather:current",
             "weather:forecast",
+            "wiki:summary",
         ];
 
         for tool in known_tools {

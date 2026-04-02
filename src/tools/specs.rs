@@ -386,4 +386,31 @@ name = "empty_city"
 args = { city = "" }
 rationale = "city must be non-empty."
 "#,
+    r#"descriptor_version = 1
+tool_name = "wiki:summary"
+short_description = "English Wikipedia lead summary by article title (REST page/summary)."
+when_to_use = "Use for encyclopedia-style facts: what/who is X, short overview from English Wikipedia. User names a topic, not a URL."
+when_not_to_use = "Do not use for pasted URLs or non-Wikipedia sites (use web:fetch). Do not use to search the user vault or long-term memory (use vault:read, vault:list, memory:query). Do not duplicate weather tools for place conditions."
+routing_hints = ["wikipedia", "encyclopedia", "what is", "who was", "summary of topic", "general knowledge", "define"]
+
+[[examples_good]]
+name = "planet"
+args = { title = "Earth" }
+rationale = "Article title resolves to a standard page."
+
+[[examples_good]]
+name = "disambiguation_style"
+args = { title = "Rust (programming language)" }
+rationale = "Parenthetical title is valid for Wikipedia."
+
+[[examples_bad]]
+name = "empty_title"
+args = { title = "" }
+rationale = "title must be non-empty."
+
+[[examples_bad]]
+name = "url_instead"
+args = { title = "https://en.wikipedia.org/wiki/Foo" }
+rationale = "User pasted a URL; use web:fetch instead."
+"#,
 ];

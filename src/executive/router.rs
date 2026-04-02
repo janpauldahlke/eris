@@ -184,6 +184,9 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                 api: api_http.clone(),
             }));
             gatekeeper.register(Arc::new(crate::tools::weather::WeatherForecastTool {
+                api: api_http.clone(),
+            }));
+            gatekeeper.register(Arc::new(crate::tools::wiki::WikiSummaryTool {
                 api: api_http,
             }));
 
