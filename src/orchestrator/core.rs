@@ -61,6 +61,8 @@ pub struct Orchestrator<E: LlmEngine> {
     pub turn_seq: u64,
     /// Shown in TUI Status while tools are pending; cleared when a final deck message is emitted or at `step` entry.
     pub activity_line: Option<String>,
+    /// Last `message_to_user` body sent to the TUI deck this `step()`; avoids duplicate bubbles when Task → Reflect replays the same line.
+    last_deck_message_body: Option<String>,
 }
 
 impl<E: LlmEngine> Orchestrator<E> {
@@ -307,6 +309,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             descriptor_registry,
             turn_seq: 0,
             activity_line: None,
+            last_deck_message_body: None,
         }
     }
 
@@ -329,6 +332,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         self.recovery_count = 0;
         self.tool_rounds = 0;
         self.activity_line = None;
+        self.last_deck_message_body = None;
         let mut web_tool_activity = false;
         tracing::info!(
             turn_seq,
@@ -723,6 +727,21 @@ impl<E: LlmEngine> Orchestrator<E> {
         };
 
         self.activity_line = None;
+        if self
+            .last_deck_message_body
+            .as_deref()
+            .is_some_and(|prev| prev == msg.as_str())
+        {
+            tracing::debug!(
+                event = "UI_SKIP_DUPLICATE_DECK_MESSAGE",
+                msg_len = msg.len(),
+                preview = %msg.chars().take(120).collect::<String>(),
+                "Skipping duplicate assistant deck message (same body as previous emit this step)"
+            );
+            self.broadcast_state().await;
+            return;
+        }
+        self.last_deck_message_body = Some(msg.clone());
         let agent_name = self.agent_name();
         tracing::info!(
             event = "UI_EMIT_INCOMING_MESSAGE",
