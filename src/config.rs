@@ -126,6 +126,9 @@ pub struct AppConfig {
     /// Optional per-tool overrides (merged on top of each tool’s `context_view_hint()`).
     #[serde(default)]
     pub optimize_context_tool_overrides: HashMap<String, ToolContextViewHint>,
+    /// When true, keep full JSON parameter schemas in the LLM view for tool definitions (larger prompt). When false and [`Self::optimize_context`] is true, [`crate::orchestrator::context_view::build_llm_view`] strips `parameters` in that block only; [`crate::orchestrator::core::Orchestrator::chat_stack`] stays full. Independently, the orchestrator forces full schemas for one recovery LLM pass after a Gatekeeper schema fault ([`crate::orchestrator::core::Orchestrator::force_full_tool_schemas_in_llm_view`]).
+    #[serde(default = "default_optimize_context_full_tool_schemas")]
+    pub optimize_context_full_tool_schemas: bool,
     /// Current working directory when [`AppConfig::load`] ran — this is the physical vault root for chat.
     #[serde(skip)]
     pub config_source_dir: PathBuf,
@@ -182,6 +185,10 @@ fn default_optimize_context_max_tool_snippet_chars() -> usize {
 
 fn default_optimize_context_assistant_compact() -> bool {
     true
+}
+
+fn default_optimize_context_full_tool_schemas() -> bool {
+    false
 }
 
 /// Built-in Open-Meteo (non-commercial) API profiles for [`crate::tools::weather`]. Override or extend via `.fcp/config.toml` `[apis.*]`.
@@ -330,6 +337,7 @@ impl Default for AppConfig {
             optimize_context_max_tool_snippet_chars: default_optimize_context_max_tool_snippet_chars(),
             optimize_context_assistant_compact: default_optimize_context_assistant_compact(),
             optimize_context_tool_overrides: HashMap::new(),
+            optimize_context_full_tool_schemas: default_optimize_context_full_tool_schemas(),
             config_source_dir: PathBuf::new(),
         }
     }

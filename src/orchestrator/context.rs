@@ -71,6 +71,13 @@ impl ContextAssembler {
         let tools_schema_string = serde_json::to_string_pretty(&allowed_tools)
             .unwrap_or_else(|_| "[]".to_string());
 
+        let tools_block = format!(
+            "{begin}\n{tools}\n{end}",
+            begin = crate::orchestrator::context_view::FCP_TOOL_DEFS_BEGIN,
+            tools = tools_schema_string,
+            end = crate::orchestrator::context_view::FCP_TOOL_DEFS_END,
+        );
+
         let system_prompt = format!(
             "{identity}\n\n\
             You are inside a strict agent loop. Reply with ONE valid JSON object only.\n\
@@ -128,7 +135,7 @@ impl ContextAssembler {
             - Everything else → stored in 10_Episodic/\n\
             The tags you provide at stage time determine where content is physically stored on disk.",
             identity = identity_content,
-            tools = tools_schema_string
+            tools = tools_block
         );
 
         Ok(system_prompt)
@@ -190,6 +197,8 @@ mod tests {
         assert!(assembled.contains("I am the test agent."));
         assert!(assembled.contains("Reply with ONE valid JSON object only"));
         assert!(assembled.contains("\"status\": \"Task|Reflect|Idle\""));
+        assert!(assembled.contains(crate::orchestrator::context_view::FCP_TOOL_DEFS_BEGIN));
+        assert!(assembled.contains(crate::orchestrator::context_view::FCP_TOOL_DEFS_END));
     }
 
     #[tokio::test]

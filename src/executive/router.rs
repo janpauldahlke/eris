@@ -357,6 +357,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                 enabled: config.optimize_context,
                 default_snippet_chars: config.optimize_context_max_tool_snippet_chars,
                 assistant_compact: config.optimize_context_assistant_compact,
+                full_tool_schemas_in_llm_view: config.optimize_context_full_tool_schemas,
                 hints: Arc::new(context_view_hints),
             };
 

@@ -9,12 +9,119 @@ use serde_json::Value;
 use crate::engine::Message;
 use crate::tools::ToolContextViewHint;
 
+/// Start delimiter for the JSON tool-definition array inside the assembled system prompt ([`crate::orchestrator::context::ContextAssembler::build_tool_prompt`]).
+pub const FCP_TOOL_DEFS_BEGIN: &str = "<<<FCP_TOOL_DEFS_JSON>>>";
+/// End delimiter for that JSON block (paired with [`FCP_TOOL_DEFS_BEGIN`]).
+pub const FCP_TOOL_DEFS_END: &str = "<<<END_FCP_TOOL_DEFS_JSON>>>";
+
+const FCP_TOOL_DEFS_DISCLOSURE: &str = "[FCP] Tool parameter JSON schemas are omitted below to save context; full schemas are enforced server-side. Use exact tool names and valid args; invalid calls are rejected.";
+
+const LOG_TOOL_NAMES_MAX_CHARS: usize = 2000;
+
+fn cap_log_string(s: &str, max_chars: usize) -> String {
+    let n = s.chars().count();
+    if n <= max_chars {
+        return s.to_string();
+    }
+    let take = max_chars.saturating_sub(20);
+    s.chars().take(take).collect::<String>() + "… [truncated]"
+}
+
+/// Metadata for [`fcp.context_view`] when tool definitions are slimmed for the LLM view.
+#[derive(Debug, Clone)]
+pub struct SlimToolDefsMeta {
+    pub tools_offered_count: usize,
+    pub tools_offered_names_for_log: String,
+}
+
+/// Strip `function.parameters` from each OpenAI-style tool entry and prepend disclosure + name list.
+/// Used only in the LLM-facing view when [`ContextViewSettings::full_tool_schemas_in_llm_view`] is false.
+pub fn slim_tool_definitions_inner(inner_json: &str) -> Result<(String, SlimToolDefsMeta), String> {
+    let v: Value = serde_json::from_str(inner_json.trim())
+        .map_err(|e| format!("tool defs JSON parse: {e}"))?;
+    let arr = v
+        .as_array()
+        .ok_or_else(|| "tool defs: expected JSON array".to_string())?;
+    let mut names: Vec<String> = Vec::new();
+    let mut slim: Vec<Value> = Vec::with_capacity(arr.len());
+    for item in arr {
+        let mut item = item.clone();
+        if let Some(n) = item
+            .get("function")
+            .and_then(|f| f.get("name"))
+            .and_then(|n| n.as_str())
+        {
+            names.push(n.to_string());
+        }
+        if let Some(func) = item.get_mut("function").and_then(|f| f.as_object_mut()) {
+            let _ = func.remove("parameters");
+        }
+        slim.push(item);
+    }
+    let pretty = serde_json::to_string_pretty(&slim)
+        .map_err(|e| format!("tool defs serialize: {e}"))?;
+    let count = names.len();
+    let names_joined = names.join(", ");
+    let names_for_log = cap_log_string(&names_joined, LOG_TOOL_NAMES_MAX_CHARS);
+    let mut out = String::with_capacity(
+        FCP_TOOL_DEFS_DISCLOSURE.len() + 64 + pretty.len() + names_joined.len(),
+    );
+    out.push_str(FCP_TOOL_DEFS_DISCLOSURE);
+    out.push_str("\n\n");
+    out.push_str(&format!("Tools in view ({count}): {names_joined}\n\n"));
+    out.push_str(&pretty);
+    Ok((
+        out,
+        SlimToolDefsMeta {
+            tools_offered_count: count,
+            tools_offered_names_for_log: names_for_log,
+        },
+    ))
+}
+
+fn try_slim_tool_definitions_in_system_content(content: &str) -> Option<(String, SlimToolDefsMeta)> {
+    if !content.contains(FCP_TOOL_DEFS_BEGIN) || !content.contains(FCP_TOOL_DEFS_END) {
+        return None;
+    }
+    let start = content.find(FCP_TOOL_DEFS_BEGIN)?;
+    let after_begin = start + FCP_TOOL_DEFS_BEGIN.len();
+    let tail = content.get(after_begin..)?;
+    let end_rel = tail.find(FCP_TOOL_DEFS_END)?;
+    let inner_end = after_begin + end_rel;
+    let inner = content.get(after_begin..inner_end)?;
+    let inner_trim = inner.trim();
+    match slim_tool_definitions_inner(inner_trim) {
+        Ok((slim_inner, meta)) => {
+            let mut new_content = String::with_capacity(content.len());
+            new_content.push_str(content.get(..start)?);
+            new_content.push_str(FCP_TOOL_DEFS_BEGIN);
+            new_content.push('\n');
+            new_content.push_str(&slim_inner);
+            new_content.push('\n');
+            new_content.push_str(FCP_TOOL_DEFS_END);
+            let after_end = inner_end + FCP_TOOL_DEFS_END.len();
+            new_content.push_str(content.get(after_end..).unwrap_or(""));
+            Some((new_content, meta))
+        }
+        Err(e) => {
+            tracing::warn!(
+                target: "fcp.context_view",
+                error = %e,
+                "slim tool definitions failed; keeping full block in LLM view"
+            );
+            None
+        }
+    }
+}
+
 /// Policy knobs for [`build_llm_view`], wired from [`crate::config::AppConfig`] at startup.
 #[derive(Debug, Clone)]
 pub struct ContextViewSettings {
     pub enabled: bool,
     pub default_snippet_chars: usize,
     pub assistant_compact: bool,
+    /// When false and [`Self::enabled`] is true, strip `parameters` from tool defs in the LLM view only.
+    pub full_tool_schemas_in_llm_view: bool,
     pub hints: Arc<HashMap<String, ToolContextViewHint>>,
 }
 
@@ -24,6 +131,7 @@ impl Default for ContextViewSettings {
             enabled: false,
             default_snippet_chars: 400,
             assistant_compact: true,
+            full_tool_schemas_in_llm_view: false,
             hints: Arc::new(HashMap::new()),
         }
     }
@@ -150,6 +258,32 @@ pub fn build_llm_view(messages: &[Message], settings: &ContextViewSettings) -> V
         }
 
         if m.role == "system"
+            && !settings.full_tool_schemas_in_llm_view
+            && let Some((new_content, meta)) = try_slim_tool_definitions_in_system_content(&m.content)
+        {
+            let before_len = m.content.len();
+            let after_len = new_content.len();
+            if new_content != m.content {
+                rewritten += 1;
+            }
+            tracing::info!(
+                target: "fcp.context_view",
+                tool_defs_view_mode = "slim",
+                tools_offered_count = meta.tools_offered_count,
+                tools_offered_names = %meta.tools_offered_names_for_log,
+                tool_defs_chars_before = before_len,
+                tool_defs_chars_after = after_len,
+                tool_defs_chars_saved = before_len.saturating_sub(after_len),
+                "tool definitions slimmed for LLM view"
+            );
+            out.push(Message {
+                role: m.role.clone(),
+                content: new_content,
+            });
+            continue;
+        }
+
+        if m.role == "system"
             && let Some((tool_name, body)) = try_parse_tool_success_line(&m.content)
         {
             let hint = hints
@@ -222,6 +356,7 @@ mod tests {
             enabled: true,
             default_snippet_chars: 100,
             assistant_compact: false,
+            full_tool_schemas_in_llm_view: false,
             hints: hint_map(&[("t:1", ToolContextViewHint::Default)]),
         };
         let v = build_llm_view(&m, &settings);
@@ -241,6 +376,7 @@ mod tests {
             enabled: true,
             default_snippet_chars: 10,
             assistant_compact: false,
+            full_tool_schemas_in_llm_view: false,
             hints: hint_map(&[("t:2", ToolContextViewHint::Full)]),
         };
         let v = build_llm_view(&m, &settings);
@@ -257,6 +393,7 @@ mod tests {
             enabled: true,
             default_snippet_chars: 400,
             assistant_compact: false,
+            full_tool_schemas_in_llm_view: false,
             hints: hint_map(&[("t:3", ToolContextViewHint::MarkerOnly)]),
         };
         let v = build_llm_view(&m, &settings);
@@ -274,6 +411,7 @@ mod tests {
             enabled: true,
             default_snippet_chars: 400,
             assistant_compact: true,
+            full_tool_schemas_in_llm_view: false,
             hints: Arc::new(HashMap::new()),
         };
         let v = build_llm_view(&m, &settings);
@@ -293,9 +431,71 @@ mod tests {
             enabled: true,
             default_snippet_chars: 400,
             assistant_compact: true,
+            full_tool_schemas_in_llm_view: false,
             hints: Arc::new(HashMap::new()),
         };
         let v = build_llm_view(&m, &settings);
         assert_eq!(v[0].content, "not json at all");
+    }
+
+    #[test]
+    fn slim_tool_definitions_inner_strips_parameters() {
+        let inner = r#"[{"type":"function","function":{"name":"vault:read","description":"read","parameters":{"type":"object","properties":{"path":{"type":"string"}}}}}]"#;
+        let (slim, meta) = slim_tool_definitions_inner(inner).expect("slim");
+        assert!(!slim.contains("\"parameters\""));
+        assert!(slim.contains("vault:read"));
+        assert!(slim.contains("[FCP] Tool parameter JSON schemas are omitted"));
+        assert_eq!(meta.tools_offered_count, 1);
+        assert!(meta.tools_offered_names_for_log.contains("vault:read"));
+    }
+
+    #[test]
+    fn build_llm_view_slims_delimited_tool_block() {
+        let json = r#"[{"type":"function","function":{"name":"t:x","description":"hi","parameters":{"type":"object"}}}]"#;
+        let full = format!(
+            "prefix\n{begin}\n{json}\n{end}\nsuffix",
+            begin = FCP_TOOL_DEFS_BEGIN,
+            json = json,
+            end = FCP_TOOL_DEFS_END,
+        );
+        let m = vec![Message {
+            role: "system".to_string(),
+            content: full,
+        }];
+        let settings = ContextViewSettings {
+            enabled: true,
+            default_snippet_chars: 400,
+            assistant_compact: false,
+            full_tool_schemas_in_llm_view: false,
+            hints: Arc::new(HashMap::new()),
+        };
+        let v = build_llm_view(&m, &settings);
+        assert!(!v[0].content.contains("\"parameters\""));
+        assert!(v[0].content.contains("t:x"));
+        assert!(v[0].content.contains("Tools in view (1):"));
+    }
+
+    #[test]
+    fn build_llm_view_respects_full_tool_schemas_flag() {
+        let json = r#"[{"type":"function","function":{"name":"t:x","description":"hi","parameters":{"type":"object"}}}]"#;
+        let full = format!(
+            "p\n{begin}\n{json}\n{end}\n",
+            begin = FCP_TOOL_DEFS_BEGIN,
+            json = json,
+            end = FCP_TOOL_DEFS_END,
+        );
+        let m = vec![Message {
+            role: "system".to_string(),
+            content: full,
+        }];
+        let settings = ContextViewSettings {
+            enabled: true,
+            default_snippet_chars: 400,
+            assistant_compact: false,
+            full_tool_schemas_in_llm_view: true,
+            hints: Arc::new(HashMap::new()),
+        };
+        let v = build_llm_view(&m, &settings);
+        assert!(v[0].content.contains("\"parameters\""));
     }
 }

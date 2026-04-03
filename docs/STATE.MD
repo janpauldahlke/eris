@@ -83,3 +83,4 @@
 - [x] fix (S06): remind me at tool, deterministic follow up complete on user interaction
 - [x] refactor (S00): align num_ctx usage across project, remove unused
 - [x] feature (S0x): ship optimize_context feature flag and aplly it for tool returns to thin out context_slider
+- [x]feature(S05): context diet for tool calls in context_slider winwdow

@@ -61,6 +61,9 @@ pub struct Orchestrator<E: LlmEngine> {
     pub descriptor_registry: Option<Arc<ToolDescriptorRegistry>>,
     /// LLM-only stack transform; stored [`Self::chat_stack`] is unchanged.
     pub context_view: ContextViewSettings,
+    /// When true, next [`build_llm_view`] uses full `parameters` in the tool-def block (overrides slim view).
+    /// Set after a Gatekeeper schema fault when [`ToolBatchDecision::RetryWithTargetedSchema`] runs; cleared at [`Self::step`] entry and after any successful tool execution in a batch that returns [`ToolBatchDecision::Continue`].
+    pub force_full_tool_schemas_in_llm_view: bool,
     /// Monotonic counter incremented once per `step()` entry (log correlation; no span across await in `spawn`).
     pub turn_seq: u64,
     /// Shown in TUI Status while tools are pending; cleared when a final deck message is emitted or at `step` entry.
@@ -449,10 +452,18 @@ impl<E: LlmEngine> Orchestrator<E> {
             descriptor_jit_max_chars,
             descriptor_registry,
             context_view,
+            force_full_tool_schemas_in_llm_view: false,
             turn_seq: 0,
             activity_line: None,
             last_deck_message_body: None,
         }
+    }
+
+    fn llm_view_settings(&self) -> ContextViewSettings {
+        let mut s = self.context_view.clone();
+        s.full_tool_schemas_in_llm_view =
+            s.full_tool_schemas_in_llm_view || self.force_full_tool_schemas_in_llm_view;
+        s
     }
 
     /// The main cognitive loop.
@@ -473,6 +484,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         let mut tool_ms_acc = 0u64;
         self.recovery_count = 0;
         self.tool_rounds = 0;
+        self.force_full_tool_schemas_in_llm_view = false;
         self.activity_line = None;
         self.last_deck_message_body = None;
         let mut web_tool_activity = false;
@@ -552,11 +564,19 @@ impl<E: LlmEngine> Orchestrator<E> {
 
             tracing::info!(chat_stack_len = self.chat_stack.len(), "Sending to LLM engine");
 
-            // 3. Engine Generation
+            // 3. Engine Generation (build view before select! so the interrupt branch can borrow `self.interrupt_rx`.)
+            let view_settings = self.llm_view_settings();
+            if self.force_full_tool_schemas_in_llm_view {
+                tracing::info!(
+                    target: "fcp.context_view",
+                    "full tool parameter schemas in LLM view (after schema fault; recovery pass)"
+                );
+            }
+            let view = build_llm_view(&self.chat_stack, &view_settings);
+
             let response_result = tokio::select! {
                 res = async {
                     let llm_started = Instant::now();
-                    let view = build_llm_view(&self.chat_stack, &self.context_view);
                     let out = self.engine.generate(&view, "", None).await;
                     llm_ms_acc = llm_ms_acc.saturating_add(llm_started.elapsed().as_millis() as u64);
                     out
@@ -1072,6 +1092,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         }
 
         if targeted_recovery_requested {
+            self.force_full_tool_schemas_in_llm_view = true;
             let selected = targeted_tools.iter().cloned().collect::<Vec<_>>();
             let msg = format!(
                 "[SYSTEM RECOVERY] Tool schema fault detected. Retrying with targeted schemas for: {:?}",
@@ -1088,6 +1109,10 @@ impl<E: LlmEngine> Orchestrator<E> {
         if let Some(reason) = recoverable_msg {
             let msg = format!("[SYSTEM OVERRIDE: FUCKUP DETECTED] Tool execution failed: {}", reason);
             return Ok(ToolBatchDecision::Recover { message: msg });
+        }
+
+        if executed_success_count > 0 {
+            self.force_full_tool_schemas_in_llm_view = false;
         }
 
         Ok(ToolBatchDecision::Continue)
