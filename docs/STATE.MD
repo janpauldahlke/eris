@@ -81,3 +81,4 @@
 03/04/2026
 
 - [x] fix (S06): remind me at tool, deterministic follow up complete on user interaction
+- [x] refactor (S00): align num_ctx usage across project, remove unused

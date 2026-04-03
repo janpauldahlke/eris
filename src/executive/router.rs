@@ -171,7 +171,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
             let mut gatekeeper = Gatekeeper::new();
             let (alarm_reschedule_tx, alarm_reschedule_rx) =
                 tokio::sync::mpsc::unbounded_channel::<()>();
-            let read_limit = (config.llm_context_window as f32 * config.vault_read_ratio) as usize;
+            let read_limit = (config.num_ctx as f32 * config.vault_read_ratio) as usize;
             let web_chunk_chars = read_limit.max(512);
             let web_preview_chars = (web_chunk_chars / 2).max(256);
             let effective_web_fetch_max_bytes = config

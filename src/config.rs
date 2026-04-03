@@ -88,7 +88,7 @@ pub struct AppConfig {
     pub idle_timeout_secs: u64,
     pub web_fetch_timeout_secs: u64,
     pub web_fetch_max_bytes: usize,
-    pub llm_context_window: usize,
+    /// Fraction of [`Self::num_ctx`] used to cap vault read and web chunk sizes (tool budgets; not the condensation trigger).
     pub vault_read_ratio: f32,
     pub tool_match_threshold: f32,
     #[serde(default = "default_tool_descriptor_jit_top_k")]
@@ -289,8 +289,7 @@ impl Default for AppConfig {
             idle_timeout_secs: 900,
             web_fetch_timeout_secs: 10,
             web_fetch_max_bytes: 20480,
-            llm_context_window: 16384,
-            vault_read_ratio: 0.25,
+            vault_read_ratio: 0.5,
             tool_match_threshold: 0.50,
             tool_descriptor_jit_top_k: 3,
             tool_descriptor_jit_max_chars: 6000,
@@ -434,7 +433,6 @@ mod tests {
             "idle_timeout_secs": 42,
             "web_fetch_timeout_secs": 15,
             "web_fetch_max_bytes": 10240,
-            "llm_context_window": 16384,
             "vault_read_ratio": 0.25,
             "tool_match_threshold": 0.50,
             "ollama_daemon": { "command": "ollama", "args": ["serve"] },
@@ -465,7 +463,6 @@ mod tests {
         assert_eq!(parsed_config.idle_timeout_secs, 42);
         assert_eq!(parsed_config.web_fetch_timeout_secs, 15);
         assert_eq!(parsed_config.web_fetch_max_bytes, 10240);
-        assert_eq!(parsed_config.llm_context_window, 16384);
         assert_eq!(parsed_config.vault_read_ratio, 0.25);
         assert_eq!(parsed_config.tool_match_threshold, 0.50);
         assert_eq!(parsed_config.ollama_daemon.command, "ollama");

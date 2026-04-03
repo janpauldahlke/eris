@@ -7,6 +7,10 @@ use tokio::time::timeout;
 use url::Url;
 
 use crate::config::{AppConfig, DaemonCommand};
+
+/// Ollama server default context length; must match [`AppConfig::num_ctx`] when Eris spawns `ollama serve`.
+/// See <https://docs.ollama.com/context-length>.
+const OLLAMA_CONTEXT_LENGTH_ENV: &str = "OLLAMA_CONTEXT_LENGTH";
 use crate::executive::error::{FcpError, Result};
 
 const READY_TIMEOUT_SECS: u64 = 20;
@@ -87,7 +91,7 @@ pub async fn ensure_peripherals_for_chat(config: &AppConfig) -> Result<Periphera
 
     if !ollama_reachable(&config.ollama_host).await {
         tracing::warn!("Ollama not reachable at startup, attempting Rust-managed launch");
-        let mut child = spawn_daemon("ollama", &config.ollama_daemon)?;
+        let mut child = spawn_ollama_daemon(config)?;
         if !wait_for_ollama(&config.ollama_host, READY_TIMEOUT_SECS).await {
             let _ = child.kill();
             let _ = child.wait();
@@ -222,6 +226,31 @@ fn qdrant_host_port(qdrant_url: &str) -> Result<u16> {
     let parsed = Url::parse(qdrant_url)
         .map_err(|e| FcpError::Config(format!("Invalid qdrant_url `{qdrant_url}`: {e}")))?;
     Ok(parsed.port().unwrap_or(6334))
+}
+
+fn spawn_ollama_daemon(config: &AppConfig) -> Result<Child> {
+    let daemon = &config.ollama_daemon;
+    let ctx = config.num_ctx.max(1);
+    tracing::info!(
+        num_ctx = ctx,
+        env = OLLAMA_CONTEXT_LENGTH_ENV,
+        command = %render_daemon_command(daemon),
+        "Spawning Ollama with server default context length from config"
+    );
+    Command::new(&daemon.command)
+        .args(&daemon.args)
+        .env(OLLAMA_CONTEXT_LENGTH_ENV, ctx.to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| {
+            FcpError::NetworkFault(format!(
+                "FATAL: failed to launch ollama daemon with `{}` ({}={}): {e}",
+                render_daemon_command(daemon),
+                OLLAMA_CONTEXT_LENGTH_ENV,
+                ctx
+            ))
+        })
 }
 
 fn spawn_daemon(name: &'static str, daemon: &DaemonCommand) -> Result<Child> {
