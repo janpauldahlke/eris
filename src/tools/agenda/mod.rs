@@ -12,6 +12,11 @@ pub use remind_at::AgendaRemindAtTool;
 
 use serde::{Deserialize, Serialize};
 
+/// Unique agenda row id (avoids second-granularity collisions from legacy hex ids).
+pub fn new_task_id() -> String {
+    format!("{:x}", uuid::Uuid::new_v4().as_u128())
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct AgendaTask {
     pub id: String,

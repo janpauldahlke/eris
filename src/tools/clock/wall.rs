@@ -30,7 +30,7 @@ impl Tool for ClockWallAlarmTool {
     }
 
     fn description(&self) -> &'static str {
-        "Standalone wall-clock alarm (hour:minute local + label); not tied to an agenda task. Use agenda:remind_at to link a reminder to a queued agenda item."
+        "Narrow: wall-clock alarm only (hour:minute local + label), no agenda row — for wake-style or alarm-only pings. For remind me to do X or tracked todos, use agenda:remind_at instead."
     }
 
     fn parameters_schema(&self) -> schemars::schema::RootSchema {

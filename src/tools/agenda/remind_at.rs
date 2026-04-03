@@ -135,19 +135,31 @@ impl Tool for AgendaRemindAtTool {
                     "description must be <= 200 chars".to_string(),
                 ));
             }
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|_| FcpError::Config("system clock before UNIX epoch".into()))?
-                .as_secs();
-            task_id = format!("{:04x}", timestamp % 0xFFFF);
-            label = d.clone();
-            tasks.push(AgendaTask {
-                id: task_id.clone(),
-                created_at: timestamp,
-                description: d,
-                status: "pending".to_string(),
-                alarm_id: None,
-            });
+            let normalized = d.trim();
+            if let Some(pos) = tasks.iter().position(|t| {
+                t.status == "pending" && t.description.trim().eq_ignore_ascii_case(normalized)
+            }) {
+                let old_alarm = tasks[pos].alarm_id.clone();
+                if let Some(ref aid) = old_alarm {
+                    let _ = remove_alarm_by_id(&alarms_path, aid).await?;
+                }
+                task_id = tasks[pos].id.clone();
+                label = tasks[pos].description.clone();
+            } else {
+                let timestamp = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|_| FcpError::Config("system clock before UNIX epoch".into()))?
+                    .as_secs();
+                task_id = super::new_task_id();
+                label = d.clone();
+                tasks.push(AgendaTask {
+                    id: task_id.clone(),
+                    created_at: timestamp,
+                    description: d,
+                    status: "pending".to_string(),
+                    alarm_id: None,
+                });
+            }
         }
 
         let fire_at = match wall {
@@ -273,6 +285,36 @@ mod tests {
         assert!(out.contains("SUCCESS"));
         let raw = fs::read_to_string(&alarms_path).await.unwrap();
         assert!(!raw.contains("old-alarm"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_remind_at_reuses_pending_same_description() -> Result<()> {
+        let dir = tempdir().unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        write_agenda(
+            dir.path(),
+            r#"[{"id":"only1","created_at":1,"description":"Feed fish","status":"pending","alarm_id":null}]"#,
+        )
+        .await?;
+        let tool = AgendaRemindAtTool {
+            workspace_root: dir.path().to_path_buf(),
+            reschedule_tx: tx,
+        };
+        let out = tool
+            .execute(serde_json::json!({
+                "description": "Feed fish",
+                "minutes": 10
+            }))
+            .await?;
+        assert!(out.contains("SUCCESS"));
+        let agenda = fs::read_to_string(crate::vault_layout::agenda_json(dir.path()))
+            .await
+            .unwrap();
+        let tasks: Vec<AgendaTask> = serde_json::from_str(&agenda).unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].id, "only1");
+        assert!(tasks[0].alarm_id.is_some());
         Ok(())
     }
 }

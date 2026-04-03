@@ -76,3 +76,8 @@
 - [x] feature (S06_tool): knowledge gather wiki tool
 - [x] DOCS adding TODO about new yield/sleep mode
 - [x] feature (S0x util): create fs dir and file watcher
+- [x] improve and unify path handling for workspace ignation
+
+03/04/2026
+
+- [x] fix (S06): remind me at tool, deterministic follow up complete on user interaction

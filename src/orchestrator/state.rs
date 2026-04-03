@@ -20,9 +20,14 @@ pub enum LoopAction {
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct ToolCall {
+    /// LLMs sometimes emit `action` instead of `name`.
+    #[serde(alias = "action")]
     pub name: String,
     #[serde(default = "default_empty_object")]
     pub args: serde_json::Value,
+    /// Top-level task id (e.g. agenda) folded into `args` during normalization.
+    #[serde(default)]
+    pub id: Option<String>,
 }
 
 fn default_empty_object() -> serde_json::Value {
@@ -42,6 +47,31 @@ pub struct LlmResponse {
 impl LlmResponse {
     pub fn has_explicit_status(&self) -> bool {
         self.status.is_some()
+    }
+
+    /// Maps common LLM drift (`action`, top-level `id`) into the tool schema expected by dispatch.
+    pub fn normalize_tool_calls(&mut self) {
+        for tc in &mut self.tool_calls {
+            if tc.name == "agenda:complete" {
+                if let Some(obj) = tc.args.as_object_mut() {
+                    if let Some(ref top) = tc.id {
+                        if !obj.contains_key("task_id") {
+                            obj.insert(
+                                "task_id".to_string(),
+                                serde_json::Value::String(top.clone()),
+                            );
+                        }
+                    }
+                    if !obj.contains_key("result_summary") {
+                        obj.insert(
+                            "result_summary".to_string(),
+                            serde_json::json!("User confirmed completion"),
+                        );
+                    }
+                }
+            }
+            tc.id = None;
+        }
     }
 
     /// If the LLM omitted `status`, infer it from the other fields:
@@ -157,5 +187,21 @@ mod tests {
         let response: LlmResponse = serde_json::from_str(json).unwrap();
         assert!(response.has_explicit_status());
         assert_eq!(response.status(), LoopAction::Task);
+    }
+
+    #[test]
+    fn test_tool_call_action_alias_and_agenda_complete_normalization() {
+        let json = r#"{
+            "thought": "mark done",
+            "status": "Task",
+            "tool_calls": [{"id": "4049", "action": "agenda:complete"}]
+        }"#;
+        let mut response: LlmResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.tool_calls[0].name, "agenda:complete");
+        response.normalize_tool_calls();
+        let args = response.tool_calls[0].args.as_object().unwrap();
+        assert_eq!(args.get("task_id").and_then(|v| v.as_str()), Some("4049"));
+        assert!(args.get("result_summary").is_some());
+        assert_eq!(response.tool_calls[0].id, None);
     }
 }

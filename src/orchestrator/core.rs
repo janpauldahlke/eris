@@ -12,6 +12,7 @@ use crate::orchestrator::r#loop::transition::{StateTransition, TransitionControl
 use crate::orchestrator::tool_router::ToolRouter;
 use crate::telemetry::routing_codes;
 use crate::ui::events::SYSTEM_ALARM_PREFIX;
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -134,6 +135,141 @@ impl<E: LlmEngine> Orchestrator<E> {
             .find(|m| m.role == "user")
             .map(|m| m.content.as_str())
             .unwrap_or("")
+    }
+
+    /// Injected by `router` for agenda-linked alarms; must stay in sync with that format.
+    const AGENDA_CONFIRM_TASK_PREFIX: &'static str = "[AGENDA_CONFIRM task_id=";
+
+    fn extract_agenda_confirm_task_id(content: &str) -> Option<&str> {
+        let idx = content.find(Self::AGENDA_CONFIRM_TASK_PREFIX)?;
+        let start = idx + Self::AGENDA_CONFIRM_TASK_PREFIX.len();
+        let rest = content.get(start..)?;
+        let end = rest
+            .find(|c: char| c.is_whitespace() || c == ']')
+            .unwrap_or(rest.len());
+        let id = rest.get(..end)?.trim();
+        if id.is_empty() {
+            None
+        } else {
+            Some(id)
+        }
+    }
+
+    /// Looks for a prior user line (excluding the latest user message) containing `AGENDA_CONFIRM`.
+    fn agenda_confirm_task_id_before_current_turn(stack: &[crate::engine::Message]) -> Option<String> {
+        let mut skipped_latest_user = false;
+        for m in stack.iter().rev() {
+            if m.role != "user" {
+                continue;
+            }
+            if !skipped_latest_user {
+                skipped_latest_user = true;
+                continue;
+            }
+            if let Some(id) = Self::extract_agenda_confirm_task_id(&m.content) {
+                return Some(id.to_string());
+            }
+        }
+        None
+    }
+
+    /// Short explicit acknowledgments after an agenda alarm (avoid "yes" alone — too ambiguous).
+    fn user_text_means_agenda_done_ack(s: &str) -> bool {
+        let t = s.trim();
+        if t.is_empty() {
+            return false;
+        }
+        let lower = t.to_lowercase();
+        let words: Vec<&str> = lower.split_whitespace().collect();
+        match words.as_slice() {
+            [w] => matches!(
+                *w,
+                "done" | "finished" | "complete" | "completed" | "yep" | "yeah" | "ok" | "okay"
+            ),
+            ["all", "done"] => true,
+            ["did", "it"] => true,
+            [a, "done"] if a.len() <= 4 => matches!(*a, "i'm" | "im" | "i"), // i'm done / i done (sloppy)
+            _ => {
+                lower == "task done"
+                    || lower.starts_with("done ")
+                    || lower.ends_with(" done")
+                    || lower == "marked done"
+            }
+        }
+    }
+
+    /// If the user clearly finished an agenda-linked alarm task, complete it without an LLM round trip.
+    async fn maybe_run_deterministic_agenda_complete(&mut self, step_start: Instant) -> Result<bool> {
+        let user_line = self.last_user_content();
+        if !Self::user_text_means_agenda_done_ack(user_line) {
+            return Ok(false);
+        }
+        let Some(task_id) = Self::agenda_confirm_task_id_before_current_turn(&self.chat_stack) else {
+            return Ok(false);
+        };
+
+        tracing::info!(
+            task_id = %task_id,
+            event = "orchestrator.agenda.deterministic_complete",
+            "Running agenda:complete from explicit done after AGENDA_CONFIRM"
+        );
+
+        let tool_started = Instant::now();
+        let args = json!({
+            "task_id": task_id,
+            "result_summary": "User confirmed completion (deterministic path after agenda alarm)."
+        });
+        let result = self
+            .gatekeeper
+            .execute_tool(&AgentState::Idle, "agenda:complete", args)
+            .await;
+        let tool_ms = tool_started.elapsed().as_millis() as u64;
+
+        match result {
+            Ok(tool_out) => {
+                let preview = tool_out.chars().take(200).collect::<String>();
+                tracing::info!(
+                    tool_ms,
+                    preview = %preview,
+                    event = "orchestrator.agenda.deterministic_complete_ok",
+                    "agenda:complete succeeded"
+                );
+                let deck_msg = format!(
+                    "Marked that agenda task as done. {}",
+                    tool_out.chars().take(120).collect::<String>()
+                );
+                let content = serde_json::to_string(&json!({
+                    "thought": "User confirmed task completion; agenda:complete executed deterministically.",
+                    "status": "Idle",
+                    "message_to_user": deck_msg,
+                    "tool_calls": []
+                }))
+                .map_err(|e| FcpError::EngineFault(e.to_string()))?;
+
+                self.emit_optional_user_message(&content).await;
+                self.chat_stack.push(crate::engine::Message {
+                    role: "assistant".to_string(),
+                    content,
+                });
+                self.state = AgentState::Idle;
+                self.recovery_count = 0;
+                self.tool_rounds = 0;
+                self.last_llm_ms = 0;
+                self.last_tool_ms = tool_ms;
+                self.last_total_ms = step_start.elapsed().as_millis() as u64;
+                self.last_turn_tools_enabled = false;
+                self.broadcast_state().await;
+                Ok(true)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    task_id = %task_id,
+                    "Deterministic agenda:complete failed; continuing with normal LLM step"
+                );
+                Ok(false)
+            }
+        }
     }
 
     async fn handle_empty_user_turn(&mut self) -> Result<()> {
@@ -354,6 +490,10 @@ impl<E: LlmEngine> Orchestrator<E> {
                 "no user text in last message; SY FNORD synthetic reply"
             );
             return self.handle_empty_user_turn().await;
+        }
+
+        if self.maybe_run_deterministic_agenda_complete(step_start).await? {
+            return Ok(());
         }
 
         // ── Pre-LLM semantic routing ─────────────────────────────────
@@ -991,28 +1131,29 @@ impl<E: LlmEngine> Orchestrator<E> {
 
         tracing::debug!(extracted_json_len = json_str.len(), "Parsing LLM JSON response");
 
-        let response: LlmResponse = match serde_json::from_str(json_str) {
+        let mut parsed: LlmResponse = match serde_json::from_str(json_str) {
             Ok(res) => res,
             Err(e) => {
                 tracing::warn!(error = %e, raw_snippet = &json_str[..json_str.len().min(200)], "Failed to parse LLM response as JSON");
                 return LoopDirective::RecoverFromFuckup(e.to_string());
             }
         };
+        parsed.normalize_tool_calls();
 
-        let explicit_status = response.has_explicit_status();
-        let status = response.status();
+        let explicit_status = parsed.has_explicit_status();
+        let status = parsed.status();
         tracing::info!(
             status = ?status,
             explicit_status,
-            thought_len = response.thought.len(),
-            tool_count = response.tool_calls.len(),
-            has_message = response.message_to_user.is_some(),
+            thought_len = parsed.thought.len(),
+            tool_count = parsed.tool_calls.len(),
+            has_message = parsed.message_to_user.is_some(),
             "Parsed LLM response"
         );
 
         if !explicit_status
-            && response.tool_calls.is_empty()
-            && response.message_to_user.as_ref().is_none_or(|m| m.trim().is_empty())
+            && parsed.tool_calls.is_empty()
+            && parsed.message_to_user.as_ref().is_none_or(|m| m.trim().is_empty())
         {
             return LoopDirective::RecoverFromFuckup(
                 "Missing required `status` and no actionable fields (`tool_calls`/`message_to_user`)".to_string(),
@@ -1020,20 +1161,20 @@ impl<E: LlmEngine> Orchestrator<E> {
         }
 
         // Tools take precedence: never drop tool_calls because of Idle/Reflect/Task mismatch.
-        if !response.tool_calls.is_empty() {
-            return LoopDirective::ExecuteTools(response.tool_calls);
+        if !parsed.tool_calls.is_empty() {
+            return LoopDirective::ExecuteTools(parsed.tool_calls);
         }
 
         let tool_mode_empty_action = self.last_turn_tools_enabled
-            && response.tool_calls.is_empty()
-            && response
+            && parsed.tool_calls.is_empty()
+            && parsed
                 .message_to_user
                 .as_ref()
                 .is_none_or(|m| m.trim().is_empty());
 
         match status {
             LoopAction::Reflect => {
-                if let Some(msg) = response.message_to_user
+                if let Some(msg) = parsed.message_to_user
                     && !msg.trim().is_empty()
                 {
                     return LoopDirective::HaltAndAwaitInput(Some(msg));
@@ -1047,11 +1188,18 @@ impl<E: LlmEngine> Orchestrator<E> {
                 self.state = AgentState::Chat;
                 LoopDirective::ShiftToReflection
             }
-            LoopAction::Idle => match response.message_to_user {
+            LoopAction::Idle => match parsed.message_to_user {
                 Some(msg) if !msg.trim().is_empty() => LoopDirective::HaltAndAwaitInput(Some(msg)),
-                _ => LoopDirective::RecoverFromFuckup(
-                    "Idle status requires non-empty message_to_user".to_string(),
-                ),
+                _ => {
+                    let thought = parsed.thought.trim();
+                    if !thought.is_empty() {
+                        LoopDirective::HaltAndAwaitInput(Some(thought.to_string()))
+                    } else {
+                        LoopDirective::RecoverFromFuckup(
+                            "Idle status requires non-empty message_to_user (or non-empty thought as fallback)".to_string(),
+                        )
+                    }
+                }
             },
             LoopAction::Task => {
                 if tool_mode_empty_action {
@@ -1781,5 +1929,45 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(calls.load(Ordering::SeqCst), 3, "expected one extra LLM round to produce a user-facing reply after duplicate-only suppression");
         assert_eq!(orchestrator.state, AgentState::Idle);
+    }
+
+    #[test]
+    fn test_extract_agenda_confirm_task_id() {
+        let s = "noise\n[AGENDA_CONFIRM task_id=abc-xyz alarm_id=u late_sec=0]";
+        assert_eq!(
+            Orchestrator::<MockEngine>::extract_agenda_confirm_task_id(s),
+            Some("abc-xyz")
+        );
+        assert_eq!(Orchestrator::<MockEngine>::extract_agenda_confirm_task_id("no tag"), None);
+    }
+
+    #[test]
+    fn test_agenda_confirm_task_id_before_current_turn_skips_latest_user() {
+        let stack = vec![
+            Message {
+                role: "user".to_string(),
+                content: "[AGENDA_CONFIRM task_id=too-old alarm_id=a late_sec=0]".to_string(),
+            },
+            Message {
+                role: "user".to_string(),
+                content: "prefix [AGENDA_CONFIRM task_id=expected-id alarm_id=b late_sec=1] tail".to_string(),
+            },
+            Message {
+                role: "user".to_string(),
+                content: "done".to_string(),
+            },
+        ];
+        assert_eq!(
+            Orchestrator::<MockEngine>::agenda_confirm_task_id_before_current_turn(&stack),
+            Some("expected-id".to_string())
+        );
+    }
+
+    #[test]
+    fn test_user_text_means_agenda_done_ack() {
+        assert!(Orchestrator::<MockEngine>::user_text_means_agenda_done_ack("done"));
+        assert!(Orchestrator::<MockEngine>::user_text_means_agenda_done_ack("  FINISHED  "));
+        assert!(Orchestrator::<MockEngine>::user_text_means_agenda_done_ack("all done"));
+        assert!(!Orchestrator::<MockEngine>::user_text_means_agenda_done_ack("tell me a story"));
     }
 }

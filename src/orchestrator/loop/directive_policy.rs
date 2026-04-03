@@ -30,6 +30,7 @@ mod tests {
         let tools = vec![ToolCall {
             name: "memory:stage".to_string(),
             args: serde_json::json!({}),
+            id: None,
         }];
         let transition = decide_transition_from_directive(LoopDirective::ExecuteTools(tools));
         assert!(matches!(transition, StateTransition::ExecuteTools(_)));

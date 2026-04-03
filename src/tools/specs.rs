@@ -79,10 +79,10 @@ rationale = "Provide only one of task_id or description_match."
 "#,
     r#"descriptor_version = 1
 tool_name = "agenda:remind_at"
-short_description = "Create or update an agenda row and link it to a fire time in .fcp/tools/alarms.json (task + alarm, not a generic clock label)."
-when_to_use = "Use when the user ties the reminder to their agenda/todo list: task_id or new description, plus minutes or hour:minute. After AGENDA_CONFIRM, snooze with same task_id. This is the only tool that writes both agenda and linked alarm."
-when_not_to_use = "Do not use for a generic timer or wall alarm with no agenda row (use clock:timer or clock:alarm). Do not use for listing or completing tasks alone; use agenda:list or agenda:complete."
-routing_hints = ["remind me about this agenda item", "todo on my list", "snooze this task", "alarm for queued task", "agenda task_id reminder", "in 10 minutes for this todo", "at 3pm for agenda item"]
+short_description = "Create or update an agenda row and link it to a fire time in .fcp/tools/alarms.json (task + alarm). Default for user reminders, including wall time (e.g. remind me at 3pm to call X)."
+when_to_use = "Use when the user ties the reminder to a todo or new description: task_id or new description, plus minutes or hour:minute. After AGENDA_CONFIRM, snooze with same task_id. This is the only tool that writes both agenda and linked alarm. Prefer this over clock:alarm for phrasing like remind me at, remind me in, remind me about, or anything that is a task/errand to track."
+when_not_to_use = "Do not use for a generic relative timer with no task meaning (use clock:timer). Do not use for a wake-only or alarm-clock-only ping with no todo (use clock:alarm). Do not use for listing or completing tasks alone; use agenda:list or agenda:complete."
+routing_hints = ["remind me at", "remind me in", "remind me about", "remind me tomorrow", "remember to", "do not forget", "nudge me at", "ping me at", "todo reminder", "snooze this task", "alarm for my task", "in 10 minutes for this", "at 3pm for this", "schedule this reminder", "on my agenda", "on my todo list", "task_id reminder", "agenda item"]
 
 [[examples_good]]
 name = "relative_minutes"
@@ -332,10 +332,10 @@ rationale = "minutes must be positive."
 "#,
     r#"descriptor_version = 1
 tool_name = "clock:alarm"
-short_description = "Schedule a wall-clock alarm at hour:minute local (24h) — standalone, not tied to an agenda row."
-when_to_use = "Use for wake at 7:00, alarm at 14:30 — fixed local time, label only, no agenda linkage."
-when_not_to_use = "Do not use for in N minutes (use clock:timer). Do not use to schedule a reminder for a specific agenda task id (use agenda:remind_at)."
-routing_hints = ["at 7am wake", "alarm at o'clock", "tomorrow morning fixed time", "wall clock reminder without agenda task"]
+short_description = "Wall-clock alarm at hour:minute local (24h) with a label only — no agenda row. Narrow use: wake-style or alarm-only pings, not tracked todos."
+when_to_use = "Use only when the user wants a fixed local time alarm without a todo to track or complete: wake up, alarm clock, short bell, no list item. Not for remind me to do X."
+when_not_to_use = "Do not use for remind me to errands, tasks, or anything that belongs on the agenda — use agenda:remind_at. Do not use for in N minutes (use clock:timer). Do not use for a specific agenda task_id (use agenda:remind_at)."
+routing_hints = ["wake me up", "wake alarm", "alarm clock only", "no task just alarm", "not on my todo list", "just wake me", "standalone alarm no agenda", "no errand to track", "bell only"]
 
 [[examples_good]]
 name = "morning"

@@ -81,7 +81,8 @@ impl ContextAssembler {
               \"status\": \"Task|Reflect|Idle\",\n\
               \"message_to_user\": \"optional plain-language assistant reply\",\n\
               \"tool_calls\": [{{\"name\": \"tool:name\", \"args\": {{}} }}]\n\
-            }}\n\n\
+            }}\n\
+            Use keys `name` and `args` in each tool call; `action` is accepted as an alias for `name`.\n\n\
             Status rules (follow exactly):\n\
             1) Reflect: when calling one or more tools this turn. tool_calls MUST be non-empty.\n\
             2) Task: internal continuation or planning with NO tools this turn. tool_calls MUST be [].\n\

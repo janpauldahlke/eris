@@ -42,7 +42,7 @@ impl Tool for AgendaPushTool {
         }
 
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-        let id = format!("{:04x}", timestamp % 0xFFFF);
+        let id = super::new_task_id();
 
         tasks.push(AgendaTask {
             id: id.clone(),
