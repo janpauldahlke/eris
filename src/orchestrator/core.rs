@@ -4,6 +4,9 @@ use crate::tools::Gatekeeper;
 use crate::tools::ToolDescriptorRegistry;
 use crate::memory::ephemeral::EphemeralMemory;
 use crate::orchestrator::state::{AgentState, LoopDirective, LlmResponse, LoopAction, ToolIntentStatus, ToolIntentTicket};
+use crate::orchestrator::post_tool_guidance::{
+    recover_override_message_for_tool_failure, POST_TOOL_USER_REPLY_GUIDANCE,
+};
 use crate::orchestrator::context::ContextAssembler;
 use crate::orchestrator::context_view::{build_llm_view, ContextViewSettings};
 use crate::orchestrator::r#loop::directive_policy::decide_transition_from_directive;
@@ -1107,12 +1110,21 @@ impl<E: LlmEngine> Orchestrator<E> {
         }
 
         if let Some(reason) = recoverable_msg {
-            let msg = format!("[SYSTEM OVERRIDE: FUCKUP DETECTED] Tool execution failed: {}", reason);
+            let msg = recover_override_message_for_tool_failure(&reason);
             return Ok(ToolBatchDecision::Recover { message: msg });
         }
 
         if executed_success_count > 0 {
             self.force_full_tool_schemas_in_llm_view = false;
+            self.chat_stack.push(crate::engine::Message {
+                role: "system".to_string(),
+                content: POST_TOOL_USER_REPLY_GUIDANCE.to_string(),
+            });
+            tracing::debug!(
+                target: "fcp.context_view",
+                event = "post_tool_user_reply_guidance_injected",
+                "Post-tool guidance appended after successful tool batch"
+            );
         }
 
         Ok(ToolBatchDecision::Continue)

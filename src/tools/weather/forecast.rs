@@ -31,7 +31,7 @@ impl Tool for WeatherForecastTool {
     }
 
     fn description(&self) -> &'static str {
-        "Hourly temperature forecast for a place: geocodes the city, then returns Open-Meteo `hourly` time series (several days, configurable in API profile). Pass `country_code` if the city name is ambiguous."
+        "Multi-hour weather forecast for a place: geocodes the city, then returns Open-Meteo `hourly` time series (several days, configurable in API profile). The assistant should always discuss temperature trends; when the payload includes precipitation, rain probability, or cloud/sun-related series, incorporate those. Pass `country_code` if the city name is ambiguous."
     }
 
     fn parameters_schema(&self) -> schemars::schema::RootSchema {

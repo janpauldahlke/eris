@@ -115,9 +115,8 @@ impl TuiApp {
                         TuiEvent::IncomingMessage(msg) => {
                             let before_len = self.chat_stack.len();
                             self.chat_stack.push(msg);
-                            // Always snap to newest assistant reply for now.
-                            self.chat_follow_latest = true;
-                            self.chat_scroll = u16::MAX;
+                            // Only follow when the user was already following (at bottom); do not
+                            // yank readers who scrolled up.
                             tracing::info!(
                                 event = "UI_RECV_INCOMING_MESSAGE",
                                 before_len,
@@ -187,6 +186,7 @@ impl TuiApp {
                     }
 
                     self.chat_stack.push(format!("You: {}", trimmed));
+                    self.chat_follow_latest = true;
                     let normalized = trimmed.to_lowercase();
                     let now = Instant::now();
                     let queued = self
@@ -220,11 +220,9 @@ impl TuiApp {
             }
             KeyCode::Char(c) => {
                 self.input.push(c);
-                self.command_deck_follow_latest = true;
             }
             KeyCode::Backspace => {
                 self.input.pop();
-                self.command_deck_follow_latest = true;
             }
             KeyCode::Tab => {
                 self.active_pane = match self.active_pane {

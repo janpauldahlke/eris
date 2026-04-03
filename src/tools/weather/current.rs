@@ -31,7 +31,7 @@ impl Tool for WeatherCurrentTool {
     }
 
     fn description(&self) -> &'static str {
-        "Current weather at a place: geocodes the city, then returns Open-Meteo instant (`current`) variables as JSON (temperature, weather_code, humidity). Pass `country_code` if the city name is ambiguous."
+        "Current weather at a place: geocodes the city, then returns Open-Meteo `current` fields as JSON. The assistant should always mention temperature; when the payload includes precipitation/rain or sun-related fields (e.g. cloud cover, radiation, sunshine), summarize those too. Pass `country_code` if the city name is ambiguous."
     }
 
     fn parameters_schema(&self) -> schemars::schema::RootSchema {

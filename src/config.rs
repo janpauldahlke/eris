@@ -237,7 +237,8 @@ pub fn default_open_meteo_apis() -> HashMap<String, ApiProfile> {
                 ("longitude".into(), "{lon}".into()),
                 (
                     "current".into(),
-                    "temperature_2m,weather_code,relative_humidity_2m".into(),
+                    "temperature_2m,weather_code,relative_humidity_2m,precipitation,cloud_cover"
+                        .into(),
                 ),
                 ("timezone".into(), "auto".into()),
             ]
@@ -256,7 +257,10 @@ pub fn default_open_meteo_apis() -> HashMap<String, ApiProfile> {
             query: [
                 ("latitude".into(), "{lat}".into()),
                 ("longitude".into(), "{lon}".into()),
-                ("hourly".into(), "temperature_2m".into()),
+                (
+                    "hourly".into(),
+                    "temperature_2m,precipitation,cloud_cover".into(),
+                ),
                 ("forecast_days".into(), "3".into()),
                 ("timezone".into(), "auto".into()),
             ]

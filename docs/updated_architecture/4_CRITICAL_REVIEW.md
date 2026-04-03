@@ -2,12 +2,6 @@
 
 This document provides a pragmatic, no-fluff review of the Eris architecture, highlighting mistakes, critical flaws, and areas for improvement.
 
-## 4. Brutal Context Condensation
-
-**The Flaw:** When the token count exceeds the `condensation_threshold`, `execute_condensation` requests a JSON summary of the entire conversation and *completely replaces* the `chat_stack` with that single summary message.
-**The Impact:** The agent immediately suffers severe amnesia regarding specific conversational nuances, formatting instructions, or recent precise data.
-**Improvement:** Implement a sliding window or a rolling summary. Retain the most recent `N` messages untouched while only summarizing the older history.
-
 ## 5. Vulnerability to Vector DB Outages
 
 **The Flaw:** The `SemanticBrain` attempts to connect to Qdrant with retries. If it fails, it returns `None`. However, tools like `web:fetch` and `web:artifact_query` are heavily integrated with Qdrant for semantic chunking of web pages.

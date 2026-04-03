@@ -223,7 +223,9 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                 max_snippet_chars: (web_chunk_chars / 3).clamp(300, 900),
                 max_total_chars: (web_chunk_chars / 2).clamp(1000, 2500),
             }));
-            gatekeeper.register(Arc::new(crate::tools::system::SystemHealthTool));
+            gatekeeper.register(Arc::new(crate::tools::system::SystemHealthTool {
+                config: config.clone(),
+            }));
 
             gatekeeper.register(Arc::new(crate::tools::clock::ClockNowTool));
             gatekeeper.register(Arc::new(crate::tools::clock::ClockTimerTool {
@@ -701,7 +703,9 @@ mod tests {
         };
 
         let mut gatekeeper = Gatekeeper::new();
-        gatekeeper.register(Arc::new(SystemHealthTool));
+        gatekeeper.register(Arc::new(SystemHealthTool {
+            config: test_config(),
+        }));
         let ephemeral = Arc::new(EphemeralMemory::new("relay_ws".to_string()));
         let dir = tempfile::tempdir().expect("tempdir");
         let vault_root = dir.path();

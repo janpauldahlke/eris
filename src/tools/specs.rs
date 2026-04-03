@@ -1,3 +1,9 @@
+//! Embedded TOML descriptors for **JIT tool routing**: `when_to_use`, examples, hints—not runtime output schemas.
+//!
+//! **User-facing wording** after tools (`message_to_user` in Idle) is enforced by orchestrator injects:
+//! success path [`crate::orchestrator::post_tool_guidance::POST_TOOL_USER_REPLY_GUIDANCE`], tool-failure recover
+//! [`crate::orchestrator::post_tool_guidance::POST_TOOL_FAILURE_TRUST_GUIDANCE`], so we do not repeat that in every descriptor block.
+
 pub const DESCRIPTOR_TOMLS: &[&str] = &[
     r#"descriptor_version = 1
 tool_name = "agenda:complete"
@@ -196,10 +202,10 @@ rationale = "Expected include_content_preview."
 "#,
     r#"descriptor_version = 1
 tool_name = "system:health"
-short_description = "Return system CPU/RAM/disk and ollama status diagnostics."
-when_to_use = "Use when user asks for runtime health or diagnostics."
+short_description = "Structured JSON: FCP Ollama host and chat/embed models, CPU and RAM, plus ollama ps; follow report_hint when summarizing."
+when_to_use = "Use when the user asks for runtime health or diagnostics. Always summarize Ollama (URL + models), CPU usage, and RAM from the tool JSON."
 when_not_to_use = "Do not use for vault or memory operations."
-routing_hints = ["health check", "system status", "cpu usage", "diagnostics"]
+routing_hints = ["health check", "system status", "cpu usage", "memory usage", "ollama status", "diagnostics"]
 
 [[examples_good]]
 name = "health"
@@ -350,9 +356,9 @@ rationale = "hour must be 0-23."
     r#"descriptor_version = 1
 tool_name = "weather:current"
 short_description = "Current weather (instant variables) for a city via Open-Meteo geocoding + forecast."
-when_to_use = "Use when the user wants present conditions: temperature, weather code, humidity at a named place. Use city name; add country_code if the name is ambiguous (e.g. Springfield)."
+when_to_use = "Use when the user wants present conditions at a named place: temperature, and when returned by the API also precipitation/rain and cloud or sun-related fields. Use city name; add country_code if the name is ambiguous (e.g. Springfield)."
 when_not_to_use = "Do not use for multi-day hourly series; use weather:forecast. Do not use for arbitrary URLs."
-routing_hints = ["weather now", "temperature outside", "is it raining", "current conditions", "humidity today"]
+routing_hints = ["weather now", "temperature outside", "is it raining", "rainfall", "cloudy or sunny", "current conditions", "humidity today"]
 
 [[examples_good]]
 name = "city"
@@ -371,10 +377,10 @@ rationale = "city must be non-empty."
 "#,
     r#"descriptor_version = 1
 tool_name = "weather:forecast"
-short_description = "Hourly temperature forecast for a city (several days) via Open-Meteo."
-when_to_use = "Use when the user wants upcoming hours/days of temperature (or a time series), not only instant conditions."
+short_description = "Hourly weather forecast for a city (several days) via Open-Meteo: temperature plus precipitation and cloud cover when available."
+when_to_use = "Use when the user wants upcoming hours/days: temperature trends, and when the tool returns them also rain/precipitation and cloud or sun-related patterns, not only instant conditions."
 when_not_to_use = "Do not use for only current conditions; use weather:current. Do not use for arbitrary URLs."
-routing_hints = ["weather forecast", "hourly temperature", "next days weather", "will it rain tomorrow"]
+routing_hints = ["weather forecast", "hourly temperature", "next days weather", "will it rain tomorrow", "rainfall outlook", "sunny or cloudy week"]
 
 [[examples_good]]
 name = "forecast_city"

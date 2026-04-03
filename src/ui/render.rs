@@ -22,24 +22,48 @@ fn truncate_status_line(s: &str, max_chars: usize) -> String {
     out
 }
 
-fn push_multiline(
+/// Word-wrap chat text to `width` display cells so scroll math matches the Paragraph (no widget wrap).
+fn push_multiline_wrapped(
     chat_lines: &mut Vec<Line>,
     prefix: Option<(String, Style)>,
     content: &str,
     style: Style,
+    width: usize,
 ) {
+    if width == 0 {
+        return;
+    }
+
     let mut lines = content.lines();
     if let Some(first) = lines.next() {
         if let Some((label, label_style)) = prefix.clone() {
-            chat_lines.push(Line::from(vec![
-                Span::styled(label, label_style),
-                Span::styled(first.to_string(), style),
-            ]));
+            let prefix_len = label.chars().count();
+            let avail = width.saturating_sub(prefix_len).max(1);
+            let first_wrapped = wrap_input_lines(first, avail);
+            let mut first_iter = first_wrapped.into_iter();
+            if let Some(first_part) = first_iter.next() {
+                chat_lines.push(Line::from(vec![
+                    Span::styled(label, label_style),
+                    Span::styled(first_part, style),
+                ]));
+            }
+            for part in first_iter {
+                chat_lines.push(Line::from(Span::styled(part, style)));
+            }
+            for line in lines {
+                for part in wrap_input_lines(line, width) {
+                    chat_lines.push(Line::from(Span::styled(part, style)));
+                }
+            }
         } else {
-            chat_lines.push(Line::from(Span::styled(first.to_string(), style)));
-        }
-        for line in lines {
-            chat_lines.push(Line::from(Span::styled(line.to_string(), style)));
+            for part in wrap_input_lines(first, width) {
+                chat_lines.push(Line::from(Span::styled(part, style)));
+            }
+            for line in lines {
+                for part in wrap_input_lines(line, width) {
+                    chat_lines.push(Line::from(Span::styled(part, style)));
+                }
+            }
         }
     } else if let Some((label, label_style)) = prefix {
         chat_lines.push(Line::from(vec![Span::styled(label, label_style)]));
@@ -135,11 +159,13 @@ pub fn draw(f: &mut Frame, app: &TuiApp, llm_tokens: &LlmTokenSnapshot) {
     let star_idx = (app.tick_count as usize / 2) % stars.len();
     let title = format!(" ERIS Console {} ", stars[star_idx]);
 
+    let chat_inner_width = chunks[0].width.saturating_sub(2) as usize;
+
     // ── Chat viewport (full width) ───────────────────────────────
     let mut chat_lines: Vec<Line> = Vec::new();
     for msg in &app.chat_stack {
         if let Some(rest) = msg.strip_prefix("You: ") {
-            push_multiline(
+            push_multiline_wrapped(
                 &mut chat_lines,
                 Some((
                     "You: ".to_string(),
@@ -147,11 +173,12 @@ pub fn draw(f: &mut Frame, app: &TuiApp, llm_tokens: &LlmTokenSnapshot) {
                 )),
                 rest,
                 Style::default().fg(Color::Rgb(214, 223, 255)),
+                chat_inner_width,
             );
         } else if msg.starts_with('[') && msg.contains("]: ") {
             let split_idx = msg.find("]: ").unwrap_or(0);
             let (name_part, rest_part) = msg.split_at(split_idx + 3);
-            push_multiline(
+            push_multiline_wrapped(
                 &mut chat_lines,
                 Some((
                     name_part.to_string(),
@@ -159,13 +186,15 @@ pub fn draw(f: &mut Frame, app: &TuiApp, llm_tokens: &LlmTokenSnapshot) {
                 )),
                 rest_part.trim_start(),
                 Style::default().fg(Color::Rgb(245, 248, 255)),
+                chat_inner_width,
             );
         } else {
-            push_multiline(
+            push_multiline_wrapped(
                 &mut chat_lines,
                 None,
                 msg,
                 Style::default().fg(Color::Rgb(180, 186, 212)),
+                chat_inner_width,
             );
         }
         chat_lines.push(Line::default());
@@ -194,7 +223,6 @@ pub fn draw(f: &mut Frame, app: &TuiApp, llm_tokens: &LlmTokenSnapshot) {
             .borders(Borders::ALL)
             .border_style(get_border_style(ActivePane::Main))
             .title(title))
-        .wrap(Wrap { trim: true })
         .scroll((chat_scroll, 0));
     f.render_widget(chat, chunks[0]);
 
@@ -318,12 +346,19 @@ pub fn draw(f: &mut Frame, app: &TuiApp, llm_tokens: &LlmTokenSnapshot) {
     let inner_height = input_chunk.height.saturating_sub(2) as usize;
     let wrapped_lines = wrap_input_lines(app.input.as_str(), inner_width);
     let max_input_scroll = wrapped_lines.len().saturating_sub(inner_height) as u16;
-    let input_scroll = if app.command_deck_follow_latest {
+    let mut input_scroll = if app.command_deck_follow_latest {
         max_input_scroll
     } else {
         app.command_deck_scroll.min(max_input_scroll)
     };
     let cursor_line_idx = wrapped_lines.len().saturating_sub(1);
+    if inner_height > 0 && max_input_scroll > 0 {
+        let min_scroll_for_cursor =
+            cursor_line_idx.saturating_sub(inner_height.saturating_sub(1)) as u16;
+        if input_scroll < min_scroll_for_cursor {
+            input_scroll = min_scroll_for_cursor.min(max_input_scroll);
+        }
+    }
     let cursor_col = wrapped_lines
         .last()
         .map(|line| line.chars().count() as u16)
@@ -347,8 +382,7 @@ pub fn draw(f: &mut Frame, app: &TuiApp, llm_tokens: &LlmTokenSnapshot) {
                     Style::default().fg(Color::Rgb(100, 110, 140)).add_modifier(Modifier::BOLD),
                 ),
             ])))
-        .scroll((input_scroll, 0))
-        .wrap(Wrap { trim: false });
+        .scroll((input_scroll, 0));
     f.render_widget(input, chunks[2]);
 
     f.set_cursor(input_chunk.x + cursor_col + 1, input_chunk.y + visible_cursor_row + 1);

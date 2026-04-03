@@ -1,16 +1,23 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sysinfo::{Disks, System};
 
+use crate::config::AppConfig;
 use crate::executive::error::Result;
 use crate::tools::traits::Tool;
 
 #[derive(Deserialize, JsonSchema)]
 pub struct SystemHealthArgs {}
 
-pub struct SystemHealthTool;
+pub struct SystemHealthTool {
+    pub config: Arc<AppConfig>,
+}
+
+const REPORT_HINT: &str = "When answering the user, always cover in order: (1) `fcp`: Ollama URL and chat + embed models; (2) `ollama.cli_ps`: whether the CLI ran and summarize stdout or error; (3) `cpu.usage_pct` and load averages; (4) `memory` used vs total and `used_pct`. Optionally mention `host` and `disks` if relevant.";
 
 #[async_trait]
 impl Tool for SystemHealthTool {
@@ -19,7 +26,7 @@ impl Tool for SystemHealthTool {
     }
 
     fn description(&self) -> &'static str {
-        "Returns CPU, RAM, disk, OS metadata, and ollama ps status as JSON."
+        "Structured host diagnostics JSON with stable sections: `report_hint` (how to summarize), `fcp` (configured Ollama host and models), `cpu`, `memory`, `ollama` (`ollama ps`), plus `host` and `disks`. Follow `report_hint` so answers consistently mention Ollama, models, CPU, and RAM."
     }
 
     fn parameters_schema(&self) -> schemars::schema::RootSchema {
@@ -27,10 +34,18 @@ impl Tool for SystemHealthTool {
     }
 
     async fn execute(&self, _args: Value) -> Result<String> {
-        // Gather metrics in a blocking task to avoid stalling the async runtime.
-        let health = tokio::task::spawn_blocking(|| {
+        let cfg = self.config.clone();
+        let health = tokio::task::spawn_blocking(move || {
             let mut system = System::new_all();
             system.refresh_all();
+
+            let total_mem = system.total_memory();
+            let used_mem = system.used_memory();
+            let used_pct = if total_mem > 0 {
+                (used_mem as f64 / total_mem as f64) * 100.0
+            } else {
+                0.0
+            };
 
             let disks = Disks::new_with_refreshed_list();
             let disk_entries = disks
@@ -50,7 +65,7 @@ impl Tool for SystemHealthTool {
                 })
                 .collect::<Vec<Value>>();
 
-            let ollama = match std::process::Command::new("ollama").arg("ps").output() {
+            let ollama_cli = match std::process::Command::new("ollama").arg("ps").output() {
                 Ok(output) => {
                     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -70,26 +85,40 @@ impl Tool for SystemHealthTool {
             };
 
             let load = System::load_average();
+            // Key order preserved (serde_json preserve_order): snippet truncation keeps the hint and core metrics first.
             json!({
-                "system": {
+                "report_hint": REPORT_HINT,
+                "fcp": {
+                    "ollama_host": cfg.ollama_host.as_str(),
+                    "chat_model": cfg.model_name.as_str(),
+                    "embed_model": cfg.embed_model_name.as_str(),
+                },
+                "cpu": {
+                    "usage_pct": system.global_cpu_usage(),
+                    "logical_cpus": system.cpus().len(),
+                    "load_avg_one": load.one,
+                    "load_avg_five": load.five,
+                    "load_avg_fifteen": load.fifteen,
+                },
+                "memory": {
+                    "total_bytes": total_mem,
+                    "used_bytes": used_mem,
+                    "available_bytes": system.available_memory(),
+                    "used_pct": used_pct,
+                    "swap_total_bytes": system.total_swap(),
+                    "swap_used_bytes": system.used_swap(),
+                },
+                "ollama": {
+                    "cli_ps": ollama_cli,
+                },
+                "host": {
                     "os_name": System::name(),
                     "os_version": System::os_version(),
                     "kernel_version": System::kernel_version(),
                     "host_name": System::host_name(),
                     "uptime_secs": System::uptime(),
-                    "cpu_usage_pct": system.global_cpu_usage(),
-                    "logical_cpus": system.cpus().len(),
-                    "load_avg_one": load.one,
-                    "load_avg_five": load.five,
-                    "load_avg_fifteen": load.fifteen,
-                    "memory_total_bytes": system.total_memory(),
-                    "memory_used_bytes": system.used_memory(),
-                    "memory_available_bytes": system.available_memory(),
-                    "swap_total_bytes": system.total_swap(),
-                    "swap_used_bytes": system.used_swap(),
                 },
                 "disks": disk_entries,
-                "ollama_ps": ollama
             })
             .to_string()
         })
@@ -106,14 +135,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_system_health_execution() {
-        let tool = SystemHealthTool;
+        let tool = SystemHealthTool {
+            config: Arc::new(AppConfig::default()),
+        };
         let args = serde_json::json!({});
 
         let result = tool.execute(args).await.expect("system health tool should succeed");
         let parsed: serde_json::Value = serde_json::from_str(&result).expect("result should be valid JSON");
 
-        assert!(parsed.get("system").is_some());
+        assert!(parsed.get("report_hint").is_some());
+        assert!(parsed.get("fcp").is_some());
+        assert!(parsed.get("fcp").and_then(|x| x.get("chat_model")).is_some());
+        assert!(parsed.get("cpu").and_then(|x| x.get("usage_pct")).is_some());
+        assert!(parsed.get("memory").and_then(|x| x.get("used_pct")).is_some());
+        assert!(parsed.get("ollama").is_some());
+        assert!(parsed.get("host").is_some());
         assert!(parsed.get("disks").is_some());
-        assert!(parsed.get("ollama_ps").is_some());
     }
 }
