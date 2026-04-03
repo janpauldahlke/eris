@@ -2,29 +2,6 @@
 
 This document provides a pragmatic, no-fluff review of the Eris architecture, highlighting mistakes, critical flaws, and areas for improvement.
 
-## 1. Deadlock Prevention vs. Actor Model Implementation
-
-**The Rule:** *"Do not share mutable state across threads using `Arc<Mutex<T>>`. Threads must communicate strictly through `tokio::sync::mpsc` message passing (as defined in the TUI/Orchestrator architecture)."*
-
-**The Reality:** The architecture is a hybrid, not a pure Actor model. While the TUI does strictly use `mpsc` for state broadcasts and user actions, the core memory structures (`EphemeralMemory` and `Gatekeeper`) are shared across boundaries using `Arc`. `EphemeralMemory` relies on `moka::future::Cache` which internally handles concurrency without explicitly exposing a `Mutex`, but it remains shared memory state. 
-**Improvement:** If strict actor isolation is truly desired, `EphemeralMemory` should run in its own spawned task and process commands via `mpsc::Receiver<MemoryCommand>`. Currently, passing `Arc<EphemeralMemory>` to multiple tools violates the spirit of the rule, even if it avoids a literal `Mutex`.
-
-## 2. Unnecessary Latency in Semantic Routing
-
-**The Flaw:** On *every single turn* (unless bypassed by the short-input guard), the `ToolRouter` makes an HTTP call to Ollama to generate an embedding for the user's input to calculate cosine similarity.
-**The Impact:** This introduces a minimum latency floor of 50-200ms (depending on the embedding model) before the actual generation even starts, just to decide which tool schemas to inject.
-**Improvement:** 
-- Cache common intent embeddings locally.
-- Use a lightweight, in-process Rust embedding crate (e.g., `candle` or `ort` with a tiny ONNX model) rather than relying on the heavier `ollama-rs` HTTP interface for simple semantic routing.
-
-## 3. O(N) Boot-Time Vault Ingestion
-
-**The Flaw:** `ingest_vault` synchronously reads, parses, and sends HTTP embedding requests for *every* non-empty markdown file in specific subdirectories upon startup.
-**The Impact:** As the vault grows to thousands of files, Eris will experience catastrophic boot delays.
-**Improvement:** 
-- Decouple ingestion into an asynchronous background task that runs *after* the TUI has loaded.
-- Implement a local hash-state cache (e.g., tracking file modification times or SHA hashes) to only embed and upsert files that have changed since the last boot.
-
 ## 4. Brutal Context Condensation
 
 **The Flaw:** When the token count exceeds the `condensation_threshold`, `execute_condensation` requests a JSON summary of the entire conversation and *completely replaces* the `chat_stack` with that single summary message.
