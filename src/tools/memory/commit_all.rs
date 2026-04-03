@@ -98,7 +98,17 @@ impl Tool for MemoryCommitAllTool {
                 continue;
             }
 
-            if let Err(e) = self.semantic.upsert(&entry.data, entry.tags.clone()).await {
+            let vault_key = path
+                .strip_prefix(&self.workspace_root)
+                .ok()
+                .and_then(|p| p.to_str())
+                .map(|s| s.replace('\\', "/"));
+
+            if let Err(e) = self
+                .semantic
+                .upsert(&entry.data, entry.tags.clone(), vault_key)
+                .await
+            {
                 tracing::warn!(staged_id = %entry.staged_id, error = %e, "Vault write succeeded but semantic indexing failed");
                 indexing_failed.push(entry.staged_id.clone());
                 continue;

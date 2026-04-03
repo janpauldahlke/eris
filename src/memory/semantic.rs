@@ -1,5 +1,6 @@
 use crate::executive::error::{FcpError, Result};
 use crate::config::AppConfig;
+use crate::ingest::truncate_char_boundary;
 use crate::memory::ephemeral::is_web_artifact_staging;
 use std::sync::Arc;
 use qdrant_client::Qdrant;
@@ -23,6 +24,33 @@ pub struct MemorySearchOutcome {
     /// True when a filtered search returned zero hits but an unfiltered search with the same vector returned hits.
     pub used_fallback: bool,
     pub attempted_filter_tag: Option<String>,
+    /// True when [`MemoryQueryOptions::vault_path_prefix`] matched no points; a broader search without prefix was used.
+    pub used_vault_prefix_fallback: bool,
+    pub attempted_vault_prefix: Option<String>,
+}
+
+/// Tunable knobs for [`SemanticBrain::search_memory_query`].
+#[derive(Debug, Clone, Copy)]
+pub struct MemoryQueryOptions<'a> {
+    /// Max points after ranking (clamped by the tool using config).
+    pub top_k: u64,
+    pub filter_tag: Option<&'a str>,
+    /// Only include points whose `vault_key` payload starts with this prefix (e.g. `30_Persons/`).
+    pub vault_path_prefix: Option<&'a str>,
+    pub min_score: Option<f32>,
+    pub max_total_chars: usize,
+    /// From [`crate::config::AppConfig::memory_query_oversample_cap`].
+    pub qdrant_oversample_cap: u64,
+    pub qdrant_oversample_multiplier: u64,
+    pub qdrant_oversample_min: u64,
+}
+
+/// One vector hit before formatting for the LLM.
+#[derive(Debug, Clone)]
+pub struct MemoryHit {
+    pub score: f32,
+    pub text: String,
+    pub vault_key: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -131,13 +159,16 @@ impl SemanticBrain {
             .ok_or_else(|| FcpError::EmbeddingFault("Embedding model returned no vectors".to_string()))
     }
 
-    pub async fn upsert(&self, text: &str, tags: Vec<String>) -> Result<()> {
+    /// `vault_key` should be a stable path-like id (e.g. `40_User/note.md` or `committed:<uuid>`). When `None`, uses `committed:<point_id>`.
+    pub async fn upsert(&self, text: &str, tags: Vec<String>, vault_key: Option<String>) -> Result<()> {
         let embedding = self.generate_embedding(text).await?;
         let id = uuid::Uuid::new_v4().to_string();
+        let vk = vault_key.unwrap_or_else(|| format!("committed:{id}"));
 
         let mut payload: HashMap<String, serde_json::Value> = HashMap::new();
         payload.insert("text".to_string(), serde_json::json!(text));
         payload.insert("tags".to_string(), serde_json::json!(tags));
+        payload.insert("vault_key".to_string(), serde_json::json!(vk));
 
         let point = PointStruct::new(id, embedding, payload);
 
@@ -159,6 +190,10 @@ impl SemanticBrain {
         let mut payload: HashMap<String, serde_json::Value> = HashMap::new();
         payload.insert("text".to_string(), serde_json::json!(text));
         payload.insert("tags".to_string(), serde_json::json!(tags));
+        payload.insert(
+            "vault_key".to_string(),
+            serde_json::json!(vault_relative_key.to_string()),
+        );
 
         let point = PointStruct::new(point_id, embedding, payload);
 
@@ -344,34 +379,96 @@ impl SemanticBrain {
 
     /// One query embedding, then Qdrant search with optional tag filter; if the filter yields no
     /// hits, repeats search with the **same** vector without a filter (no second Ollama call).
+    /// Optional `vault_path_prefix` post-filters on `vault_key` with oversampled retrieval.
     pub async fn search_memory_query(
         &self,
         query: &str,
-        limit: u64,
-        filter_tag: Option<&str>,
+        options: MemoryQueryOptions<'_>,
     ) -> Result<MemorySearchOutcome> {
         let embedding = self.generate_embedding(query).await?;
-        let trimmed_filter = filter_tag.map(str::trim).filter(|t| !t.is_empty());
+        let trimmed_tag = options.filter_tag.map(str::trim).filter(|t| !t.is_empty());
+        let trimmed_prefix = options.vault_path_prefix.map(str::trim).filter(|t| !t.is_empty());
+
+        let qdrant_limit = qdrant_oversample_limit(
+            options.top_k,
+            trimmed_prefix.is_some(),
+            options.qdrant_oversample_cap,
+            options.qdrant_oversample_multiplier,
+            options.qdrant_oversample_min,
+        );
+
+        tracing::debug!(
+            top_k = options.top_k,
+            qdrant_limit,
+            has_tag = trimmed_tag.is_some(),
+            has_prefix = trimmed_prefix.is_some(),
+            min_score = ?options.min_score,
+            max_total_chars = options.max_total_chars,
+            "memory:query search_memory_query"
+        );
+
+        let top_k = (options.top_k as usize).max(1);
 
         let mut markdown = self
-            .search_points_markdown(&embedding, limit, trimmed_filter)
+            .run_memory_query_pipeline(
+                &embedding,
+                qdrant_limit,
+                trimmed_tag,
+                trimmed_prefix,
+                options.min_score,
+                top_k,
+                options.max_total_chars,
+            )
             .await?;
+
         let mut used_fallback = false;
         let mut attempted_filter_tag: Option<String> = None;
+        let mut used_vault_prefix_fallback = false;
+        let mut attempted_vault_prefix: Option<String> = None;
 
-        if let Some(tag) = trimmed_filter {
-            if markdown.trim().is_empty() {
-                attempted_filter_tag = Some(tag.to_string());
-                let unfiltered = self.search_points_markdown(&embedding, limit, None).await?;
-                if !unfiltered.trim().is_empty() {
-                    markdown = unfiltered;
-                    used_fallback = true;
-                    tracing::info!(
-                        query = %query,
-                        attempted_tag = %tag,
-                        "memory:query used global search after tag filter returned no hits"
-                    );
-                }
+        if markdown.trim().is_empty() && trimmed_tag.is_some() {
+            attempted_filter_tag = trimmed_tag.map(|s| s.to_string());
+            markdown = self
+                .run_memory_query_pipeline(
+                    &embedding,
+                    qdrant_limit,
+                    None,
+                    trimmed_prefix,
+                    options.min_score,
+                    top_k,
+                    options.max_total_chars,
+                )
+                .await?;
+            if !markdown.trim().is_empty() {
+                used_fallback = true;
+                tracing::info!(
+                    query = %query,
+                    attempted_tag = ?attempted_filter_tag,
+                    "memory:query used global search after tag filter returned no hits"
+                );
+            }
+        }
+
+        if markdown.trim().is_empty() && trimmed_prefix.is_some() {
+            attempted_vault_prefix = trimmed_prefix.map(|s| s.to_string());
+            markdown = self
+                .run_memory_query_pipeline(
+                    &embedding,
+                    qdrant_limit,
+                    trimmed_tag,
+                    None,
+                    options.min_score,
+                    top_k,
+                    options.max_total_chars,
+                )
+                .await?;
+            if !markdown.trim().is_empty() {
+                used_vault_prefix_fallback = true;
+                tracing::info!(
+                    query = %query,
+                    attempted_prefix = ?attempted_vault_prefix,
+                    "memory:query used search without vault_path_prefix after prefix matched no hits"
+                );
             }
         }
 
@@ -383,15 +480,40 @@ impl SemanticBrain {
             } else {
                 None
             },
+            used_vault_prefix_fallback,
+            attempted_vault_prefix: if used_vault_prefix_fallback {
+                attempted_vault_prefix
+            } else {
+                None
+            },
         })
     }
 
-    async fn search_points_markdown(
+    async fn run_memory_query_pipeline(
+        &self,
+        embedding: &[f32],
+        qdrant_limit: u64,
+        qdrant_tag: Option<&str>,
+        vault_prefix: Option<&str>,
+        min_score: Option<f32>,
+        top_k: usize,
+        max_total_chars: usize,
+    ) -> Result<String> {
+        let mut hits = self
+            .search_points_hits(embedding, qdrant_limit, qdrant_tag)
+            .await?;
+        hits = filter_hits_min_score(hits, min_score);
+        hits = filter_hits_vault_prefix(hits, vault_prefix);
+        hits = sort_and_limit_hits(hits, top_k);
+        Ok(format_memory_hits_markdown(&hits, max_total_chars))
+    }
+
+    async fn search_points_hits(
         &self,
         embedding: &[f32],
         limit: u64,
         filter_tag: Option<&str>,
-    ) -> Result<String> {
+    ) -> Result<Vec<MemoryHit>> {
         let mut builder =
             SearchPointsBuilder::new(&self.config.qdrant_collection, embedding.to_vec(), limit)
                 .with_payload(true);
@@ -409,17 +531,101 @@ impl SemanticBrain {
             .await
             .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
 
-        let mut markdown = String::new();
+        let mut out = Vec::new();
         for point in search_result.result {
+            let score = point.score;
             let payload = point.payload;
-            if let Some(text_val) = payload.get("text")
-                && let Some(qdrant_client::qdrant::value::Kind::StringValue(text)) = &text_val.kind {
-                    markdown.push_str(&format!("- {}\n", text));
+            let Some(text_val) = payload.get("text") else {
+                continue;
+            };
+            let Some(qdrant_client::qdrant::value::Kind::StringValue(text)) = &text_val.kind else {
+                continue;
+            };
+            let vault_key = payload.get("vault_key").and_then(|v| {
+                if let Some(qdrant_client::qdrant::value::Kind::StringValue(s)) = &v.kind {
+                    Some(s.clone())
+                } else {
+                    None
                 }
+            });
+            out.push(MemoryHit {
+                score,
+                text: text.clone(),
+                vault_key,
+            });
         }
 
-        Ok(markdown)
+        Ok(out)
     }
+}
+
+fn qdrant_oversample_limit(
+    top_k: u64,
+    with_prefix: bool,
+    cap: u64,
+    multiplier: u64,
+    min_when_prefix: u64,
+) -> u64 {
+    let k = top_k.max(1);
+    let mult = multiplier.max(1);
+    let floor = min_when_prefix.max(1);
+    let cap = cap.max(1);
+    let base = if with_prefix {
+        k.saturating_mul(mult).max(floor)
+    } else {
+        k
+    };
+    base.min(cap)
+}
+
+fn filter_hits_min_score(hits: Vec<MemoryHit>, min_score: Option<f32>) -> Vec<MemoryHit> {
+    let Some(th) = min_score else {
+        return hits;
+    };
+    hits.into_iter().filter(|h| h.score >= th).collect()
+}
+
+fn filter_hits_vault_prefix(hits: Vec<MemoryHit>, prefix: Option<&str>) -> Vec<MemoryHit> {
+    let Some(p) = prefix.map(str::trim).filter(|s| !s.is_empty()) else {
+        return hits;
+    };
+    hits.into_iter()
+        .filter(|h| {
+            h.vault_key
+                .as_deref()
+                .map(|k| k.starts_with(p))
+                .unwrap_or(false)
+        })
+        .collect()
+}
+
+fn sort_and_limit_hits(mut hits: Vec<MemoryHit>, top_k: usize) -> Vec<MemoryHit> {
+    hits.sort_by(|a, b| b.score.total_cmp(&a.score));
+    hits.truncate(top_k.max(1));
+    hits
+}
+
+/// Formats ranked hits for the tool; trims to fit `max_total_chars`.
+pub fn format_memory_hits_markdown(hits: &[MemoryHit], max_total_chars: usize) -> String {
+    let mut out = String::new();
+    let mut used = 0usize;
+    for h in hits {
+        let header = format!("- (score: {:.4}) ", h.score);
+        if used >= max_total_chars {
+            break;
+        }
+        let remain = max_total_chars.saturating_sub(used);
+        // Reserve one byte for newline so total line length never exceeds `remain`.
+        if remain <= header.len().saturating_add(1) {
+            break;
+        }
+        let body_budget = remain - header.len() - 1;
+        let body = truncate_char_boundary(&h.text, body_budget);
+        let line = format!("{header}{body}\n");
+        used += line.len();
+        out.push_str(&line);
+    }
+    out
 }
 
 /// Text stored in Qdrant and embedded for vault-sourced memory (title/tags header + body).
@@ -571,6 +777,78 @@ Hello there."#;
         let a = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, key.as_bytes());
         let b = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, key.as_bytes());
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_format_memory_hits_markdown_respects_budget() {
+        let hits = vec![
+            MemoryHit {
+                score: 0.9,
+                text: "a".repeat(100),
+                vault_key: Some("40_User/x.md".to_string()),
+            },
+            MemoryHit {
+                score: 0.8,
+                text: "b".repeat(100),
+                vault_key: Some("40_User/y.md".to_string()),
+            },
+        ];
+        let md = format_memory_hits_markdown(&hits, 80);
+        assert!(md.len() <= 80, "got {} bytes", md.len());
+        assert!(md.contains("score:"));
+    }
+
+    #[test]
+    fn test_filter_hits_min_score() {
+        let hits = vec![
+            MemoryHit {
+                score: 0.5,
+                text: "a".into(),
+                vault_key: None,
+            },
+            MemoryHit {
+                score: 0.9,
+                text: "b".into(),
+                vault_key: None,
+            },
+        ];
+        let out = filter_hits_min_score(hits, Some(0.7));
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].text, "b");
+    }
+
+    #[test]
+    fn test_filter_hits_vault_prefix() {
+        let hits = vec![
+            MemoryHit {
+                score: 0.9,
+                text: "a".into(),
+                vault_key: Some("30_Persons/a.md".to_string()),
+            },
+            MemoryHit {
+                score: 0.8,
+                text: "b".into(),
+                vault_key: Some("40_User/b.md".to_string()),
+            },
+            MemoryHit {
+                score: 0.7,
+                text: "c".into(),
+                vault_key: None,
+            },
+        ];
+        let out = filter_hits_vault_prefix(hits, Some("30_Persons/"));
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].text, "a");
+    }
+
+    #[test]
+    fn test_qdrant_oversample_limit() {
+        let cap = 200;
+        let mult = 25;
+        let floor = 30;
+        assert_eq!(qdrant_oversample_limit(5, false, cap, mult, floor), 5);
+        assert_eq!(qdrant_oversample_limit(5, true, cap, mult, floor), 125);
+        assert_eq!(qdrant_oversample_limit(100, true, cap, mult, floor), 200);
     }
 }
 

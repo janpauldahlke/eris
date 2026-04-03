@@ -272,6 +272,13 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                 gatekeeper.register(Arc::new(crate::tools::memory::MemoryQueryTool {
                     workspace: config.workspace.clone(),
                     semantic: semantic.clone(),
+                    default_top_k: config.memory_query_default_top_k,
+                    top_k_max: config.memory_query_top_k_max,
+                    default_max_total_chars: config.memory_query_default_max_total_chars,
+                    min_max_total_chars: config.memory_query_min_max_total_chars,
+                    qdrant_oversample_cap: config.memory_query_oversample_cap,
+                    qdrant_oversample_multiplier: config.memory_query_oversample_multiplier,
+                    qdrant_oversample_min: config.memory_query_oversample_min,
                 }));
             }
 

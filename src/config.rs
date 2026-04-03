@@ -129,6 +129,27 @@ pub struct AppConfig {
     /// When true, keep full JSON parameter schemas in the LLM view for tool definitions (larger prompt). When false and [`Self::optimize_context`] is true, [`crate::orchestrator::context_view::build_llm_view`] strips `parameters` in that block only; [`crate::orchestrator::core::Orchestrator::chat_stack`] stays full. Independently, the orchestrator forces full schemas for one recovery LLM pass after a Gatekeeper schema fault ([`crate::orchestrator::core::Orchestrator::force_full_tool_schemas_in_llm_view`]).
     #[serde(default = "default_optimize_context_full_tool_schemas")]
     pub optimize_context_full_tool_schemas: bool,
+    /// Default `top_k` for [`crate::tools::memory::MemoryQueryTool`] when the LLM omits it.
+    #[serde(default = "default_memory_query_default_top_k")]
+    pub memory_query_default_top_k: u32,
+    /// Upper bound for `top_k` in `memory:query` (clamps user/LLM input).
+    #[serde(default = "default_memory_query_top_k_max")]
+    pub memory_query_top_k_max: u32,
+    /// Default total character budget for formatted `memory:query` output.
+    #[serde(default = "default_memory_query_default_max_total_chars")]
+    pub memory_query_default_max_total_chars: u32,
+    /// Minimum allowed `max_total_chars` when the caller passes a value (floor).
+    #[serde(default = "default_memory_query_min_max_total_chars")]
+    pub memory_query_min_max_total_chars: u32,
+    /// Max Qdrant points to retrieve when post-filtering (e.g. `vault_path_prefix`) needs headroom.
+    #[serde(default = "default_memory_query_oversample_cap")]
+    pub memory_query_oversample_cap: u64,
+    /// Multiplier for oversampling when a path prefix filter is active (`top_k * multiplier`, then capped).
+    #[serde(default = "default_memory_query_oversample_multiplier")]
+    pub memory_query_oversample_multiplier: u64,
+    /// Minimum Qdrant limit when oversampling for path prefix.
+    #[serde(default = "default_memory_query_oversample_min")]
+    pub memory_query_oversample_min: u64,
     /// Current working directory when [`AppConfig::load`] ran — this is the physical vault root for chat.
     #[serde(skip)]
     pub config_source_dir: PathBuf,
@@ -189,6 +210,34 @@ fn default_optimize_context_assistant_compact() -> bool {
 
 fn default_optimize_context_full_tool_schemas() -> bool {
     false
+}
+
+fn default_memory_query_default_top_k() -> u32 {
+    5
+}
+
+fn default_memory_query_top_k_max() -> u32 {
+    25
+}
+
+fn default_memory_query_default_max_total_chars() -> u32 {
+    10_000
+}
+
+fn default_memory_query_min_max_total_chars() -> u32 {
+    256
+}
+
+fn default_memory_query_oversample_cap() -> u64 {
+    200
+}
+
+fn default_memory_query_oversample_multiplier() -> u64 {
+    25
+}
+
+fn default_memory_query_oversample_min() -> u64 {
+    30
 }
 
 /// Built-in Open-Meteo (non-commercial) API profiles for [`crate::tools::weather`]. Override or extend via `.fcp/config.toml` `[apis.*]`.
@@ -342,6 +391,13 @@ impl Default for AppConfig {
             optimize_context_assistant_compact: default_optimize_context_assistant_compact(),
             optimize_context_tool_overrides: HashMap::new(),
             optimize_context_full_tool_schemas: default_optimize_context_full_tool_schemas(),
+            memory_query_default_top_k: default_memory_query_default_top_k(),
+            memory_query_top_k_max: default_memory_query_top_k_max(),
+            memory_query_default_max_total_chars: default_memory_query_default_max_total_chars(),
+            memory_query_min_max_total_chars: default_memory_query_min_max_total_chars(),
+            memory_query_oversample_cap: default_memory_query_oversample_cap(),
+            memory_query_oversample_multiplier: default_memory_query_oversample_multiplier(),
+            memory_query_oversample_min: default_memory_query_oversample_min(),
             config_source_dir: PathBuf::new(),
         }
     }

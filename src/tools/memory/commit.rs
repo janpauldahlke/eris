@@ -92,7 +92,15 @@ impl Tool for MemoryCommitTool {
 
         tokio::fs::write(&path, frontmatter).await.map_err(FcpError::Io)?;
 
-        self.semantic.upsert(&entry.data, entry.tags.clone()).await?;
+        let vault_key = path
+            .strip_prefix(&self.workspace_root)
+            .ok()
+            .and_then(|p| p.to_str())
+            .map(|s| s.replace('\\', "/"));
+
+        self.semantic
+            .upsert(&entry.data, entry.tags.clone(), vault_key)
+            .await?;
 
         self.ephemeral.cache.invalidate(&entry.staged_id).await;
 
