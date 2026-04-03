@@ -2,4 +2,5 @@
 .fcp/
 .DS_Store
 /vaults
+.cursor/
 
