@@ -2,6 +2,7 @@ use crate::executive::error::{FcpError, Result};
 use crate::ingest::bound_chunks_and_preview;
 use crate::memory::ephemeral::EphemeralMemory;
 use crate::memory::semantic::SemanticBrain;
+use crate::tools::context_view_hint::{ToolContextViewHint, API_TOOL_SNIPPET_CHARS};
 use crate::tools::traits::Tool;
 use async_trait::async_trait;
 use schemars::JsonSchema;
@@ -104,6 +105,12 @@ impl Tool for WebFetchTool {
     fn name(&self) -> &'static str { "web:fetch" }
     fn description(&self) -> &'static str { "Fetch webpage, sanitize/chunk externally, and return a compact artifact receipt." }
     fn parameters_schema(&self) -> RootSchema { schemars::schema_for!(WebFetchArgs) }
+
+    fn context_view_hint(&self) -> ToolContextViewHint {
+        ToolContextViewHint::Snippet {
+            max_chars: API_TOOL_SNIPPET_CHARS,
+        }
+    }
 
     async fn execute(&self, args: Value) -> Result<String> {
         let parsed: WebFetchArgs = match serde_json::from_value(args) {

@@ -7,6 +7,7 @@ use serde_json::Value;
 
 use crate::util::ApiHttpClient;
 use crate::executive::error::{FcpError, Result};
+use crate::tools::context_view_hint::{ToolContextViewHint, API_TOOL_SNIPPET_CHARS};
 use crate::tools::traits::Tool;
 use crate::tools::weather::open_meteo::{self, HINT_CURRENT, PROFILE_FORECAST_CURRENT};
 
@@ -35,6 +36,12 @@ impl Tool for WeatherCurrentTool {
 
     fn parameters_schema(&self) -> schemars::schema::RootSchema {
         schemars::schema_for!(WeatherCityArgs)
+    }
+
+    fn context_view_hint(&self) -> ToolContextViewHint {
+        ToolContextViewHint::Snippet {
+            max_chars: API_TOOL_SNIPPET_CHARS,
+        }
     }
 
     async fn execute(&self, args: Value) -> Result<String> {

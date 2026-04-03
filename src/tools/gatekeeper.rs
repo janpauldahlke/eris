@@ -4,6 +4,7 @@ use std::sync::Arc;
 use jsonschema::JSONSchema;
 use crate::executive::error::{FcpError, Result};
 use crate::orchestrator::state::AgentState;
+use crate::tools::context_view_hint::ToolContextViewHint;
 use crate::tools::traits::Tool;
 
 pub struct Gatekeeper {
@@ -53,6 +54,21 @@ impl Gatekeeper {
         let mut names = self.registry.keys().cloned().collect::<Vec<_>>();
         names.sort();
         names
+    }
+
+    /// Trait defaults for each registered tool, merged with `overrides` (config wins).
+    pub fn merge_context_view_hints(
+        &self,
+        overrides: &HashMap<String, ToolContextViewHint>,
+    ) -> HashMap<String, ToolContextViewHint> {
+        let mut m = HashMap::with_capacity(self.registry.len() + overrides.len());
+        for (name, tool) in &self.registry {
+            m.insert(name.clone(), tool.context_view_hint());
+        }
+        for (k, v) in overrides {
+            m.insert(k.clone(), *v);
+        }
+        m
     }
 
     pub fn get_allowed_tools(&self, state: &AgentState) -> Vec<Value> {

@@ -5,6 +5,7 @@ use crate::tools::ToolDescriptorRegistry;
 use crate::memory::ephemeral::EphemeralMemory;
 use crate::orchestrator::state::{AgentState, LoopDirective, LlmResponse, LoopAction, ToolIntentStatus, ToolIntentTicket};
 use crate::orchestrator::context::ContextAssembler;
+use crate::orchestrator::context_view::{build_llm_view, ContextViewSettings};
 use crate::orchestrator::r#loop::directive_policy::decide_transition_from_directive;
 use crate::orchestrator::r#loop::recovery_policy::{classify_tool_failure, ToolFailureAction};
 use crate::orchestrator::r#loop::tool_batch::ToolBatchDecision;
@@ -58,6 +59,8 @@ pub struct Orchestrator<E: LlmEngine> {
     pub descriptor_jit_top_k: usize,
     pub descriptor_jit_max_chars: usize,
     pub descriptor_registry: Option<Arc<ToolDescriptorRegistry>>,
+    /// LLM-only stack transform; stored [`Self::chat_stack`] is unchanged.
+    pub context_view: ContextViewSettings,
     /// Monotonic counter incremented once per `step()` entry (log correlation; no span across await in `spawn`).
     pub turn_seq: u64,
     /// Shown in TUI Status while tools are pending; cleared when a final deck message is emitted or at `step` entry.
@@ -415,6 +418,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         tui_tx: Option<tokio::sync::mpsc::Sender<crate::ui::events::TuiEvent>>,
         tool_router: Option<ToolRouter>,
         descriptor_registry: Option<Arc<ToolDescriptorRegistry>>,
+        context_view: ContextViewSettings,
         identity: tokio::sync::watch::Receiver<Arc<str>>,
     ) -> Self {
         Self {
@@ -444,6 +448,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             descriptor_jit_top_k,
             descriptor_jit_max_chars,
             descriptor_registry,
+            context_view,
             turn_seq: 0,
             activity_line: None,
             last_deck_message_body: None,
@@ -551,7 +556,8 @@ impl<E: LlmEngine> Orchestrator<E> {
             let response_result = tokio::select! {
                 res = async {
                     let llm_started = Instant::now();
-                    let out = self.engine.generate(&self.chat_stack, "", None).await;
+                    let view = build_llm_view(&self.chat_stack, &self.context_view);
+                    let out = self.engine.generate(&view, "", None).await;
                     llm_ms_acc = llm_ms_acc.saturating_add(llm_started.elapsed().as_millis() as u64);
                     out
                 } => res,
@@ -1381,6 +1387,7 @@ mod tests {
             None,
             None,
             None,
+            ContextViewSettings::default(),
             id_rx,
         );
 
@@ -1421,6 +1428,7 @@ mod tests {
             None,
             None,
             None,
+            ContextViewSettings::default(),
             id_rx,
         )
     }
@@ -1811,6 +1819,7 @@ mod tests {
             None,
             None,
             None,
+            ContextViewSettings::default(),
             id_rx,
         );
 
@@ -1920,6 +1929,7 @@ mod tests {
             None,
             None,
             None,
+            ContextViewSettings::default(),
             id_rx,
         );
         orchestrator.state = AgentState::Chat;

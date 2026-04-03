@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::tools::ToolContextViewHint;
+
 /// HTTP API profile for [`crate::util::ApiHttpClient`] (URL/query/header templates). Map keys are profile ids (`[apis.<id>]` in `.fcp/config.toml`).
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct ApiProfile {
@@ -112,6 +114,18 @@ pub struct AppConfig {
     pub apis: HashMap<String, ApiProfile>,
     #[serde(default)]
     pub vault_watch: VaultWatchConfig,
+    /// When true, [`crate::orchestrator::context_view::build_llm_view`] feeds a lean copy to the LLM only; [`crate::orchestrator::core::Orchestrator::chat_stack`] stays full fidelity.
+    #[serde(default = "default_optimize_context")]
+    pub optimize_context: bool,
+    /// Default max chars for tool result bodies in the LLM view when a tool uses [`ToolContextViewHint::Default`].
+    #[serde(default = "default_optimize_context_max_tool_snippet_chars")]
+    pub optimize_context_max_tool_snippet_chars: usize,
+    /// Strip assistant JSON to `message_to_user` + tool names in the LLM view.
+    #[serde(default = "default_optimize_context_assistant_compact")]
+    pub optimize_context_assistant_compact: bool,
+    /// Optional per-tool overrides (merged on top of each tool’s `context_view_hint()`).
+    #[serde(default)]
+    pub optimize_context_tool_overrides: HashMap<String, ToolContextViewHint>,
     /// Current working directory when [`AppConfig::load`] ran — this is the physical vault root for chat.
     #[serde(skip)]
     pub config_source_dir: PathBuf,
@@ -156,6 +170,18 @@ fn default_semantic_brain_connect_attempts() -> u32 {
 
 fn default_semantic_brain_connect_retry_delay_ms() -> u64 {
     500
+}
+
+fn default_optimize_context() -> bool {
+    false
+}
+
+fn default_optimize_context_max_tool_snippet_chars() -> usize {
+    400
+}
+
+fn default_optimize_context_assistant_compact() -> bool {
+    true
 }
 
 /// Built-in Open-Meteo (non-commercial) API profiles for [`crate::tools::weather`]. Override or extend via `.fcp/config.toml` `[apis.*]`.
@@ -300,6 +326,10 @@ impl Default for AppConfig {
             semantic_brain_connect_retry_delay_ms: default_semantic_brain_connect_retry_delay_ms(),
             apis: default_builtin_apis(),
             vault_watch: VaultWatchConfig::default(),
+            optimize_context: default_optimize_context(),
+            optimize_context_max_tool_snippet_chars: default_optimize_context_max_tool_snippet_chars(),
+            optimize_context_assistant_compact: default_optimize_context_assistant_compact(),
+            optimize_context_tool_overrides: HashMap::new(),
             config_source_dir: PathBuf::new(),
         }
     }

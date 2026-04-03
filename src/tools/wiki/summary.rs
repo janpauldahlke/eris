@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 
 use crate::util::ApiHttpClient;
 use crate::executive::error::{FcpError, Result};
+use crate::tools::context_view_hint::{ToolContextViewHint, API_TOOL_SNIPPET_CHARS};
 use crate::tools::traits::Tool;
 
 pub const PROFILE_WIKIPEDIA_PAGE_SUMMARY: &str = "wikipedia_page_summary";
@@ -119,6 +120,12 @@ impl Tool for WikiSummaryTool {
 
     fn description(&self) -> &'static str {
         "English Wikipedia lead summary by article title (REST page/summary). Use for encyclopedia-style facts (what/who is X). Do not use for pasted URLs or non-Wikipedia sites (use web:fetch). Do not use to search your vault (use vault:read / memory:query)."
+    }
+
+    fn context_view_hint(&self) -> ToolContextViewHint {
+        ToolContextViewHint::Snippet {
+            max_chars: API_TOOL_SNIPPET_CHARS,
+        }
     }
 
     fn parameters_schema(&self) -> schemars::schema::RootSchema {

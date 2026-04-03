@@ -352,6 +352,14 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
             // 8. Build Orchestrator
             // Pass workspace_root directly as vault_root with empty workspace string
             // so ContextAssembler resolves 00_Core at workspace_root/00_Core (not workspace_root/default/00_Core)
+            let context_view_hints = gatekeeper.merge_context_view_hints(&config.optimize_context_tool_overrides);
+            let context_view = crate::orchestrator::context_view::ContextViewSettings {
+                enabled: config.optimize_context,
+                default_snippet_chars: config.optimize_context_max_tool_snippet_chars,
+                assistant_compact: config.optimize_context_assistant_compact,
+                hints: Arc::new(context_view_hints),
+            };
+
             let mut orchestrator = Orchestrator::new(
                 engine,
                 gatekeeper,
@@ -368,6 +376,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                 Some(tui_tx.clone()),
                 tool_router,
                 descriptor_registry,
+                context_view,
                 identity_rx,
             );
 
@@ -723,6 +732,7 @@ mod tests {
             None,
             None,
             None,
+            crate::orchestrator::context_view::ContextViewSettings::default(),
             id_rx,
         );
 

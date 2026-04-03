@@ -2,6 +2,7 @@ use crate::executive::error::{FcpError, Result};
 use crate::ingest::{trim_chars, trim_snippets_to_budget};
 use crate::memory::ephemeral::EphemeralMemory;
 use crate::memory::semantic::SemanticBrain;
+use crate::tools::context_view_hint::{ToolContextViewHint, API_TOOL_SNIPPET_CHARS};
 use crate::tools::traits::Tool;
 use async_trait::async_trait;
 use schemars::schema::RootSchema;
@@ -92,6 +93,12 @@ impl Tool for WebArtifactQueryTool {
 
     fn description(&self) -> &'static str {
         "Query sanitized buffered web artifact and return top-k snippets."
+    }
+
+    fn context_view_hint(&self) -> ToolContextViewHint {
+        ToolContextViewHint::Snippet {
+            max_chars: API_TOOL_SNIPPET_CHARS,
+        }
     }
 
     fn parameters_schema(&self) -> RootSchema {
