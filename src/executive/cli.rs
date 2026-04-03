@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use super::error::{FcpError, Result};
 
 #[derive(Parser, Debug, Clone)]
-#[command(name = "fcp", version, about = "The Unified Dreadnought: Local SLM Orchestrator", disable_version_flag = true)]
+#[command(name = "eris", version, about = "The Unified Dreadnought: Local SLM Orchestrator", disable_version_flag = true)]
 pub struct Cli {
     /// Defines the active memory partition (isolates vector spaces)
     #[arg(short = 'w', long, env = "FCP_WORKSPACE", default_value = "default")]
@@ -53,7 +53,7 @@ mod tests {
     #[test]
     fn test_cli_default_vault() {
         // Pass `-w default` so this test does not depend on `FCP_WORKSPACE` in the environment.
-        let args = vec!["fcp", "-w", "default", "chat"];
+        let args = vec!["eris", "-w", "default", "chat"];
         let cli = parse_from(args).unwrap();
         assert_eq!(cli.vault, None);
         assert_eq!(cli.workspace, "default");
@@ -62,18 +62,18 @@ mod tests {
 
     #[test]
     fn test_cli_verbose_stacking() {
-        let args1 = vec!["fcp", "-V", "chat"];
+        let args1 = vec!["eris", "-V", "chat"];
         let cli1 = parse_from(args1).unwrap();
         assert_eq!(cli1.verbose, 1);
 
-        let args2 = vec!["fcp", "-VV", "chat"];
+        let args2 = vec!["eris", "-VV", "chat"];
         let cli2 = parse_from(args2).unwrap();
         assert_eq!(cli2.verbose, 2);
     }
 
     #[test]
     fn test_cli_tool_subcommand() {
-        let args = vec!["fcp", "tool", "memory:query", r#"{"query": "test"}"#];
+        let args = vec!["eris", "tool", "memory:query", r#"{"query": "test"}"#];
         let cli = parse_from(args).unwrap();
         if let Commands::Tool { name, args } = cli.command {
             assert_eq!(name, "memory:query");
@@ -85,14 +85,14 @@ mod tests {
 
     #[test]
     fn test_cli_workspace_propagation() {
-        let args = vec!["fcp", "--workspace", "isolated_env", "chat"];
+        let args = vec!["eris", "--workspace", "isolated_env", "chat"];
         let cli = parse_from(args).unwrap();
         assert_eq!(cli.workspace, "isolated_env");
     }
 
     #[test]
     fn test_cli_tool_args_as_single_string() {
-        let args = vec!["fcp", "tool", "memory:query", r#"{"q": "test"}"#];
+        let args = vec!["eris", "tool", "memory:query", r#"{"q": "test"}"#];
         let cli = parse_from(args).unwrap();
         if let Commands::Tool { name, args } = cli.command {
             assert_eq!(name, "memory:query");
@@ -104,7 +104,7 @@ mod tests {
 
     #[test]
     fn test_cli_parse_error_returns_config_fault() {
-        let args = vec!["fcp", "non-existent-command"];
+        let args = vec!["eris", "non-existent-command"];
         let result = parse_from(args);
         assert!(result.is_err());
         match result.unwrap_err() {

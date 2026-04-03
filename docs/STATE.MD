@@ -87,3 +87,4 @@
 - [x] improvement (S05): overall tool outout for user, better format, better follow up JIT instruction
 - [x] improvement (S0x): harden semantis for memorie and web fetch to harden boundaries
 - [x] improvement (S03): improve memory retrival analysis
+- [x] META curate docs and update architecture overview
