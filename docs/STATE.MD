@@ -84,4 +84,6 @@
 - [x] refactor (S00): align num_ctx usage across project, remove unused
 - [x] feature (S0x): ship optimize_context feature flag and aplly it for tool returns to thin out context_slider
 - [x] feature(S05): context diet for tool calls in context_slider winwdow
-- [] improvement (S05): overall tool outout for user, better format, better follow up JIT instruction
+- [x] improvement (S05): overall tool outout for user, better format, better follow up JIT instruction
+- [x] improvement (S0x): harden semantis for memorie and web fetch to harden boundaries
+- [] improvement (S03): improve memory retrival analysis

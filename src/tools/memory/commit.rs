@@ -29,7 +29,7 @@ impl Tool for MemoryCommitTool {
     }
 
     fn description(&self) -> &'static str {
-        "Persists one staged memory to the vault (disk + Qdrant). Prefer staged_id; title is legacy fallback."
+        "Persists one staged memory to the vault (disk + Qdrant) when saving for good. Prefer staged_id; title is legacy fallback."
     }
 
     fn parameters_schema(&self) -> schemars::schema::RootSchema {

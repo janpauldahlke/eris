@@ -1,2 +1,0 @@
-- the eris deck text out of view b ug hunts me
-- sometimes i cant see message s coming in, i see them in the logs, but not in the doc, i need to write a new line to see it. it is likes some times we lag behind one interaction, i really neeed to catch this

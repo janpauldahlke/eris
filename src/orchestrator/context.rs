@@ -122,10 +122,11 @@ impl ContextAssembler {
             }}\n\n\
             Available tools for current state:\n{tools}\n\n\
             Memory lifecycle rules (follow exactly):\n\
-            - memory:stage creates temporary entries in ephemeral memory and returns a staged_id.\n\
+            - memory:stage creates temporary entries in ephemeral memory and returns a staged_id; it does NOT write vault files.\n\
             - Staged entries EXPIRE on TTL; they do not auto-promote.\n\
             - Use memory:staged_list to inspect staged entries before committing.\n\
-            - Prefer memory:commit with staged_id for single-item persistence.\n\
+            - Do NOT call memory:commit in the same multi-tool turn immediately after memory:stage unless the user clearly asked to save to the vault, keep forever, or persist to disk.\n\
+            - When the user wants long-term vault storage, use memory:commit with staged_id for single-item persistence.\n\
             - Use memory:commit_all for best-effort bulk persistence.\n\
             - Web fetch staging (tags web_artifact): committing does NOT write markdown to disk; semantic chunks were stored at fetch time.\n\n\
             Vault taxonomy — when using memory:stage, include tags from the correct category:\n\

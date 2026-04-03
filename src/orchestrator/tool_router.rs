@@ -65,9 +65,23 @@ impl ToolRouter {
         if Self::has_domain_like_token(&lower) {
             return true;
         }
+        // Multi-word phrases only: bare "open " / "visit " matched figurative English ("open the way").
         let phrases = [
-            "visit ",
-            "open ",
+            "visit page",
+            "visit the page",
+            "visit this page",
+            "visit that page",
+            "visit a page",
+            "visit site",
+            "visit the site",
+            "open page",
+            "open the page",
+            "open this page",
+            "open that page",
+            "open url",
+            "open link",
+            "open website",
+            "open the website",
             "read website",
             "read the website",
             "news from",
@@ -120,10 +134,10 @@ impl ToolRouter {
             "vault:write" => "writing files, saving notes, creating documents, write this down, save to vault, take a note, jot down, record",
             "vault:list" => "listing files, what files do I have, show directory, browse vault, what is in my folder, list notes",
             "memory:query" => "remembering, recalling, do you remember, what did I say, past conversations, search memory, who am I, what is my name, user name, my identity, preferences, facts about the user, recall, recognize me, history",
-            "memory:commit" => "commit one staged memory by staged_id, persist selected staged entry to long-term memory",
+            "memory:commit" => "save staged entry to vault by staged_id, persist to disk when user asked to keep forever or save permanently",
             "memory:commit_all" => "flush all staged memories, persist all staged entries, bulk commit staged memory",
             "memory:staged_list" => "show staged memory ids, list staged entries, what is currently staged before commit",
-            "memory:stage" => "stage memory with ttl, temporarily hold fact before explicit commit",
+            "memory:stage" => "ephemeral staging with ttl, no vault write until commit, hold fact until user wants disk save",
             "agenda:push" => "adding tasks, to-do list, add to agenda queue, schedule, plan, new task without setting a time",
             "agenda:list" => "show tasks, what is on my list, pending items, show agenda, my schedule, what do I have to do",
             "agenda:remove" => "remove task, cancel agenda item, delete from list, drop task, never mind that reminder, scratch that task",
@@ -263,6 +277,19 @@ mod tests {
     fn test_web_lexical_intent_with_domain_token() {
         assert!(ToolRouter::has_web_lexical_intent("please open heise.de/newsticker"));
         assert!(!ToolRouter::has_web_lexical_intent("tell me about rust traits"));
+    }
+
+    #[test]
+    fn test_web_lexical_intent_figurative_open_not_matched() {
+        assert!(!ToolRouter::has_web_lexical_intent(
+            "you will open the way for future AIs"
+        ));
+    }
+
+    #[test]
+    fn test_web_lexical_intent_visit_page_phrase() {
+        assert!(ToolRouter::has_web_lexical_intent("visit the page and summarize"));
+        assert!(ToolRouter::has_web_lexical_intent("please open this page"));
     }
 
     #[test]

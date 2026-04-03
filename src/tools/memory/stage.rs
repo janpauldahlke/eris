@@ -32,7 +32,7 @@ impl Tool for MemoryStageTool {
     }
 
     fn description(&self) -> &'static str {
-        "Stages content into ephemeral memory with title, tags, and TTL. Expired entries are discarded unless committed."
+        "Stages content into ephemeral memory with title, tags, and TTL. Does not write the vault; ephemeral until committed or TTL elapses."
     }
 
     fn parameters_schema(&self) -> schemars::schema::RootSchema {
@@ -77,7 +77,7 @@ impl Tool for MemoryStageTool {
             .insert(&title, &content, tags.clone(), self.ttl_secs)
             .await?;
         Ok(format!(
-            "Staged '{}' as id '{}' with tags {:?} (ttl={}s, expires if not committed)",
+            "Staged '{}' as id '{}' with tags {:?} (ttl={}s; ephemeral until committed or TTL elapses)",
             title, staged.staged_id, tags, self.ttl_secs
         ))
     }

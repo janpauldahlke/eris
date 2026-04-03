@@ -113,9 +113,9 @@ rationale = "Provide either minutes or hour+minute, not both."
     r#"descriptor_version = 1
 tool_name = "memory:commit"
 short_description = "Commit one staged memory to vault and semantic index."
-when_to_use = "Use to persist a specific staged memory by staged_id."
-when_not_to_use = "Do not use for bulk commits."
-routing_hints = ["commit staged memory", "persist one memory", "save staged item"]
+when_to_use = "Use when the user asked to save permanently, keep in the vault, or finalize staged content to disk; or in a later turn after staging when they want it persisted."
+when_not_to_use = "Do not use for bulk-only workflows; use memory:commit_all. Do not chain immediately after memory:stage in the same multi-step turn if the user only said remember or note without asking to save to the vault or disk."
+routing_hints = ["commit staged memory", "persist one memory", "save staged item", "save to vault", "keep forever"]
 
 [[examples_good]]
 name = "commit_by_id"
@@ -168,10 +168,10 @@ rationale = "query cannot be empty."
 "#,
     r#"descriptor_version = 1
 tool_name = "memory:stage"
-short_description = "Stage memory with title/content/tags into ephemeral cache."
-when_to_use = "Use to capture facts before explicit commit."
-when_not_to_use = "Do not use when immediate persistence is required."
-routing_hints = ["remember this", "stage memory", "temporary memory"]
+short_description = "Stage memory with title/content/tags into ephemeral cache (TTL); does not write vault files."
+when_to_use = "Use to capture facts the user wants held in staging; returns staged_id for a later commit when they ask to save to the vault."
+when_not_to_use = "Do not use when the user only wants to search existing memory (memory:query) or read a path (vault:read)."
+routing_hints = ["remember this", "stage memory", "temporary memory", "hold in staging", "not yet saved to vault"]
 
 [[examples_good]]
 name = "stage_fact"
