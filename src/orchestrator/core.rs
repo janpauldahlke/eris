@@ -27,6 +27,17 @@ use std::time::Instant;
 /// Marker string in `thought` / `message_to_user` when the last user line was empty (debuggable in logs and TUI).
 pub const EMPTY_USER_MESSAGE_TAG: &str = "SY FNORD";
 
+/// Injected when [`Orchestrator::max_tool_rounds`] is reached: one final conversational LLM pass (no tool schemas, no descriptor JIT).
+const TOOL_ROUND_CAP_SYSTEM_GUIDANCE: &str = r#"[SYSTEM — TOOL BUDGET]
+This user turn has reached the configured maximum number of successful tool executions. You cannot call tools again until the user sends a new message.
+
+Respond with a single JSON object in the usual protocol. Use empty `tool_calls` []. Prefer `status` "Idle" with a non-empty `message_to_user` that summarizes what you learned from tool results already in the thread and tells the user they can say **continue** (or similar) if more tool work is needed.
+
+Do not request tools; they will not run."#;
+
+/// Appended when the model still emitted `tool_calls` after the cap recovery pass.
+const TOOL_ROUND_CAP_USER_FOOTNOTE: &str = "(Per-turn tool limit reached; further tool calls were not executed. Send another message to continue with tools.)";
+
 const EMPTY_USER_SHRUGS: &[&str] = &["¯\\_(ツ)_/¯", "(・_・)", "(╯°□°）╯︵ ┻━┻"];
 
 pub struct Orchestrator<E: LlmEngine> {
@@ -74,6 +85,8 @@ pub struct Orchestrator<E: LlmEngine> {
     pub activity_line: Option<String>,
     /// Last `message_to_user` body sent to the TUI deck this `step()`; avoids duplicate bubbles when Task → Reflect replays the same line.
     last_deck_message_body: Option<String>,
+    /// After [`Self::max_tool_rounds`] successful tool runs in this `step()`, the next loop iteration runs one final conversational generation (no tools / no JIT), then idles.
+    tool_round_cap_final_pass_pending: bool,
 }
 
 impl<E: LlmEngine> Orchestrator<E> {
@@ -448,6 +461,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             turn_seq: 0,
             activity_line: None,
             last_deck_message_body: None,
+            tool_round_cap_final_pass_pending: false,
         }
     }
 
@@ -476,6 +490,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         let mut tool_ms_acc = 0u64;
         self.recovery_count = 0;
         self.tool_rounds = 0;
+        self.tool_round_cap_final_pass_pending = false;
         self.force_full_tool_schemas_in_llm_view = false;
         self.activity_line = None;
         self.last_deck_message_body = None;
@@ -521,10 +536,39 @@ impl<E: LlmEngine> Orchestrator<E> {
                 return Ok(());
             }
             if self.tool_rounds >= self.max_tool_rounds {
-                tracing::warn!(tool_rounds = self.tool_rounds, max = self.max_tool_rounds, "Max tool rounds reached, bailing out");
-                self.state = AgentState::Idle;
-                self.broadcast_state().await;
-                return Ok(());
+                if !self.tool_round_cap_final_pass_pending {
+                    self.tool_round_cap_final_pass_pending = true;
+                    tracing::warn!(
+                        event = "orchestrator.tool_round_cap.recovery_armed",
+                        tool_rounds = self.tool_rounds,
+                        max = self.max_tool_rounds,
+                        turn_seq,
+                        "Max tool rounds reached; injecting final conversational pass (no tools / no JIT)"
+                    );
+                    let notice = format!(
+                        "[fcp] Per-turn tool budget exhausted ({} successful tool runs; max {}). Forcing one final reply without tools — say **continue** if you need more.",
+                        self.tool_rounds,
+                        self.max_tool_rounds
+                    );
+                    if let Some(tx) = &self.tui_tx {
+                        let _ = tx
+                            .send(crate::ui::events::TuiEvent::SystemError(notice))
+                            .await;
+                    }
+                    let guidance = format!(
+                        "{}\n\n(Current turn: {} successful tool executions; configured maximum per user turn is {}.)",
+                        TOOL_ROUND_CAP_SYSTEM_GUIDANCE,
+                        self.tool_rounds,
+                        self.max_tool_rounds
+                    );
+                    self.chat_stack.push(crate::engine::Message {
+                        role: "system".to_string(),
+                        content: guidance,
+                    });
+                    tools_needed = false;
+                    targeted_tools.clear();
+                    continue;
+                }
             }
 
         // 2. Context Assembly (WITH tool schemas)
@@ -674,7 +718,13 @@ impl<E: LlmEngine> Orchestrator<E> {
             // 4. Directive Processing
             let directive = self.process_llm_response(&response.content);
             tracing::info!(directive = ?directive, "Directive from LLM response");
-            let transition = decide_transition_from_directive(directive);
+            let tool_cap_final = self.tool_round_cap_final_pass_pending;
+            let mut transition = decide_transition_from_directive(directive);
+            if tool_cap_final {
+                transition = self
+                    .clamp_transition_for_tool_round_cap_recovery(transition, &response.content)
+                    .await;
+            }
             match transition {
                 StateTransition::ExecuteTools(tools) => {
                     let decision = self.execute_tool_batch(
@@ -945,6 +995,69 @@ impl<E: LlmEngine> Orchestrator<E> {
         self.broadcast_state().await;
     }
 
+    /// Deck line for cap-recovery when the normal JSON → deck path did not apply.
+    async fn emit_assistant_deck_line(&mut self, msg: &str) {
+        let Some(tx) = &self.tui_tx else {
+            return;
+        };
+        let agent_name = self.agent_name();
+        let _ = tx
+            .send(crate::ui::events::TuiEvent::IncomingMessage(format!(
+                "[{}]: {}",
+                agent_name, msg
+            )))
+            .await;
+        self.last_deck_message_body = Some(msg.to_string());
+        self.activity_line = None;
+        self.broadcast_state().await;
+    }
+
+    /// After tool-round cap recovery, never run more tools or spin another Reflect hop in the same step.
+    async fn clamp_transition_for_tool_round_cap_recovery(
+        &mut self,
+        transition: StateTransition,
+        response_content: &str,
+    ) -> StateTransition {
+        match transition {
+            StateTransition::ExecuteTools(_) => {
+                tracing::warn!(
+                    event = "orchestrator.tool_round_cap.tools_ignored",
+                    "Model requested tools after per-turn tool budget was exhausted; idling"
+                );
+                let json_slice = split_leading_json_object(response_content).0;
+                let prefix = serde_json::from_str::<LlmResponse>(json_slice)
+                    .ok()
+                    .and_then(|p| {
+                        p.message_to_user
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                    });
+                let body = match prefix {
+                    Some(m) => format!("{m}\n\n{TOOL_ROUND_CAP_USER_FOOTNOTE}"),
+                    None => TOOL_ROUND_CAP_USER_FOOTNOTE.to_string(),
+                };
+                self.emit_assistant_deck_line(&body).await;
+                StateTransition::Halt
+            }
+            StateTransition::ShiftToReflection => {
+                let json_slice = split_leading_json_object(response_content).0;
+                let has_deck = serde_json::from_str::<LlmResponse>(json_slice)
+                    .ok()
+                    .and_then(|p| {
+                        p.message_to_user
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                    })
+                    .is_some();
+                if !has_deck {
+                    self.emit_assistant_deck_line(TOOL_ROUND_CAP_USER_FOOTNOTE).await;
+                }
+                StateTransition::Halt
+            }
+            other => other,
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     /// Executes one tool batch and returns a decision for the coordinator.
     ///
@@ -1194,7 +1307,9 @@ impl<E: LlmEngine> Orchestrator<E> {
             Ok(res) => res,
             Err(e) => {
                 tracing::warn!(error = %e, raw_snippet = &json_str[..json_str.len().min(200)], "Failed to parse LLM response as JSON");
-                return LoopDirective::RecoverFromFuckup(e.to_string());
+                return LoopDirective::RecoverFromFuckup(
+                    crate::orchestrator::json_envelope::llm_json_parse_recovery_message(&e),
+                );
             }
         };
         parsed.normalize_tool_calls();
@@ -1586,9 +1701,40 @@ mod tests {
         let directive = orchestrator.process_llm_response(json);
         match directive {
             LoopDirective::RecoverFromFuckup(msg) => {
-                assert!(!msg.is_empty());
+                assert!(msg.contains("[FCP JSON REPAIR]"));
+                assert!(msg.contains("tool_calls"));
             }
             _ => panic!("Expected RecoverFromFuckup"),
+        }
+    }
+
+    /// Regression: models often omit the closing `}` for the tool object when `tool_calls` has one item.
+    #[test]
+    fn test_router_single_tool_calls_missing_inner_close_brace_yields_recovery_hint() {
+        let mut orchestrator = setup_orchestrator();
+        let json = r#"{
+            "thought": "t",
+            "status": "Reflect",
+            "message_to_user": null,
+            "tool_calls": [
+            {
+            "name": "memory:stage",
+            "args": {
+            "content": "x",
+            "tags": ["semantic/knowledge/philosophy"],
+            "title": "nietzsche_dancing_star"
+            }
+            ]
+            }
+        "#;
+
+        let directive = orchestrator.process_llm_response(json);
+        match directive {
+            LoopDirective::RecoverFromFuckup(msg) => {
+                assert!(msg.contains("[FCP JSON REPAIR]"));
+                assert!(msg.contains("one more"));
+            }
+            other => panic!("Expected RecoverFromFuckup, got {:?}", other),
         }
     }
 

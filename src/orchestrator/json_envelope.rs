@@ -2,6 +2,26 @@
 
 use crate::orchestrator::state::LlmResponse;
 
+/// Human- and model-oriented hints appended after serde’s error when [`LlmResponse`] parsing fails.
+/// Serde’s `expected ',' or '}'` near a `]` is often misread as a comma problem; this steers toward
+/// the real issue (extra/missing `}` around `tool_calls` entries).
+const LLM_JSON_PARSE_RECOVERY_HINT: &str = r##"[FCP JSON REPAIR]
+Your last assistant message was not valid JSON.
+
+The serde error often means unbalanced { } braces — not “add a comma”. When `tool_calls` has exactly ONE item, a common mistake is: after the `}` that closes `args`, you must emit one more `}` to close the tool object before `]` ends the array.
+
+Invalid: "tool_calls":[ {"name":"t","args":{...} ]
+Valid:   "tool_calls":[ {"name":"t","args":{...} } ]
+
+If the error says expected ',' or '}' at a line that shows `]`, you probably need that extra `}`.
+
+Reply with one JSON object only (thought, status, message_to_user, tool_calls). No prose or markdown outside it."##;
+
+/// Full recovery payload for [`crate::orchestrator::state::LoopDirective::RecoverFromFuckup`].
+pub fn llm_json_parse_recovery_message(err: &serde_json::Error) -> String {
+    format!("{err}\n\n{LLM_JSON_PARSE_RECOVERY_HINT}")
+}
+
 /// Returns `(json_object, remainder)` where `json_object` spans from the first `{` through its
 /// matching closing `}`, respecting JSON string escapes. `remainder` is everything after that `}`.
 ///
@@ -92,5 +112,14 @@ mod tests {
     #[test]
     fn no_violation_when_no_json_brace() {
         assert!(!trailing_content_after_valid_llm_json("plain text only"));
+    }
+
+    #[test]
+    fn json_parse_recovery_message_includes_brace_and_tool_calls_hints() {
+        let err = serde_json::from_str::<LlmResponse>("not json").expect_err("invalid json");
+        let msg = llm_json_parse_recovery_message(&err);
+        assert!(msg.contains("tool_calls"));
+        assert!(msg.contains("[FCP JSON REPAIR]"));
+        assert!(msg.contains("one more"));
     }
 }
