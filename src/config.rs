@@ -76,6 +76,7 @@ pub struct AppConfig {
     pub user_name: String,
     pub num_ctx: usize,
     pub generation_timeout_secs: u64,
+    /// Maps to Ollama chat API `think`: `true` enables the thinking/reasoning path; `false` disables it.
     pub enable_reasoning_fsm: bool,
     pub condensation_threshold: f32,
     pub condensation_target: usize,
@@ -88,6 +89,9 @@ pub struct AppConfig {
     pub snapshot_interval_secs: u64,
     pub embed_model_name: String,
     pub idle_timeout_secs: u64,
+    /// When true, spawn the idle monitor that may inject [`crate::executive::error::FcpError::Interrupted`] after [`Self::idle_timeout_secs`]. Default off until Gardener/sleep features land.
+    #[serde(default)]
+    pub idle_heartbeat_enabled: bool,
     pub web_fetch_timeout_secs: u64,
     pub web_fetch_max_bytes: usize,
     /// Fraction of [`Self::num_ctx`] used to cap vault read and web chunk sizes (tool budgets; not the condensation trigger).
@@ -373,6 +377,7 @@ impl Default for AppConfig {
             snapshot_interval_secs: 300,
             embed_model_name: "nomic-embed-text".into(),
             idle_timeout_secs: 900,
+            idle_heartbeat_enabled: false,
             web_fetch_timeout_secs: 10,
             web_fetch_max_bytes: 20480,
             vault_read_ratio: 0.5,

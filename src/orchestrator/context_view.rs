@@ -7,6 +7,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::engine::Message;
+use crate::orchestrator::json_envelope::split_leading_json_object;
 use crate::tools::ToolContextViewHint;
 
 /// Start delimiter for the JSON tool-definition array inside the assembled system prompt ([`crate::orchestrator::context::ContextAssembler::build_tool_prompt`]).
@@ -137,18 +138,6 @@ impl Default for ContextViewSettings {
     }
 }
 
-fn extract_json_slice(response_json: &str) -> &str {
-    if let (Some(start), Some(end)) = (response_json.find('{'), response_json.rfind('}')) {
-        if start <= end {
-            &response_json[start..=end]
-        } else {
-            response_json
-        }
-    } else {
-        response_json
-    }
-}
-
 fn trim_snippet(input: &str, max_len: usize) -> String {
     if input.len() <= max_len {
         return input.to_string();
@@ -191,7 +180,7 @@ fn rewrite_tool_line(
 }
 
 fn compact_assistant_json(content: &str) -> Option<String> {
-    let slice = extract_json_slice(content);
+    let slice = split_leading_json_object(content).0;
     let v: Value = serde_json::from_str(slice).ok()?;
     let msg = v
         .get("message_to_user")

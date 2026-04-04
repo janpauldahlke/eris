@@ -323,12 +323,20 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                     .as_secs()
             ));
 
-            crate::orchestrator::heartbeat::spawn_heartbeat_monitor(
-                last_input_time.clone(),
-                config.idle_timeout_secs,
-                interrupt_tx.clone(),
-                cancel_token.clone(),
-            );
+            if config.idle_heartbeat_enabled {
+                crate::orchestrator::heartbeat::spawn_heartbeat_monitor(
+                    last_input_time.clone(),
+                    config.idle_timeout_secs,
+                    interrupt_tx.clone(),
+                    cancel_token.clone(),
+                );
+                tracing::info!(
+                    idle_timeout_secs = config.idle_timeout_secs,
+                    "Idle heartbeat monitor spawned"
+                );
+            } else {
+                tracing::info!("Idle heartbeat disabled (idle_heartbeat_enabled = false); Esc cancel still active");
+            }
 
             crate::orchestrator::alarm_scheduler::spawn_alarm_scheduler(
                 workspace_root.clone(),

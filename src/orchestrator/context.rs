@@ -81,7 +81,8 @@ impl ContextAssembler {
         let system_prompt = format!(
             "{identity}\n\n\
             You are inside a strict agent loop. Reply with ONE valid JSON object only.\n\
-            No markdown. No prose outside JSON. No code fences.\n\n\
+            No code fences around the JSON. Markdown, poems, lists, code blocks, and multi-paragraph answers are allowed ONLY inside the message_to_user string (use \\n escapes for newlines inside that string). There must be zero characters after the final closing brace of the JSON object; your entire reply is only that one JSON object and nothing may follow it.\n\
+            No prose outside the JSON object.\n\n\
             Required JSON shape:\n\
             {{\n\
               \"thought\": \"internal reasoning for the agent runtime only; never user-facing\",\n\
@@ -150,7 +151,9 @@ impl ContextAssembler {
 
         let system_prompt = format!(
             "{identity}\n\n\
-            Reply with ONE valid JSON object only. No markdown. No code fences.\n\n\
+            Reply with ONE valid JSON object only. No code fences around the JSON.\n\
+            Markdown, poems, lists, code blocks, and multi-paragraph answers are allowed ONLY inside the message_to_user string (use \\n escapes for newlines inside that string). There must be zero characters after the final closing brace of the JSON object; your entire reply is only that one JSON object and nothing may follow it.\n\
+            No prose outside the JSON object.\n\n\
             JSON shape (same schema as tool mode; tools run only when the router enables tool mode):\n\
             {{\n\
               \"thought\": \"your internal reasoning (never shown to user)\",\n\

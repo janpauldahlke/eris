@@ -16,7 +16,7 @@ figment = { version = "0.10", features = ["toml", "env"] }
 serde = { version = "1.0", features = ["derive"] }
 dotenvy = "0.15"
 async-trait = "0.1"
-ollama-rs = { version = "0.2", features = ["stream"] }
+ollama-rs = { version = "0.3", features = ["stream"] }
 tokio-stream = "0.1.18"
 futures = "0.3"
 moka = { version = "0.12", features = ["future"] }

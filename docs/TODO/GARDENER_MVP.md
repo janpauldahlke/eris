@@ -194,6 +194,8 @@ Not new tools for the core loop (initially): reuse wiki:summary, vault:read, vau
 
 State / when it runs: Define explicitly: e.g. only when AgentState::Idle and user idle timeout exceeded; or explicit user toggle in config. Avoid running heavy LLM + HTTP work during active Chat without consent.
 
+**Idle / heartbeat vs future Sleep or Yield (do not fix piecemeal here):** Today’s `idle_timeout_secs` + `watch`-based heartbeat can send an interrupt while the user is away; the next `step()` may hit `interrupt_rx.changed()` before the LLM returns (`FcpError::Interrupted`). That is **not** “stuck in Reflect” — it is **idle machinery** colliding with the first turn after a long gap. Short-input conversational routing can still succeed. A proper fix belongs with **explicit separation of human-idle vs scheduler-yield** — see [SLEEP_MODE.md](./SLEEP_MODE.md) (fourth JSON status / `Sleep` or `Yield`) and the Gardener trigger design in this doc. Track integration there; avoid one-off heartbeat tweaks unless they are clearly subsumed by that model.
+
 Gatekeeper: Gardener executions may run as internal tool invocations with appropriate state, or a dedicated internal path that still respects vault validation (validate_path_is_mutable, 00_Core immutability) — design decision when implementing; must not bypass security checks.
 
 B.4 Zettel template (contract)

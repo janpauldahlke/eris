@@ -84,12 +84,13 @@ impl LlmEngine for OllamaClient {
             message_count = chat_messages.len(),
             timeout_secs = self.config.generation_timeout_secs,
             streaming = stream_tx.is_some(),
+            ollama_think = self.config.enable_reasoning_fsm,
             "Sending chat request to Ollama"
         );
 
-        use ollama_rs::generation::options::GenerationOptions;
+        use ollama_rs::models::ModelOptions;
 
-        let gen_options = GenerationOptions::default()
+        let gen_options = ModelOptions::default()
             .num_ctx(self.config.num_ctx as u64);
 
         let request = ChatMessageRequest::new(
@@ -97,7 +98,8 @@ impl LlmEngine for OllamaClient {
             chat_messages
         )
         .format(FormatType::Json)
-        .options(gen_options);
+        .options(gen_options)
+        .think(self.config.enable_reasoning_fsm);
 
         let timeout = Duration::from_secs(self.config.generation_timeout_secs);
 

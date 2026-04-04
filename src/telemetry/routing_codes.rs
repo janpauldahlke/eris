@@ -16,6 +16,8 @@ pub const ISSUE_PRELLM_ROUTER_UNAVAILABLE: &str = "PRELLM_ROUTER_UNAVAILABLE";
 pub const ISSUE_PRELLM_SEMANTIC_EMPTY: &str = "PRELLM_SEMANTIC_EMPTY";
 pub const ISSUE_PRELLM_SEMANTIC_HIT: &str = "PRELLM_SEMANTIC_HIT";
 pub const ISSUE_PRELLM_MATCH_ERROR: &str = "PRELLM_MATCH_ERROR";
+/// Post-LLM: model emitted valid envelope JSON then non-whitespace prose after the closing `}`.
+pub const ISSUE_LLM_TRAILING_AFTER_JSON: &str = "LLM_TRAILING_AFTER_JSON";
 
 /// Maps the physical `(tools_needed, router_match_len)` after routing completes.
 /// Does not distinguish alarm vs short-input (both `tools_needed == false`, `len == 0`); use `issue` for that.

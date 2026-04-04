@@ -36,3 +36,5 @@ In your src/orchestrator/core.rs, you will add a new match arm to your process_l
     If status == Sleep: The Orchestrator does not push anything to the TUI. It simply clears the active execution context, drops the thread, and resets the background timer. It goes dark until the next cron tick or agenda trigger.
 
 By separating Idle (human interactive) from Sleep (machine autonomous), you keep the LLM's context window clean and completely eliminate the "talking to a wall" hallucination vector.
+
+**Related:** [GARDENER_MVP.md](./GARDENER_MVP.md) §B.3 notes how the current heartbeat / idle interrupt interacts with post-absence turns; fold that into Sleep/Yield rather than ad-hoc heartbeat patches.

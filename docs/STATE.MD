@@ -88,3 +88,5 @@
 - [x] improvement (S0x): harden semantis for memorie and web fetch to harden boundaries
 - [x] improvement (S03): improve memory retrival analysis
 - [x] META curate docs and update architecture overview
+- [x] BUG (JSONS_CONTRACT): enforce jsons contract and message_to_user contract
+- [x] CHANGE (S4.03): gate heartbeat behind feture flag, disable it

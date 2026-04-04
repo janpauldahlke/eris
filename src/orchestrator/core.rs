@@ -9,6 +9,7 @@ use crate::orchestrator::post_tool_guidance::{
 };
 use crate::orchestrator::context::ContextAssembler;
 use crate::orchestrator::context_view::{build_llm_view, ContextViewSettings};
+use crate::orchestrator::json_envelope::{split_leading_json_object, trailing_content_after_valid_llm_json};
 use crate::orchestrator::r#loop::directive_policy::decide_transition_from_directive;
 use crate::orchestrator::r#loop::recovery_policy::{classify_tool_failure, ToolFailureAction};
 use crate::orchestrator::r#loop::tool_batch::ToolBatchDecision;
@@ -110,18 +111,6 @@ impl<E: LlmEngine> Orchestrator<E> {
             .filter(|s| !s.is_empty())
             .unwrap_or("ERIS")
             .to_string()
-    }
-
-    fn extract_json_slice(response_json: &str) -> &str {
-        if let (Some(start), Some(end)) = (response_json.find('{'), response_json.rfind('}')) {
-            if start <= end {
-                &response_json[start..=end]
-            } else {
-                response_json
-            }
-        } else {
-            response_json
-        }
     }
 
     fn trim_chars(input: &str, max_len: usize) -> String {
@@ -628,6 +617,33 @@ impl<E: LlmEngine> Orchestrator<E> {
                 }
             };
 
+            if trailing_content_after_valid_llm_json(&response.content) {
+                let (_, tail) = split_leading_json_object(&response.content);
+                let preview: String = tail.trim().chars().take(240).collect();
+                tracing::warn!(
+                    category = routing_codes::CATEGORY_ROUTING,
+                    issue = routing_codes::ISSUE_LLM_TRAILING_AFTER_JSON,
+                    outcome = "recover",
+                    turn_seq,
+                    trail_preview = %preview,
+                    "JSON protocol violation: non-whitespace after closing JSON object"
+                );
+                let directive = LoopDirective::RecoverFromFuckup(
+                    "Trailing content after the JSON object. Retry; put all user text in message_to_user only."
+                        .to_string(),
+                );
+                let transition = decide_transition_from_directive(directive);
+                let control = self.apply_transition(transition).await?;
+                self.last_llm_ms = llm_ms_acc;
+                self.last_tool_ms = tool_ms_acc;
+                self.last_total_ms = step_start.elapsed().as_millis() as u64;
+                self.broadcast_state().await;
+                if matches!(control, TransitionControl::ContinueLoop) {
+                    continue;
+                }
+                return Ok(());
+            }
+
             self.emit_optional_user_message(&response.content).await;
 
             self.chat_stack.push(crate::engine::Message {
@@ -867,7 +883,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             return;
         };
 
-        let json_slice = Self::extract_json_slice(response_content);
+        let json_slice = split_leading_json_object(response_content).0;
         let Ok(parsed) = serde_json::from_str::<LlmResponse>(json_slice) else {
             return;
         };
@@ -1170,7 +1186,7 @@ impl<E: LlmEngine> Orchestrator<E> {
     }
 
     pub fn process_llm_response(&mut self, response_json: &str) -> LoopDirective {
-        let json_str = Self::extract_json_slice(response_json);
+        let json_str = split_leading_json_object(response_json).0;
 
         tracing::debug!(extracted_json_len = json_str.len(), "Parsing LLM JSON response");
 
