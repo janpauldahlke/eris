@@ -25,7 +25,7 @@
 
 ## Boot-time vault ingest
 
-`SemanticBrain::ingest_vault` walks the vault (from router) and pushes markdown into Qdrant; failures are logged but may not abort chat if brain is optional.
+`SemanticBrain::ingest_vault` walks top-level `*.md` in `10_Episodic`, `20_Semantic`, `30_Persons`, `40_User`, and `99_USER_UPLOADED` (from router) and pushes them into Qdrant; failures are logged but may not abort chat if brain is optional.
 
 ## Mental model
 

@@ -45,6 +45,15 @@ pub struct MemoryQueryOptions<'a> {
     pub qdrant_oversample_min: u64,
 }
 
+/// Top-level vault directories scanned at boot for `.md` files ([`SemanticBrain::ingest_vault`]).
+pub(crate) const VAULT_INGEST_SUBDIRS: &[&str] = &[
+    "10_Episodic",
+    "20_Semantic",
+    "30_Persons",
+    "40_User",
+    "99_USER_UPLOADED",
+];
+
 /// One vector hit before formatting for the LLM.
 #[derive(Debug, Clone)]
 pub struct MemoryHit {
@@ -314,10 +323,9 @@ impl SemanticBrain {
             return Ok(0);
         }
 
-        let subdirs = ["10_Episodic", "20_Semantic", "30_Persons", "40_User"];
         let mut count = 0usize;
 
-        for subdir in &subdirs {
+        for subdir in VAULT_INGEST_SUBDIRS {
             let dir = vault_root.join(subdir);
             if !dir.exists() {
                 continue;
@@ -741,6 +749,14 @@ mod tests {
         )
         .await;
         assert!(brain_result.is_err(), "expected failure after retries on dead port");
+    }
+
+    #[test]
+    fn vault_ingest_subdirs_include_upload_inbox() {
+        assert!(
+            VAULT_INGEST_SUBDIRS.contains(&"99_USER_UPLOADED"),
+            "boot ingest must scan 99_USER_UPLOADED"
+        );
     }
 
     #[test]

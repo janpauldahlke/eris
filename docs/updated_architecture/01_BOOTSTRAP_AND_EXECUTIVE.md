@@ -50,7 +50,7 @@ High-level sequence:
 6. **Peripherals:** `peripherals::ensure_peripherals_for_chat` — start Ollama/Qdrant if not reachable.
 7. **Engine:** `Ollama::new` + `OllamaClient::with_token_metrics`.
 8. **SemanticBrain:** `SemanticBrain::new_with_connect_retries` or `None` if `require_semantic_brain` is false and connection fails.
-9. **Boot ingest:** `semantic.ingest_vault(&workspace_root)` if brain online.
+9. **Boot ingest:** `semantic.ingest_vault(&workspace_root)` if brain online (top-level `.md` in episodic/semantic/persons/user/**`99_USER_UPLOADED`** dirs).
 10. **Gatekeeper:** register all tools (vault, agenda, web, system, clock, weather, wiki, memory—memory tools conditional on semantic).
 11. **Descriptors:** `ToolDescriptorRegistry::load_embedded` + `assert_covers_registered_tools`.
 12. **ToolRouter:** optional; if `new` fails, orchestrator runs with full tool roster always.
