@@ -1,0 +1,13 @@
+{
+  "gws_builder_version": "0.1.0",
+  "generated_at": "2026-04-06T14:05:36Z",
+  "services": {
+    "gmail": {
+      "revision": "20260329",
+      "json_sha256": "8ff4091231f07fb28e265161883b78f4e1f0d15576f3c3c40912505ca82728ec",
+      "actions_emitted": 3,
+      "schemas_emitted": 7,
+      "filter_applied": "Whitelist([\"users.messages.list\", \"users.messages.get\", \"users.messages.send\"])"
+    }
+  }
+}

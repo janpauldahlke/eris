@@ -22,6 +22,7 @@ pub mod ingest;
 pub mod util;
 pub mod orchestrator;
 pub mod ui;
+pub mod generated;
 
 #[tokio::main]
 async fn main() -> ExitCode {

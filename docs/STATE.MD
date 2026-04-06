@@ -95,4 +95,6 @@
 
 06/04/2026
 
-- [] integrate gws-builder crate
+- [x] integrate gws-builder crate
+- [x] feature(S07TOOLS):create mail:send, mail:read, mail:write actions
+- [x] test mail feature after making myself a google workspace admin

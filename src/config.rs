@@ -4,6 +4,14 @@ use std::path::PathBuf;
 
 use crate::tools::ToolContextViewHint;
 
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Default)]
+pub struct GoogleConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    pub service_account_key: Option<PathBuf>,
+    pub impersonate_user: Option<String>,
+}
+
 /// HTTP API profile for [`crate::util::ApiHttpClient`] (URL/query/header templates). Map keys are profile ids (`[apis.<id>]` in `.fcp/config.toml`).
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct ApiProfile {
@@ -130,6 +138,8 @@ pub struct AppConfig {
     /// Optional per-tool overrides (merged on top of each tool’s `context_view_hint()`).
     #[serde(default)]
     pub optimize_context_tool_overrides: HashMap<String, ToolContextViewHint>,
+    #[serde(default)]
+    pub google: GoogleConfig,
     /// When true, keep full JSON parameter schemas in the LLM view for tool definitions (larger prompt). When false and [`Self::optimize_context`] is true, [`crate::orchestrator::context_view::build_llm_view`] strips `parameters` in that block only; [`crate::orchestrator::core::Orchestrator::chat_stack`] stays full. Independently, the orchestrator forces full schemas for one recovery LLM pass after a Gatekeeper schema fault ([`crate::orchestrator::core::Orchestrator::force_full_tool_schemas_in_llm_view`]).
     #[serde(default = "default_optimize_context_full_tool_schemas")]
     pub optimize_context_full_tool_schemas: bool,
@@ -395,6 +405,7 @@ impl Default for AppConfig {
             optimize_context_max_tool_snippet_chars: default_optimize_context_max_tool_snippet_chars(),
             optimize_context_assistant_compact: default_optimize_context_assistant_compact(),
             optimize_context_tool_overrides: HashMap::new(),
+            google: GoogleConfig::default(),
             optimize_context_full_tool_schemas: default_optimize_context_full_tool_schemas(),
             memory_query_default_top_k: default_memory_query_default_top_k(),
             memory_query_top_k_max: default_memory_query_top_k_max(),

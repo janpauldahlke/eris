@@ -247,6 +247,13 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                 api: api_http,
             }));
 
+            if let Some(gmail) = crate::util::GmailClient::new(&config.google).await? {
+                let gmail = Arc::new(gmail);
+                gatekeeper.register(Arc::new(crate::tools::mail::MailCheckTool { client: gmail.clone() }));
+                gatekeeper.register(Arc::new(crate::tools::mail::MailReadTool { client: gmail.clone() }));
+                gatekeeper.register(Arc::new(crate::tools::mail::MailWriteTool { client: gmail }));
+            }
+
             let max_content_chars = config.num_ctx * 3;
             gatekeeper.register(Arc::new(crate::tools::memory::MemoryStageTool {
                 ephemeral: ephemeral.clone(),

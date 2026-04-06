@@ -9,6 +9,10 @@ pub enum ToolFailureAction {
 }
 
 /// Pure policy: classify a tool error without mutating orchestrator state.
+///
+/// `NetworkFault` is recoverable here (OAuth/API unreachable, etc.): the batch enters `Recover` so the
+/// model can answer with `message_to_user` instead of aborting the orchestrator. LLM `generate`
+/// failures are unrelated — they do not pass through this classifier.
 pub fn classify_tool_failure(err: &FcpError, schema_already_attempted: bool) -> ToolFailureAction {
     let schema_or_parse = matches!(err, FcpError::SchemaViolation(_) | FcpError::ParseFault(_));
     if schema_or_parse && !schema_already_attempted {
@@ -21,6 +25,7 @@ pub fn classify_tool_failure(err: &FcpError, schema_already_attempted: bool) -> 
             | FcpError::SchemaViolation(_)
             | FcpError::Io(_)
             | FcpError::ParseFault(_)
+            | FcpError::NetworkFault(_)
     ) {
         ToolFailureAction::Recoverable
     } else {
@@ -47,9 +52,9 @@ mod tests {
     }
 
     #[test]
-    fn network_error_is_fatal() {
+    fn network_error_from_tool_is_recoverable() {
         let err = FcpError::NetworkFault("offline".to_string());
         let action = classify_tool_failure(&err, false);
-        assert_eq!(action, ToolFailureAction::Fatal);
+        assert_eq!(action, ToolFailureAction::Recoverable);
     }
 }

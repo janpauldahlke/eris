@@ -424,4 +424,65 @@ name = "url_instead"
 args = { title = "https://en.wikipedia.org/wiki/Foo" }
 rationale = "User pasted a URL; use web:fetch instead."
 "#,
+    r#"descriptor_version = 1
+tool_name = "mail:check"
+short_description = "List recent or filtered Gmail messages with subject, from, date, and preview per row."
+when_to_use = "Use when the user wants to see recent or filtered messages. Supports Gmail search query syntax (e.g. is:unread, from:boss@co.com). Each row includes id, thread, subject, from, date, and a short preview; use mail:read for full body."
+when_not_to_use = "Do not use to read full message body (use mail:read) or send mail (use mail:write)."
+routing_hints = ["check email", "new mail", "inbox", "unread messages", "check gmail", "any new emails", "email summary", "subject line", "who emailed me"]
+
+[[examples_good]]
+name = "check_unread"
+args = { query = "is:unread", max_results = 5 }
+rationale = "Filters for unread messages."
+
+[[examples_good]]
+name = "check_recent"
+args = {}
+rationale = "Lists recent messages with defaults."
+
+[[examples_bad]]
+name = "read_full_message"
+args = { query = "subject:report" }
+rationale = "Listing shows previews only; use mail:read for full content."
+"#,
+    r#"descriptor_version = 1
+tool_name = "mail:read"
+short_description = "Read full content of a Gmail message by ID."
+when_to_use = "Use to read the full content of a specific message by ID (from mail:check results). Returns parsed headers and body text."
+when_not_to_use = "Do not use without a message_id from mail:check. Do not use to list messages or send mail."
+routing_hints = ["read email", "open message", "show email", "email details", "message content", "full email"]
+
+[[examples_good]]
+name = "read_by_id"
+args = { message_id = "18f1a2b3c4d5e6f7" }
+rationale = "Reads a specific message by ID from mail:check."
+
+[[examples_bad]]
+name = "missing_id"
+args = {}
+rationale = "message_id is required."
+"#,
+    r#"descriptor_version = 1
+tool_name = "mail:write"
+short_description = "Send an email via Gmail."
+when_to_use = "Use to compose and send an email. Requires to, subject, and body. Optionally cc and bcc."
+when_not_to_use = "Do not use to read or check mail. Do not use without explicit user intent to send."
+routing_hints = ["send email", "compose mail", "write email", "reply", "email to", "send a message"]
+
+[[examples_good]]
+name = "send_basic"
+args = { to = "colleague@example.com", subject = "Meeting notes", body = "Here are the notes from today." }
+rationale = "Valid send with required fields."
+
+[[examples_good]]
+name = "send_with_cc"
+args = { to = "main@example.com", subject = "Update", body = "Status update.", cc = "team@example.com" }
+rationale = "CC is optional but valid."
+
+[[examples_bad]]
+name = "empty_to"
+args = { to = "", subject = "Hi", body = "Hello" }
+rationale = "to must be a valid email address."
+"#,
 ];
