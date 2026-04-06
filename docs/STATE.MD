@@ -92,3 +92,7 @@
 - [x] CHANGE (S4.03): gate heartbeat behind feture flag, disable it
 - [x] allow model to see architecture docs in 99_USER_UPLOADED
 - [x] better json repair advice for recovery
+
+06/04/2026
+
+- [] integrate gws-builder crate
