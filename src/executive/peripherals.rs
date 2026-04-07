@@ -15,6 +15,9 @@ use crate::executive::error::{FcpError, Result};
 
 const READY_TIMEOUT_SECS: u64 = 20;
 const READY_POLL_MS: u64 = 250;
+/// If the first probe misses a slow-starting system Ollama (e.g. login item), wait this long
+/// before spawning a second `ollama serve`, which duplicates RAM use.
+const PRE_SPAWN_OLLAMA_WAIT_SECS: u64 = 30;
 
 enum ManagedProcessKind {
     Child(Child),
@@ -90,20 +93,28 @@ pub async fn ensure_peripherals_for_chat(config: &AppConfig) -> Result<Periphera
     let mut lifecycle = PeripheralLifecycle::default();
 
     if !ollama_reachable(&config.ollama_host).await {
-        tracing::warn!("Ollama not reachable at startup, attempting Rust-managed launch");
-        let mut child = spawn_ollama_daemon(config)?;
-        if !wait_for_ollama(&config.ollama_host, READY_TIMEOUT_SECS).await {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(FcpError::NetworkFault(
-                "FATAL: Ollama daemon failed to become ready after launch attempt.".into(),
-            ));
+        tracing::info!(
+            wait_secs = PRE_SPAWN_OLLAMA_WAIT_SECS,
+            "Ollama not reachable yet; waiting before attempting a managed launch"
+        );
+        if wait_for_ollama(&config.ollama_host, PRE_SPAWN_OLLAMA_WAIT_SECS).await {
+            tracing::info!("Ollama became reachable during pre-spawn wait; not launching a managed instance");
+        } else {
+            tracing::warn!("Ollama still not reachable after extended wait; attempting Rust-managed launch");
+            let mut child = spawn_ollama_daemon(config)?;
+            if !wait_for_ollama(&config.ollama_host, READY_TIMEOUT_SECS).await {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(FcpError::NetworkFault(
+                    "FATAL: Ollama daemon failed to become ready after launch attempt.".into(),
+                ));
+            }
+            lifecycle.ollama = Some(ManagedProcess {
+                name: "ollama",
+                kind: ManagedProcessKind::Child(child),
+            });
+            tracing::info!("Ollama launched and reachable");
         }
-        lifecycle.ollama = Some(ManagedProcess {
-            name: "ollama",
-            kind: ManagedProcessKind::Child(child),
-        });
-        tracing::info!("Ollama launched and reachable");
     }
 
     if !qdrant_reachable(&config.qdrant_url).await {

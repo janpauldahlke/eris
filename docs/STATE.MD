@@ -102,3 +102,4 @@
 07/04/2026
 
 - [x] improvement (s02): maps tags to vault spaces
+- [x] better startup to prevent multiple ollama instances that kill RAM
