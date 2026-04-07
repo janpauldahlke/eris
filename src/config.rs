@@ -59,6 +59,74 @@ fn default_vault_watch_paths() -> Vec<String> {
     ]
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct MemoryRoutingRule {
+    pub folder: String,
+    #[serde(default)]
+    pub keywords: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct MemoryRoutingConfig {
+    #[serde(default = "default_memory_routing_default_folder")]
+    pub default: String,
+    #[serde(default = "default_memory_routing_rules")]
+    pub rules: Vec<MemoryRoutingRule>,
+}
+
+fn default_memory_routing_default_folder() -> String {
+    "10_Episodic".to_string()
+}
+
+fn default_memory_routing_rules() -> Vec<MemoryRoutingRule> {
+    vec![
+        MemoryRoutingRule {
+            folder: "40_User".to_string(),
+            keywords: vec![
+                "user".to_string(),
+                "preference".to_string(),
+                "prefs".to_string(),
+                "settings".to_string(),
+                "about_me".to_string(),
+            ],
+        },
+        MemoryRoutingRule {
+            folder: "30_Persons".to_string(),
+            keywords: vec![
+                "person".to_string(),
+                "people".to_string(),
+                "contact".to_string(),
+                "profile".to_string(),
+            ],
+        },
+        MemoryRoutingRule {
+            folder: "20_Semantic".to_string(),
+            keywords: vec![
+                "semantic".to_string(),
+                "knowledge".to_string(),
+                "api".to_string(),
+                "reference".to_string(),
+                "concept".to_string(),
+                "definition".to_string(),
+                "technical".to_string(),
+                "tech".to_string(),
+                "programmer".to_string(),
+                "programming".to_string(),
+                "system".to_string(),
+            ],
+        },
+    ]
+}
+
+impl Default for MemoryRoutingConfig {
+    fn default() -> Self {
+        Self {
+            default: default_memory_routing_default_folder(),
+            rules: default_memory_routing_rules(),
+        }
+    }
+}
+
 impl Default for VaultWatchConfig {
     fn default() -> Self {
         Self {
@@ -140,6 +208,8 @@ pub struct AppConfig {
     pub optimize_context_tool_overrides: HashMap<String, ToolContextViewHint>,
     #[serde(default)]
     pub google: GoogleConfig,
+    #[serde(default)]
+    pub memory_routing: MemoryRoutingConfig,
     /// When true, keep full JSON parameter schemas in the LLM view for tool definitions (larger prompt). When false and [`Self::optimize_context`] is true, [`crate::orchestrator::context_view::build_llm_view`] strips `parameters` in that block only; [`crate::orchestrator::core::Orchestrator::chat_stack`] stays full. Independently, the orchestrator forces full schemas for one recovery LLM pass after a Gatekeeper schema fault ([`crate::orchestrator::core::Orchestrator::force_full_tool_schemas_in_llm_view`]).
     #[serde(default = "default_optimize_context_full_tool_schemas")]
     pub optimize_context_full_tool_schemas: bool,
@@ -406,6 +476,7 @@ impl Default for AppConfig {
             optimize_context_assistant_compact: default_optimize_context_assistant_compact(),
             optimize_context_tool_overrides: HashMap::new(),
             google: GoogleConfig::default(),
+            memory_routing: MemoryRoutingConfig::default(),
             optimize_context_full_tool_schemas: default_optimize_context_full_tool_schemas(),
             memory_query_default_top_k: default_memory_query_default_top_k(),
             memory_query_top_k_max: default_memory_query_top_k_max(),

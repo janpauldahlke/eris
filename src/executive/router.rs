@@ -270,11 +270,13 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                     workspace_root: workspace_root.clone(),
                     semantic: semantic.clone(),
                     ephemeral: ephemeral.clone(),
+                    memory_routing: config.memory_routing.clone(),
                 }));
                 gatekeeper.register(Arc::new(crate::tools::memory::MemoryCommitAllTool {
                     workspace_root: workspace_root.clone(),
                     semantic: semantic.clone(),
                     ephemeral: ephemeral.clone(),
+                    memory_routing: config.memory_routing.clone(),
                 }));
                 gatekeeper.register(Arc::new(crate::tools::memory::MemoryQueryTool {
                     workspace: config.workspace.clone(),

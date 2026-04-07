@@ -98,3 +98,7 @@
 - [x] integrate gws-builder crate
 - [x] feature(S07TOOLS):create mail:send, mail:read, mail:write actions
 - [x] test mail feature after making myself a google workspace admin
+
+07/04/2026
+
+- [x] improvement (s02): maps tags to vault spaces

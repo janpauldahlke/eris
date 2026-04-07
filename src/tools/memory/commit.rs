@@ -9,6 +9,7 @@ use crate::executive::error::{FcpError, Result};
 use crate::tools::traits::Tool;
 use crate::memory::semantic::SemanticBrain;
 use crate::memory::ephemeral::{EphemeralMemory, is_web_artifact_staging, resolve_vault_subdir};
+use crate::config::MemoryRoutingConfig;
 
 #[derive(Deserialize, JsonSchema)]
 pub struct MemoryCommitArgs {
@@ -20,6 +21,7 @@ pub struct MemoryCommitTool {
     pub workspace_root: std::path::PathBuf,
     pub semantic: Arc<SemanticBrain>,
     pub ephemeral: Arc<EphemeralMemory>,
+    pub memory_routing: MemoryRoutingConfig,
 }
 
 #[async_trait]
@@ -73,7 +75,7 @@ impl Tool for MemoryCommitTool {
             );
         }
 
-        let target_subdir = resolve_vault_subdir(&entry.tags);
+        let target_subdir = resolve_vault_subdir(&entry.tags, &self.memory_routing);
 
         let sanitized = entry.title.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
         let dir = self.workspace_root.join(target_subdir);

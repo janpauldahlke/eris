@@ -6,6 +6,7 @@ use crate::executive::error::Result;
 
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
+use crate::config::MemoryRoutingConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CacheValue {
@@ -216,20 +217,41 @@ pub fn is_web_artifact_staging(tags: &[String], title: &str) -> bool {
     tags.iter().any(|t| t == "web_artifact") || title.starts_with("web_artifact:")
 }
 
-pub fn resolve_vault_subdir(tags: &[String]) -> &'static str {
+pub fn resolve_vault_subdir<'a>(tags: &[String], routing: &'a MemoryRoutingConfig) -> &'a str {
+    fn split_fragments(tag: &str) -> Vec<String> {
+        tag.to_lowercase()
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|part| !part.is_empty())
+            .map(ToOwned::to_owned)
+            .collect()
+    }
+
+    let normalized_keywords: Vec<(&str, Vec<String>)> = routing
+        .rules
+        .iter()
+        .map(|rule| {
+            let keys = rule
+                .keywords
+                .iter()
+                .flat_map(|k| split_fragments(k))
+                .collect::<Vec<_>>();
+            (rule.folder.as_str(), keys)
+        })
+        .collect();
+
+    let mut normalized = Vec::new();
     for tag in tags {
-        let t = tag.to_lowercase();
-        if t == "person" || t == "persons" || t == "contact" || t == "people" || t == "user_profile" {
-            return "30_Persons";
-        }
-        if t == "user" || t == "preference" || t == "prefs" || t == "settings" || t == "about_me" {
-            return "40_User";
-        }
-        if t == "semantic" || t == "knowledge" || t == "api" || t == "reference" || t == "concept" || t == "definition" {
-            return "20_Semantic";
+        normalized.extend(split_fragments(tag));
+    }
+
+    for token in &normalized {
+        for (folder, keywords) in &normalized_keywords {
+            if keywords.iter().any(|k| k == token) {
+                return folder;
+            }
         }
     }
-    "10_Episodic"
+    routing.default.as_str()
 }
 
 pub fn spawn_snapshot_daemon(
@@ -290,6 +312,20 @@ mod tests {
         assert!(is_web_artifact_staging(&["web_artifact".into(), "external".into()], "anything"));
         assert!(is_web_artifact_staging(&["news".into()], "web_artifact:uuid-here"));
         assert!(!is_web_artifact_staging(&["user".into()], "hagbard_profile"));
+    }
+
+    #[test]
+    fn test_resolve_vault_subdir_splits_compound_tags() {
+        let tags = vec!["user/preference".to_string()];
+        let routing = MemoryRoutingConfig::default();
+        assert_eq!(resolve_vault_subdir(&tags, &routing), "40_User");
+    }
+
+    #[test]
+    fn test_resolve_vault_subdir_routes_technical_knowledge_to_semantic() {
+        let tags = vec!["system-knowledge".to_string(), "programmer".to_string()];
+        let routing = MemoryRoutingConfig::default();
+        assert_eq!(resolve_vault_subdir(&tags, &routing), "20_Semantic");
     }
 
     #[tokio::test]
