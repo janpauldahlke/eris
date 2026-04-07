@@ -251,6 +251,9 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                 let gmail = Arc::new(gmail);
                 gatekeeper.register(Arc::new(crate::tools::mail::MailCheckTool { client: gmail.clone() }));
                 gatekeeper.register(Arc::new(crate::tools::mail::MailReadTool { client: gmail.clone() }));
+                gatekeeper.register(Arc::new(crate::tools::mail::MailDigestTool { client: gmail.clone() }));
+                gatekeeper.register(Arc::new(crate::tools::mail::MailDeleteTool { client: gmail.clone() }));
+                gatekeeper.register(Arc::new(crate::tools::mail::MailMoveTool { client: gmail.clone() }));
                 gatekeeper.register(Arc::new(crate::tools::mail::MailWriteTool { client: gmail }));
             }
 

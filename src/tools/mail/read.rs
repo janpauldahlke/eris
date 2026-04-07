@@ -62,7 +62,17 @@ impl Tool for MailReadTool {
             }
         })?;
 
-        Ok(format_message_from_json(&v))
+        let out = format_message_from_json(&v);
+        if let Err(e) = self.client.mark_message_read(id, "mail:read").await {
+            tracing::warn!(
+                error = %e,
+                message_id = %id,
+                "mail:read could not mark message as read; body still returned"
+            );
+        } else {
+            tracing::debug!(message_id = %id, "mail:read marked message as read");
+        }
+        Ok(out)
     }
 }
 

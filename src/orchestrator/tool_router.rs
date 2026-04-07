@@ -152,9 +152,12 @@ impl ToolRouter {
             "weather:current" => "weather now, temperature outside, is it raining, rainfall, sunny or cloudy, conditions today, current conditions, what's the weather like",
             "weather:forecast" => "weather forecast, hourly temperature, next days weather, will it rain tomorrow, rain outlook, sun or clouds, upcoming weather",
             "wiki:summary" => "wikipedia, encyclopedia, what is X, who was, summary of topic, general knowledge, what does wikipedia say, define concept, historical figure, science topic overview",
-            "mail:check" => "check email, new mail, inbox, unread messages, check gmail, any new emails, email summary, recent emails",
-            "mail:read" => "read email, open message, show email, email details, message content, full email, read message",
+            "mail:check" => "check email, new mail, inbox, unread messages, check gmail, any new emails, email summary, recent emails, list messages",
+            "mail:read" => "read email, open message, show email, email details, message content, full email, read message, opens mail",
             "mail:write" => "send email, compose mail, write email, reply, email to, send a message, draft email",
+            "mail:digest" => "summarize email, today's mail, digest inbox, what came in today, recap messages, overview of recent gmail, batch list mail",
+            "mail:delete" => "delete email, trash message, remove email, get rid of mail, discard message",
+            "mail:move" => "move email to folder, label message, file under label, move to spam, archive to label, put mail in ebay folder",
             _ => "",
         };
         if hints.is_empty() {

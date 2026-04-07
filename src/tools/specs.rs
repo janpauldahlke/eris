@@ -485,4 +485,65 @@ name = "empty_to"
 args = { to = "", subject = "Hi", body = "Hello" }
 rationale = "to must be a valid email address."
 "#,
+    r#"descriptor_version = 1
+tool_name = "mail:digest"
+short_description = "List many Gmail messages (metadata + snippet) in one block — default is mail from today."
+when_to_use = "Use when the user wants a summary or digest of recent mail across several messages. Default query is mail from today (local date); override with Gmail search syntax. Returns snippets only; use mail:read for full body."
+when_not_to_use = "Do not use for a single message (use mail:read) or a quick inbox peek (use mail:check). Do not use to send or move mail."
+routing_hints = ["summarize email", "today's mail", "digest", "recap inbox", "what email did I get", "overview of messages", "recent gmail batch"]
+
+[[examples_good]]
+name = "digest_today_default"
+args = {}
+rationale = "Uses default after: today for a batch digest."
+
+[[examples_good]]
+name = "digest_unread_week"
+args = { query = "is:unread newer_than:7d", max_messages = 30 }
+rationale = "Custom query for a weekly unread digest."
+
+[[examples_bad]]
+name = "single_message"
+args = { query = "rfc822msgid:foo" }
+rationale = "One specific message; use mail:read for full content."
+"#,
+    r#"descriptor_version = 1
+tool_name = "mail:delete"
+short_description = "Trash or permanently delete a Gmail message by id."
+when_to_use = "Use when the user clearly wants to delete or discard a specific message they already identified (message_id from mail:check or mail:digest). Default is Trash (recoverable)."
+when_not_to_use = "Do not use without a message_id. Do not use permanent=true unless the user explicitly asks for permanent deletion."
+routing_hints = ["delete email", "trash this message", "remove mail", "discard email", "get rid of message"]
+
+[[examples_good]]
+name = "trash_by_id"
+args = { message_id = "18f1a2b3c4d5e6f7" }
+rationale = "Moves message to Trash."
+
+[[examples_bad]]
+name = "missing_id"
+args = {}
+rationale = "message_id is required."
+"#,
+    r#"descriptor_version = 1
+tool_name = "mail:move"
+short_description = "Move a message to a label (folder) or Spam; creates user labels if missing."
+when_to_use = "Use when the user wants to file, label, or move a specific message (message_id from mail:check). Target \"spam\" moves to Spam. Other names add a user label and create it if needed."
+when_not_to_use = "Do not use without message_id. Do not use to read mail. If the user only wants to delete, use mail:delete."
+routing_hints = ["move to folder", "label this email", "file under", "move to spam", "put mail in ebay", "organize email into label"]
+
+[[examples_good]]
+name = "move_spam"
+args = { message_id = "abc123", target = "spam" }
+rationale = "Uses system Spam label."
+
+[[examples_good]]
+name = "move_new_label"
+args = { message_id = "abc123", target = "ebay" }
+rationale = "Creates label ebay if missing and moves the message."
+
+[[examples_bad]]
+name = "empty_target"
+args = { message_id = "x", target = "" }
+rationale = "target must name a folder or spam."
+"#,
 ];

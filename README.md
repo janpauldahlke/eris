@@ -147,3 +147,49 @@ You type in the **TUI**; messages flow through **channels** to the **orchestrato
 - **Semantics:** If Qdrant is reachable, boot may **ingest** markdown into the collection `fcp_vault_{workspace}`. If not and `require_semantic_brain` is true, startup fails; if false, chat runs without vector tools.
 - **Developers:** New tools and gatekeeper rules: [docs/ADDING_A_TOOL.md](docs/ADDING_A_TOOL.md).
 
+## Natural language → tool routing (phrase compendium)
+
+Tool choice is **not** parsed from rigid commands. The orchestrator’s **ToolRouter** ([`src/orchestrator/tool_router.rs`](src/orchestrator/tool_router.rs)) embeds your text with the same model as vector memory (`embed_model_name` in config, default `nomic-embed-text`) and compares it to **precomputed** vectors—one per tool built from the tool name, JSON-schema description, and **`routing_hints`** in the embedded TOML blocks in [`src/tools/specs.rs`](src/tools/specs.rs). Tools whose **cosine similarity** meets `tool_match_threshold` in `.fcp/config.toml` (default **0.50**) are surfaced to the LLM. If a tool has no descriptor hints, `enrich_for_routing` in `tool_router.rs` adds fallback “common triggers” for that tool name.
+
+The **gatekeeper** only enforces **state** and **JSON Schema** on tool calls ([`src/tools/gatekeeper.rs`](src/tools/gatekeeper.rs)); it does not map phrases to tools.
+
+**Extra rules (outside pure similarity):**
+
+- **Short utterances** (≤3 words or ≤15 characters) are treated as chat-only unless you include a URL, a leading `/`, a domain-like token (e.g. `news.ycombinator.com`), or explicit web wording such as `search the web` / `look up online`.
+- **Lexical web guard:** URLs, `www.`, host-shaped tokens, or multi-word phrases like `visit the page`, `open this page`, `read the website`, `search the web` ensure **`web:fetch`** is included when similarity alone would skip it (bare `open`/`visit` alone are ignored so figurative English does not fetch the web).
+
+Representative **`routing_hints`** (say things *like* this—the model still decides, and similarity is fuzzy):
+
+| Tool | Typical phrasing |
+| ---- | ---------------- |
+| **vault:list** | list files, show directory, browse folder, what files exist |
+| **vault:read** | read file, open note, show file, inspect markdown |
+| **vault:write** | save note, write file, append note, create markdown |
+| **memory:query** | search memory, do you remember, what is my name, who am I, user preferences, my identity, recall context |
+| **memory:stage** | remember this, stage memory, temporary memory, hold in staging |
+| **memory:staged_list** | show staged memory, list staged ids, what is staged |
+| **memory:commit** | commit staged memory, persist one memory, save to vault, keep forever |
+| **memory:commit_all** | commit all memories, flush staged memory, bulk commit staged |
+| **agenda:push** | add task, remind me, todo, queue task |
+| **agenda:list** | show tasks, list agenda, pending tasks |
+| **agenda:remove** | remove task, cancel agenda, delete from list, drop task, never mind |
+| **agenda:remind_at** | remind me at/in/about, remember to, nudge/ping me at, snooze, on my agenda or todo list, task reminder |
+| **agenda:complete** | task done, complete task, mark done, finished the … |
+| **web:fetch** | open website, read web page, fetch URL, news from — plus URLs and the lexical phrases above |
+| **web:artifact_query** | search fetched page, query artifact, find in web artifact |
+| **system:health** | health check, system status, CPU/memory usage, Ollama status, diagnostics |
+| **clock:now** | what time is it, current time, timezone, date and time |
+| **clock:timer** | in 30 minutes, countdown, generic timer, label-only reminder (not agenda) |
+| **clock:alarm** | wake me up, alarm clock only, standalone alarm, no todo |
+| **weather:current** | weather now, temperature outside, is it raining, current conditions |
+| **weather:forecast** | forecast, hourly, next days, will it rain tomorrow |
+| **wiki:summary** | Wikipedia, encyclopedia, what is X, who was, define (topic—not a URL) |
+| **mail:check** | check email, inbox, unread, new mail, who emailed me |
+| **mail:read** | read email, open message, full email, message content |
+| **mail:write** | send email, compose mail, reply, email to |
+| **mail:digest** | summarize email, today’s mail, digest, recap inbox |
+| **mail:delete** | delete email, trash message, discard |
+| **mail:move** | move to folder, label email, file under, move to spam |
+
+To change behavior for operators, edit **`routing_hints`** in [`src/tools/specs.rs`](src/tools/specs.rs) (and rebuild); the lexical lists in `tool_router.rs` are for URL/page detection and fallbacks.
+

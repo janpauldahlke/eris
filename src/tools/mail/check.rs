@@ -8,6 +8,7 @@ use serde_json::Value;
 use crate::executive::error::{FcpError, Result};
 use crate::generated::gws_types::gmail::ListMessagesResponse;
 use crate::tools::context_view_hint::{ToolContextViewHint, API_TOOL_SNIPPET_CHARS};
+use crate::tools::mail::common::format_metadata_line;
 use crate::tools::traits::Tool;
 use crate::util::GmailClient;
 
@@ -106,59 +107,10 @@ impl Tool for MailCheckTool {
     }
 }
 
-fn header_value_from_json(headers: &[Value], name: &str) -> Option<String> {
-    for h in headers {
-        let n = h.get("name").and_then(|x| x.as_str())?;
-        if n.eq_ignore_ascii_case(name) {
-            return h.get("value").and_then(|x| x.as_str()).map(String::from);
-        }
-    }
-    None
-}
-
-fn format_metadata_line(v: &Value, fallback_id: &str, fallback_thread: &str) -> String {
-    let id = v.get("id").and_then(|x| x.as_str()).unwrap_or(fallback_id);
-    let thread = v.get("threadId").and_then(|x| x.as_str()).unwrap_or(fallback_thread);
-    let snippet: String = v
-        .get("snippet")
-        .and_then(|s| s.as_str())
-        .unwrap_or("")
-        .chars()
-        .take(120)
-        .collect();
-    let preview = if snippet.is_empty() {
-        "(no preview)".to_string()
-    } else {
-        snippet
-    };
-
-    let (subject, from, date) = v
-        .get("payload")
-        .and_then(|p| p.get("headers"))
-        .and_then(|h| h.as_array())
-        .map(|headers| {
-            (
-                header_value_from_json(headers, "Subject").unwrap_or_else(|| "(no subject)".into()),
-                header_value_from_json(headers, "From").unwrap_or_else(|| "(unknown sender)".into()),
-                header_value_from_json(headers, "Date").unwrap_or_else(|| "".into()),
-            )
-        })
-        .unwrap_or_else(|| {
-            (
-                "(no subject)".into(),
-                "(unknown sender)".into(),
-                String::new(),
-            )
-        });
-
-    format!(
-        "- id={id} | thread={thread} | subject: {subject} | from: {from} | date: {date} | preview: {preview}\n"
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::mail::common::format_metadata_line;
     use serde_json::json;
 
     #[test]
