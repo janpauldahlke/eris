@@ -1,3 +1,4 @@
+use crate::config::AppConfig;
 use crate::executive::error::{FcpError, Result};
 use crate::engine::LlmEngine;
 use crate::tools::Gatekeeper;
@@ -45,6 +46,7 @@ pub struct Orchestrator<E: LlmEngine> {
     pub engine: E,
     pub gatekeeper: Gatekeeper,
     pub ephemeral: Arc<EphemeralMemory>,
+    pub config: Arc<AppConfig>,
     pub context_assembler: ContextAssembler,
     pub tool_router: Option<ToolRouter>,
 
@@ -433,6 +435,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         tool_router: Option<ToolRouter>,
         descriptor_registry: Option<Arc<ToolDescriptorRegistry>>,
         context_view: ContextViewSettings,
+        config: Arc<AppConfig>,
         identity: tokio::sync::watch::Receiver<Arc<str>>,
     ) -> Self {
         Self {
@@ -440,7 +443,12 @@ impl<E: LlmEngine> Orchestrator<E> {
             engine,
             gatekeeper,
             ephemeral,
-            context_assembler: ContextAssembler::new(vault_root, workspace, identity),
+            context_assembler: ContextAssembler::new(
+                vault_root,
+                workspace,
+                identity,
+                config.staged_memory_prompt_max_chars,
+            ),
             tool_router,
             max_recovery_attempts,
             max_tool_rounds,
@@ -465,6 +473,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             tool_map_offer_cap,
             descriptor_registry,
             context_view,
+            config,
             force_full_tool_schemas_in_llm_view: false,
             turn_seq: 0,
             activity_line: None,
@@ -823,6 +832,13 @@ impl<E: LlmEngine> Orchestrator<E> {
         match transition {
             StateTransition::ExecuteTools(_) => Ok(TransitionControl::ContinueLoop),
             StateTransition::Halt => {
+                let user_line = self.last_user_content().to_string();
+                crate::memory::turn_end::apply_user_turn_mentions(
+                    &*self.ephemeral,
+                    &user_line,
+                    &self.config,
+                )
+                .await;
                 self.state = AgentState::Idle;
                 self.tool_rounds = 0;
                 self.recovery_count = 0;
@@ -1502,6 +1518,7 @@ impl<E: LlmEngine> Orchestrator<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::AppConfig;
     use crate::engine::{Message, EngineResponse};
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1600,6 +1617,7 @@ mod tests {
             None,
             None,
             ContextViewSettings::default(),
+            Arc::new(AppConfig::default()),
             id_rx,
         );
 
@@ -1643,6 +1661,7 @@ mod tests {
             None,
             None,
             ContextViewSettings::default(),
+            Arc::new(AppConfig::default()),
             id_rx,
         )
     }
@@ -2032,7 +2051,7 @@ mod tests {
         let workspace = "test_ws";
         
         // Create the core dir so context_assembler has a valid parent
-        let core_dir = vault_root.join(workspace).join("00_Core");
+        let core_dir = vault_root.join(workspace).join("00_Invariants");
         tokio::fs::create_dir_all(&core_dir).await.unwrap();
 
         // Write a mock agenda file
@@ -2067,6 +2086,7 @@ mod tests {
             None,
             None,
             ContextViewSettings::default(),
+            Arc::new(AppConfig::default()),
             id_rx,
         );
 
@@ -2150,7 +2170,7 @@ mod tests {
         let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
         gatekeeper.register(Arc::new(crate::tools::memory::MemoryStageTool {
             ephemeral: ephemeral.clone(),
-            ttl_secs: 60,
+            config: Arc::new(crate::config::AppConfig::default()),
             max_content_chars: 10_000,
         }));
 
@@ -2179,6 +2199,7 @@ mod tests {
             None,
             None,
             ContextViewSettings::default(),
+            Arc::new(AppConfig::default()),
             id_rx,
         );
         orchestrator.state = AgentState::Chat;

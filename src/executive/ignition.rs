@@ -65,16 +65,14 @@ pub async fn run_ignition_sequence(workspace_root: &Path) -> Result<AppConfig> {
         Ok((agent_name, user_name, model_name))
     }).await.map_err(|e| FcpError::Config(format!("Spawn blocking failed: {}", e)))??;
 
-    // 3. The Scaffold
+    // 3. The Scaffold (v2 Zettelkasten roots)
     let dirs_to_create = [
         crate::vault_layout::telemetry_logs_dir(workspace_root),
         crate::vault_layout::tools_dir(workspace_root),
-        workspace_root.join("00_Core"),
-        workspace_root.join("10_Episodic"),
-        workspace_root.join("20_Semantic"),
-        workspace_root.join("30_Persons"),
-        workspace_root.join("40_User"),
-        workspace_root.join("99_USER_UPLOADED"),
+        workspace_root.join("00_Invariants"),
+        workspace_root.join("10_Topology"),
+        workspace_root.join("20_Discourse"),
+        workspace_root.join("30_Synthesis"),
     ];
 
     for dir in &dirs_to_create {
@@ -84,7 +82,7 @@ pub async fn run_ignition_sequence(workspace_root: &Path) -> Result<AppConfig> {
     }
 
     // 4. The Cure (Identity Generation)
-    let identity_path = workspace_root.join("00_Core/Identity.md");
+    let identity_path = workspace_root.join("00_Invariants/Identity.md");
     let mut identity_content = format!(
         "You are an autonomous AI operating in a strict state machine. You MUST communicate EXCLUSIVELY in JSON format matching the schemas provided. Never output plain conversational text.\n\nAgent Name: {} (this is you!)",
         agent_name
@@ -95,7 +93,7 @@ pub async fn run_ignition_sequence(workspace_root: &Path) -> Result<AppConfig> {
             user_name
         ));
     }
-    fs::write(&identity_path, identity_content).await?;
+    fs::write(&identity_path, &identity_content).await?;
 
     fs::metadata(&identity_path).await.map_err(|e| {
         FcpError::WorkspaceFault {

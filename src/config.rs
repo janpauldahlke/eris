@@ -54,77 +54,9 @@ fn default_vault_watch_debounce_ms() -> u64 {
 
 fn default_vault_watch_paths() -> Vec<String> {
     vec![
-        "00_Core/Identity.md".to_string(),
+        "00_Invariants/Identity.md".to_string(),
         "99_USER_UPLOADED".to_string(),
     ]
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-pub struct MemoryRoutingRule {
-    pub folder: String,
-    #[serde(default)]
-    pub keywords: Vec<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-pub struct MemoryRoutingConfig {
-    #[serde(default = "default_memory_routing_default_folder")]
-    pub default: String,
-    #[serde(default = "default_memory_routing_rules")]
-    pub rules: Vec<MemoryRoutingRule>,
-}
-
-fn default_memory_routing_default_folder() -> String {
-    "10_Episodic".to_string()
-}
-
-fn default_memory_routing_rules() -> Vec<MemoryRoutingRule> {
-    vec![
-        MemoryRoutingRule {
-            folder: "40_User".to_string(),
-            keywords: vec![
-                "user".to_string(),
-                "preference".to_string(),
-                "prefs".to_string(),
-                "settings".to_string(),
-                "about_me".to_string(),
-            ],
-        },
-        MemoryRoutingRule {
-            folder: "30_Persons".to_string(),
-            keywords: vec![
-                "person".to_string(),
-                "people".to_string(),
-                "contact".to_string(),
-                "profile".to_string(),
-            ],
-        },
-        MemoryRoutingRule {
-            folder: "20_Semantic".to_string(),
-            keywords: vec![
-                "semantic".to_string(),
-                "knowledge".to_string(),
-                "api".to_string(),
-                "reference".to_string(),
-                "concept".to_string(),
-                "definition".to_string(),
-                "technical".to_string(),
-                "tech".to_string(),
-                "programmer".to_string(),
-                "programming".to_string(),
-                "system".to_string(),
-            ],
-        },
-    ]
-}
-
-impl Default for MemoryRoutingConfig {
-    fn default() -> Self {
-        Self {
-            default: default_memory_routing_default_folder(),
-            rules: default_memory_routing_rules(),
-        }
-    }
 }
 
 impl Default for VaultWatchConfig {
@@ -158,10 +90,46 @@ pub struct AppConfig {
     pub condensation_target: usize,
     pub max_tool_rounds: u8,
     pub max_recovery_attempts: u8,
-    pub ephemeral_ttl_secs: u64,
+    /// TTL for `EphemeralTier::Session` rows (seconds). Shortest-lived tier.
+    #[serde(default = "default_ephemeral_ttl_session_secs")]
+    pub ephemeral_ttl_session_secs: u64,
+    /// TTL for `EphemeralTier::Scratch` rows (seconds). Working-note tier.
+    #[serde(default = "default_ephemeral_ttl_scratch_secs")]
+    pub ephemeral_ttl_scratch_secs: u64,
+    /// TTL for `EphemeralTier::Promote` rows (seconds). Longest ephemeral tier; commit-eligible.
+    #[serde(default = "default_ephemeral_ttl_promote_secs")]
+    pub ephemeral_ttl_promote_secs: u64,
+    /// Score threshold for session -> scratch promotion.
+    #[serde(default = "default_promotion_threshold_session_to_scratch")]
+    pub promotion_threshold_session_to_scratch: f64,
+    /// Score threshold for scratch -> promote promotion.
+    #[serde(default = "default_promotion_threshold_scratch_to_promote")]
+    pub promotion_threshold_scratch_to_promote: f64,
+    /// Per-tick decay subtracted from `promotion_score` by the snapshot daemon.
+    #[serde(default = "default_promotion_decay_per_tick")]
+    pub promotion_decay_per_tick: f64,
+    /// Interval (seconds) at which the daemon evaluates tier transitions and decay.
+    #[serde(default = "default_promotion_eval_interval_secs")]
+    pub promotion_eval_interval_secs: u64,
+    /// Score boost applied per distinct turn a `canonical_key` appears.
+    #[serde(default = "default_promotion_mention_boost")]
+    pub promotion_mention_boost: f64,
+    /// Score boost for explicit `memory:stage` calls.
+    #[serde(default = "default_promotion_stage_boost")]
+    pub promotion_stage_boost: f64,
+    /// When true, after each completed assistant turn the runtime matches user text against staged `canonical_key` tokens and bumps score + refreshes TTL.
+    #[serde(default = "default_turn_end_mention_enabled")]
+    pub turn_end_mention_enabled: bool,
+    /// Max characters for the `[ACTIVE_STAGED_MEMORY]` block injected into system prompts; `0` disables.
+    #[serde(default = "default_staged_memory_prompt_max_chars")]
+    pub staged_memory_prompt_max_chars: usize,
+    /// When true, `web:fetch` is removed from gatekeeper allowlists and unavailable.
+    #[serde(default)]
+    pub web_fetch_deprecated: bool,
     pub qdrant_url: String,
-    #[serde(skip)] // Computed dynamically at runtime
-    pub qdrant_collection: String,
+    /// Qdrant collection name. Computed at runtime: `fcp_vault_v2_{workspace}`.
+    #[serde(skip)]
+    pub qdrant_collection_v2: String,
     pub snapshot_interval_secs: u64,
     pub embed_model_name: String,
     pub idle_timeout_secs: u64,
@@ -214,8 +182,6 @@ pub struct AppConfig {
     pub optimize_context_tool_overrides: HashMap<String, ToolContextViewHint>,
     #[serde(default)]
     pub google: GoogleConfig,
-    #[serde(default)]
-    pub memory_routing: MemoryRoutingConfig,
     /// When true, keep full JSON parameter schemas in the LLM view for tool definitions (larger prompt). When false and [`Self::optimize_context`] is true, [`crate::orchestrator::context_view::build_llm_view`] strips `parameters` in that block only; [`crate::orchestrator::core::Orchestrator::chat_stack`] stays full. Independently, the orchestrator forces full schemas for one recovery LLM pass after a Gatekeeper schema fault ([`crate::orchestrator::core::Orchestrator::force_full_tool_schemas_in_llm_view`]).
     #[serde(default = "default_optimize_context_full_tool_schemas")]
     pub optimize_context_full_tool_schemas: bool,
@@ -292,6 +258,51 @@ fn default_semantic_brain_connect_attempts() -> u32 {
 
 fn default_semantic_brain_connect_retry_delay_ms() -> u64 {
     500
+}
+
+fn default_ephemeral_ttl_session_secs() -> u64 {
+    120
+}
+
+fn default_ephemeral_ttl_scratch_secs() -> u64 {
+    240
+}
+
+fn default_ephemeral_ttl_promote_secs() -> u64 {
+    460
+}
+
+fn default_promotion_threshold_session_to_scratch() -> f64 {
+    3.0
+}
+
+fn default_promotion_threshold_scratch_to_promote() -> f64 {
+    6.0
+}
+
+fn default_promotion_decay_per_tick() -> f64 {
+    0.5
+}
+
+fn default_promotion_eval_interval_secs() -> u64 {
+    30
+}
+
+fn default_promotion_mention_boost() -> f64 {
+    1.0
+}
+
+fn default_promotion_stage_boost() -> f64 {
+    // After one daemon tick: 3.5 - decay(0.5) >= session→scratch threshold (3.0).
+    3.5
+}
+
+fn default_turn_end_mention_enabled() -> bool {
+    true
+}
+
+fn default_staged_memory_prompt_max_chars() -> usize {
+    3500
 }
 
 fn default_optimize_context() -> bool {
@@ -458,16 +469,27 @@ impl Default for AppConfig {
             ollama_host: "http://localhost:11434".into(),
             model_name: "llama3.2".into(),
             user_name: String::new(),
-            num_ctx: 8192,
+            num_ctx: 32768,
             generation_timeout_secs: 120,
             enable_reasoning_fsm: true,
             condensation_threshold: 0.75,
             condensation_target: 300,
             max_tool_rounds: 5,
             max_recovery_attempts: 3,
-            ephemeral_ttl_secs: 7200,
+            ephemeral_ttl_session_secs: default_ephemeral_ttl_session_secs(),
+            ephemeral_ttl_scratch_secs: default_ephemeral_ttl_scratch_secs(),
+            ephemeral_ttl_promote_secs: default_ephemeral_ttl_promote_secs(),
+            promotion_threshold_session_to_scratch: default_promotion_threshold_session_to_scratch(),
+            promotion_threshold_scratch_to_promote: default_promotion_threshold_scratch_to_promote(),
+            promotion_decay_per_tick: default_promotion_decay_per_tick(),
+            promotion_eval_interval_secs: default_promotion_eval_interval_secs(),
+            promotion_mention_boost: default_promotion_mention_boost(),
+            promotion_stage_boost: default_promotion_stage_boost(),
+            turn_end_mention_enabled: default_turn_end_mention_enabled(),
+            staged_memory_prompt_max_chars: default_staged_memory_prompt_max_chars(),
+            web_fetch_deprecated: false,
             qdrant_url: "http://localhost:6334".into(),
-            qdrant_collection: "fcp_vault_default".into(),
+            qdrant_collection_v2: "fcp_vault_v2_default".into(),
             snapshot_interval_secs: 300,
             embed_model_name: "nomic-embed-text".into(),
             idle_timeout_secs: 900,
@@ -492,7 +514,7 @@ impl Default for AppConfig {
             optimize_context_assistant_compact: default_optimize_context_assistant_compact(),
             optimize_context_tool_overrides: HashMap::new(),
             google: GoogleConfig::default(),
-            memory_routing: MemoryRoutingConfig::default(),
+
             optimize_context_full_tool_schemas: default_optimize_context_full_tool_schemas(),
             memory_query_default_top_k: default_memory_query_default_top_k(),
             memory_query_top_k_max: default_memory_query_top_k_max(),
@@ -530,9 +552,28 @@ impl AppConfig {
             config.vault_root = vault;
         }
 
-        config.qdrant_collection = format!("fcp_vault_{}", config.workspace);
+        config.qdrant_collection_v2 = format!("fcp_vault_v2_{}", config.workspace);
 
         Ok(config)
+    }
+
+    /// TTL in seconds for the given ephemeral tier.
+    pub fn ttl_for_tier(&self, tier: crate::memory::types::EphemeralTier) -> u64 {
+        match tier {
+            crate::memory::types::EphemeralTier::Session => self.ephemeral_ttl_session_secs,
+            crate::memory::types::EphemeralTier::Scratch => self.ephemeral_ttl_scratch_secs,
+            crate::memory::types::EphemeralTier::Promote => self.ephemeral_ttl_promote_secs,
+        }
+    }
+
+    /// Score threshold required to promote *from* the given tier to the next.
+    /// Returns `None` for `Promote` (no next tier).
+    pub fn promotion_threshold_for_tier(&self, tier: crate::memory::types::EphemeralTier) -> Option<f64> {
+        match tier {
+            crate::memory::types::EphemeralTier::Session => Some(self.promotion_threshold_session_to_scratch),
+            crate::memory::types::EphemeralTier::Scratch => Some(self.promotion_threshold_scratch_to_promote),
+            crate::memory::types::EphemeralTier::Promote => None,
+        }
     }
 
     /// Physical directory for chat, ignition, tools, and `.fcp/` — always the process working directory
@@ -543,7 +584,7 @@ impl AppConfig {
         self.config_source_dir.clone()
     }
 
-    /// Absolute paths under `chat_workspace_root` for vault watch (e.g. `00_Core/Identity.md`).
+    /// Absolute paths under `chat_workspace_root` for vault watch (e.g. `00_Invariants/Identity.md`).
     pub fn resolved_vault_watch_file_paths(&self, chat_workspace_root: &std::path::Path) -> Vec<std::path::PathBuf> {
         self.vault_watch
             .paths
@@ -590,7 +631,7 @@ mod tests {
             assert_eq!(config.workspace, "cli_workspace");
             assert_eq!(config.vault_root, PathBuf::from("/cli/vaults"));
             assert_eq!(config.log_level, "error");
-            assert_eq!(config.qdrant_collection, "fcp_vault_cli_workspace");
+            assert_eq!(config.qdrant_collection_v2, "fcp_vault_v2_cli_workspace");
 
             // Test fallback
             let cli2 = Cli {
@@ -605,7 +646,7 @@ mod tests {
             assert_eq!(config2.workspace, "env_workspace");
             assert_eq!(config2.vault_root, PathBuf::from("/toml/vaults"));
             assert_eq!(config2.log_level, "error");
-            assert_eq!(config2.qdrant_collection, "fcp_vault_env_workspace");
+            assert_eq!(config2.qdrant_collection_v2, "fcp_vault_v2_env_workspace");
 
             Ok(())
         });
@@ -627,7 +668,6 @@ mod tests {
             "condensation_target": 500,
             "max_tool_rounds": 10,
             "max_recovery_attempts": 5,
-            "ephemeral_ttl_secs": 3600,
             "qdrant_url": "http://localhost:6334",
             "snapshot_interval_secs": 600,
             "embed_model_name": "nomic-embed-text",
@@ -655,10 +695,7 @@ mod tests {
         assert_eq!(parsed_config.condensation_target, 500);
         assert_eq!(parsed_config.max_tool_rounds, 10);
         assert_eq!(parsed_config.max_recovery_attempts, 5);
-        assert_eq!(parsed_config.ephemeral_ttl_secs, 3600);
         assert_eq!(parsed_config.qdrant_url, "http://localhost:6334");
-        // qdrant_collection is skipped in serde, so it uses Default::default() if possible, but actually since we derive Deserialize, fields that are skipped will use their Default::default() type value which is String::default() i.e., "".
-        assert_eq!(parsed_config.qdrant_collection, "");
         assert_eq!(parsed_config.snapshot_interval_secs, 600);
         assert_eq!(parsed_config.embed_model_name, "nomic-embed-text");
         assert_eq!(parsed_config.idle_timeout_secs, 42);
@@ -693,5 +730,52 @@ mod tests {
         assert!(c.apis.contains_key("wikipedia_page_summary"));
         let wiki = c.apis.get("wikipedia_page_summary").expect("wiki profile");
         assert!(wiki.headers.contains_key("User-Agent"));
+    }
+
+    #[test]
+    fn default_config_has_v2_collection_name() {
+        let c = AppConfig::default();
+        assert_eq!(c.qdrant_collection_v2, "fcp_vault_v2_default");
+    }
+
+    #[test]
+    fn ttl_for_tier_returns_configured_values() {
+        let c = AppConfig::default();
+        assert_eq!(c.ttl_for_tier(crate::memory::types::EphemeralTier::Session), 120);
+        assert_eq!(c.ttl_for_tier(crate::memory::types::EphemeralTier::Scratch), 240);
+        assert_eq!(c.ttl_for_tier(crate::memory::types::EphemeralTier::Promote), 460);
+    }
+
+    #[test]
+    fn promotion_threshold_returns_none_for_promote() {
+        let c = AppConfig::default();
+        assert!(c.promotion_threshold_for_tier(crate::memory::types::EphemeralTier::Session).is_some());
+        assert!(c.promotion_threshold_for_tier(crate::memory::types::EphemeralTier::Scratch).is_some());
+        assert!(c.promotion_threshold_for_tier(crate::memory::types::EphemeralTier::Promote).is_none());
+    }
+
+    #[test]
+    fn vault_watch_includes_invariants_identity() {
+        let c = AppConfig::default();
+        assert!(c.vault_watch.paths.iter().any(|p| p.contains("00_Invariants")));
+    }
+
+    #[test]
+    fn v2_collection_computed_in_load() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_dir(".fcp")?;
+            jail.create_file(".fcp/config.toml", r#"workspace = "test_v2""#)?;
+
+            let cli = Cli {
+                workspace: "default".to_string(),
+                vault: None,
+                verbose: 0,
+                command: Commands::Chat,
+            };
+
+            let config = AppConfig::load(cli).expect("load");
+            assert_eq!(config.qdrant_collection_v2, "fcp_vault_v2_test_v2");
+            Ok(())
+        });
     }
 }

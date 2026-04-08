@@ -147,7 +147,7 @@ rationale = "Tool does not require args."
     r#"descriptor_version = 1
 tool_name = "memory:query"
 short_description = "Search long-term semantic memory for facts, user identity, preferences, and past context."
-when_to_use = "Use for fuzzy recall, who am I / what is my name, user preferences, and anything stored in indexed vault memory. Prefer query alone; use filter_tag only when you know an exact frontmatter tag. Optional: top_k (1..25), max_total_chars, min_score (0..1), vault_path_prefix (e.g. 30_Persons/) to narrow by vault path."
+when_to_use = "Use for fuzzy recall, who am I / what is my name, user preferences, and anything stored in indexed vault memory. Prefer query alone; use filter_tag only when you know an exact frontmatter tag. Optional: top_k (1..25), max_total_chars, min_score (0..1), vault_path_prefix (e.g. 30_Synthesis/) to narrow by vault path."
 when_not_to_use = "Do not use for exact file reads by path; use vault:read."
 routing_hints = ["search memory", "do you remember", "what is my name", "who am I", "user preferences", "my identity", "recall context", "semantic query"]
 
@@ -163,8 +163,8 @@ rationale = "Optional narrowing when the tag is known from vault metadata."
 
 [[examples_good]]
 name = "query_with_path_prefix"
-args = { query = "Pauline", vault_path_prefix = "30_Persons/", top_k = 8 }
-rationale = "Narrow to Persons folder when asking about people."
+args = { query = "Pauline", vault_path_prefix = "30_Synthesis/", top_k = 8 }
+rationale = "Narrow to Synthesis folder when looking for specific concepts."
 
 [[examples_bad]]
 name = "empty_query"
@@ -231,12 +231,12 @@ routing_hints = ["list files", "show directory", "browse folder", "what files ex
 
 [[examples_good]]
 name = "list_episodic"
-args = { directory = "10_Episodic" }
+args = { directory = "20_Discourse" }
 rationale = "Lists files in a concrete folder."
 
 [[examples_bad]]
 name = "wrong_key"
-args = { path = "10_Episodic" }
+args = { path = "20_Discourse" }
 rationale = "directory is required."
 "#,
     r#"descriptor_version = 1
@@ -248,29 +248,29 @@ routing_hints = ["read file", "open note", "show file", "inspect markdown"]
 
 [[examples_good]]
 name = "read_project_note"
-args = { relative_path = "10_Episodic/today.md" }
+args = { relative_path = "20_Discourse/today.md" }
 rationale = "Reads a concrete file by relative path."
 
 [[examples_bad]]
 name = "wrong_field_name"
-args = { path = "10_Episodic/today.md" }
+args = { path = "20_Discourse/today.md" }
 rationale = "Invalid key; must use relative_path."
 "#,
     r#"descriptor_version = 1
 tool_name = "vault:write"
 short_description = "Write content to a vault file using overwrite or append mode."
 when_to_use = "Use when you need to create or update a vault file on disk."
-when_not_to_use = "Do not use for reading, listing, or writing immutable 00_Core paths."
+when_not_to_use = "Do not use for reading, listing, or writing immutable 00_Invariants paths."
 routing_hints = ["save note", "write file", "append note", "create markdown"]
 
 [[examples_good]]
 name = "write_overwrite"
-args = { relative_path = "10_Episodic/new_note.md", content = "Hello", mode = "overwrite" }
+args = { relative_path = "20_Discourse/new_note.md", content = "Hello", mode = "overwrite" }
 rationale = "Valid write request with required fields."
 
 [[examples_bad]]
 name = "missing_mode"
-args = { relative_path = "10_Episodic/new_note.md", content = "Hello" }
+args = { relative_path = "20_Discourse/new_note.md", content = "Hello" }
 rationale = "mode is required."
 "#,
     r#"descriptor_version = 1

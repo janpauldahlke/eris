@@ -108,3 +108,4 @@
 08/04/2026
 
 - [x] feature: agent facing tool compendium to prevent systemprompt bloat
+- [] feature ZETTELKASTEN - complete redesign of the vault structure and persistnce layer

@@ -1,7 +1,6 @@
 use crate::executive::error::{FcpError, Result};
 use crate::config::AppConfig;
 use crate::ingest::truncate_char_boundary;
-use crate::memory::ephemeral::is_web_artifact_staging;
 use std::sync::Arc;
 use qdrant_client::Qdrant;
 use qdrant_client::qdrant::{Condition, CreateCollectionBuilder, DeletePointsBuilder, Distance, Filter, VectorParamsBuilder, PointStruct, SearchPointsBuilder, UpsertPointsBuilder};
@@ -35,7 +34,7 @@ pub struct MemoryQueryOptions<'a> {
     /// Max points after ranking (clamped by the tool using config).
     pub top_k: u64,
     pub filter_tag: Option<&'a str>,
-    /// Only include points whose `vault_key` payload starts with this prefix (e.g. `30_Persons/`).
+    /// Only include points whose `vault_key` payload starts with this prefix (e.g. `30_Synthesis/`).
     pub vault_path_prefix: Option<&'a str>,
     pub min_score: Option<f32>,
     pub max_total_chars: usize,
@@ -45,13 +44,12 @@ pub struct MemoryQueryOptions<'a> {
     pub qdrant_oversample_min: u64,
 }
 
-/// Top-level vault directories scanned at boot for `.md` files ([`SemanticBrain::ingest_vault`]).
-pub(crate) const VAULT_INGEST_SUBDIRS: &[&str] = &[
-    "10_Episodic",
-    "20_Semantic",
-    "30_Persons",
-    "40_User",
-    "99_USER_UPLOADED",
+/// Zettelkasten vault directories for v2 ingest.
+pub(crate) const VAULT_INGEST_SUBDIRS_V2: &[&str] = &[
+    "00_Invariants",
+    "10_Topology",
+    "20_Discourse",
+    "30_Synthesis",
 ];
 
 /// One vector hit before formatting for the LLM.
@@ -82,7 +80,7 @@ impl SemanticBrain {
             .build()
             .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
 
-        let collection_name = &config.qdrant_collection;
+        let collection_name = &config.qdrant_collection_v2;
 
         let exists = client.collection_exists(collection_name)
             .await
@@ -93,6 +91,7 @@ impl SemanticBrain {
                 CreateCollectionBuilder::new(collection_name)
                     .vectors_config(VectorParamsBuilder::new(768, Distance::Cosine))
             ).await.map_err(|e| FcpError::NetworkFault(e.to_string()))?;
+            tracing::info!(collection = %collection_name, "Created Qdrant collection");
         }
 
         Ok(Self {
@@ -168,7 +167,7 @@ impl SemanticBrain {
             .ok_or_else(|| FcpError::EmbeddingFault("Embedding model returned no vectors".to_string()))
     }
 
-    /// `vault_key` should be a stable path-like id (e.g. `40_User/note.md` or `committed:<uuid>`). When `None`, uses `committed:<point_id>`.
+    /// `vault_key` should be a stable path-like id (e.g. `30_Synthesis/<node_id>/r0001.md` or `committed:<uuid>`). When `None`, uses `committed:<point_id>`.
     pub async fn upsert(&self, text: &str, tags: Vec<String>, vault_key: Option<String>) -> Result<()> {
         let embedding = self.generate_embedding(text).await?;
         let id = uuid::Uuid::new_v4().to_string();
@@ -182,32 +181,8 @@ impl SemanticBrain {
         let point = PointStruct::new(id, embedding, payload);
 
         self.client.upsert_points(
-            UpsertPointsBuilder::new(&self.config.qdrant_collection, vec![point])
+            UpsertPointsBuilder::new(&self.config.qdrant_collection_v2, vec![point])
         )
-            .await
-            .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
-
-        Ok(())
-    }
-
-    /// Upsert a vault file slice with a **stable** point id derived from `vault_relative_key`
-    /// (e.g. `40_User/coffee_preference.md`). Reboots overwrite the same point instead of duplicating.
-    pub async fn upsert_vault_document(&self, vault_relative_key: &str, text: &str, tags: Vec<String>) -> Result<()> {
-        let embedding = self.generate_embedding(text).await?;
-        let point_id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, vault_relative_key.as_bytes()).to_string();
-
-        let mut payload: HashMap<String, serde_json::Value> = HashMap::new();
-        payload.insert("text".to_string(), serde_json::json!(text));
-        payload.insert("tags".to_string(), serde_json::json!(tags));
-        payload.insert(
-            "vault_key".to_string(),
-            serde_json::json!(vault_relative_key.to_string()),
-        );
-
-        let point = PointStruct::new(point_id, embedding, payload);
-
-        self.client
-            .upsert_points(UpsertPointsBuilder::new(&self.config.qdrant_collection, vec![point]))
             .await
             .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
 
@@ -234,7 +209,7 @@ impl SemanticBrain {
 
         let point = PointStruct::new(id, embedding, payload);
         self.client
-            .upsert_points(UpsertPointsBuilder::new(&self.config.qdrant_collection, vec![point]))
+            .upsert_points(UpsertPointsBuilder::new(&self.config.qdrant_collection_v2, vec![point]))
             .await
             .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
 
@@ -252,7 +227,7 @@ impl SemanticBrain {
         let search_result = self
             .client
             .search_points(
-                SearchPointsBuilder::new(&self.config.qdrant_collection, embedding, oversample)
+                SearchPointsBuilder::new(&self.config.qdrant_collection_v2, embedding, oversample)
                     .with_payload(true),
             )
             .await
@@ -303,7 +278,7 @@ impl SemanticBrain {
     pub async fn delete_web_artifact_points(&self, artifact_id: &str) -> Result<()> {
         self.client
             .delete_points(
-                DeletePointsBuilder::new(&self.config.qdrant_collection)
+                DeletePointsBuilder::new(&self.config.qdrant_collection_v2)
                     .points(Filter::must([Condition::matches(
                         "artifact_id",
                         artifact_id.to_string(),
@@ -315,74 +290,237 @@ impl SemanticBrain {
         Ok(())
     }
 
-    pub async fn ingest_vault(&self, vault_root: &std::path::Path) -> Result<usize> {
+    /// Upsert a vault document into the **v2** collection with enriched payload fields.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn upsert_vault_document_v2(
+        &self,
+        vault_relative_key: &str,
+        text: &str,
+        tags: Vec<String>,
+        node_id: Option<&str>,
+        rev: Option<u32>,
+        is_current: bool,
+        epistemic_status: Option<&str>,
+    ) -> Result<()> {
+        let collection = &self.config.qdrant_collection_v2;
+        if collection.is_empty() {
+            return Ok(());
+        }
+
+        let embedding = self.generate_embedding(text).await?;
+        let point_id = uuid::Uuid::new_v5(
+            &uuid::Uuid::NAMESPACE_URL,
+            vault_relative_key.as_bytes(),
+        )
+        .to_string();
+
+        let mut payload: HashMap<String, serde_json::Value> = HashMap::new();
+        payload.insert("text".into(), serde_json::json!(text));
+        payload.insert("tags".into(), serde_json::json!(tags));
+        payload.insert("vault_key".into(), serde_json::json!(vault_relative_key));
+        payload.insert("is_current".into(), serde_json::json!(is_current));
+        if let Some(nid) = node_id {
+            payload.insert("node_id".into(), serde_json::json!(nid));
+        }
+        if let Some(r) = rev {
+            payload.insert("rev".into(), serde_json::json!(r));
+        }
+        if let Some(es) = epistemic_status {
+            payload.insert("epistemic_status".into(), serde_json::json!(es));
+        }
+
+        let point = PointStruct::new(point_id, embedding, payload);
+        self.client
+            .upsert_points(UpsertPointsBuilder::new(collection, vec![point]))
+            .await
+            .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
+
+        Ok(())
+    }
+
+    /// Recursive v2 vault ingest. For `30_Synthesis`, only indexes the **current head**
+    /// revision per node_id directory. Other roots are flat-ingested.
+    pub async fn ingest_vault_v2(&self, vault_root: &std::path::Path) -> Result<usize> {
+        if self.config.qdrant_collection_v2.is_empty() {
+            return Ok(0);
+        }
         if self.generate_embedding("ping").await.is_err() {
-            tracing::warn!(
-                "Vault ingest deferred: Ollama unreachable during boot (semantic pre-warm skipped)"
-            );
+            tracing::warn!("v2 vault ingest deferred: Ollama unreachable during boot");
             return Ok(0);
         }
 
         let mut count = 0usize;
 
-        for subdir in VAULT_INGEST_SUBDIRS {
+        for subdir in VAULT_INGEST_SUBDIRS_V2 {
             let dir = vault_root.join(subdir);
             if !dir.exists() {
                 continue;
             }
 
-            let mut entries = match tokio::fs::read_dir(&dir).await {
-                Ok(e) => e,
-                Err(e) => {
-                    tracing::warn!(dir = %dir.display(), error = %e, "Failed to read vault subdir");
-                    continue;
-                }
-            };
-
-            while let Ok(Some(entry)) = entries.next_entry().await {
-                let path = entry.path();
-                if path.extension().is_some_and(|e| e == "md") {
-                    match tokio::fs::read_to_string(&path).await {
-                        Ok(raw) => {
-                            let parsed = parse_vault_md(&raw);
-                            let stem = path
-                                .file_stem()
-                                .map(|s| s.to_string_lossy().into_owned())
-                                .unwrap_or_default();
-                            if is_web_artifact_staging(&parsed.tags, &stem) {
-                                tracing::debug!(
-                                    path = %path.display(),
-                                    "Skipping web artifact markdown from vault ingest"
-                                );
-                                continue;
-                            }
-                            if parsed.content.trim().is_empty() {
-                                continue;
-                            }
-                            let file_name = path
-                                .file_name()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or("note.md");
-                            let vault_relative_key = format!("{subdir}/{file_name}");
-                            let embed_text = vault_embed_text(parsed.title.as_deref(), &parsed.tags, &parsed.content);
-                            if let Err(e) = self
-                                .upsert_vault_document(&vault_relative_key, &embed_text, parsed.tags)
-                                .await
-                            {
-                                tracing::warn!(path = %path.display(), error = %e, "Failed to ingest vault file");
-                            } else {
-                                count += 1;
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!(path = %path.display(), error = %e, "Failed to read vault file");
-                        }
-                    }
-                }
+            if *subdir == "30_Synthesis" {
+                count += self.ingest_synthesis_recursive(&dir, subdir).await;
+            } else {
+                count += self.ingest_flat_v2(&dir, subdir).await;
             }
         }
 
+        tracing::info!(count, "v2 vault ingest complete");
         Ok(count)
+    }
+
+    /// Ingest flat .md files from a v2 root (Invariants, Topology, Discourse).
+    async fn ingest_flat_v2(&self, dir: &std::path::Path, subdir: &str) -> usize {
+        let mut count = 0usize;
+        let mut entries = match tokio::fs::read_dir(dir).await {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::warn!(dir = %dir.display(), error = %e, "v2 ingest: failed to read dir");
+                return 0;
+            }
+        };
+
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let path = entry.path();
+            if path.extension().is_none_or(|e| e != "md") {
+                continue;
+            }
+            match tokio::fs::read_to_string(&path).await {
+                Ok(raw) => {
+                    let parsed = parse_vault_md(&raw);
+                    if parsed.content.trim().is_empty() {
+                        continue;
+                    }
+                    let file_name = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("note.md");
+                    let vault_key = format!("{subdir}/{file_name}");
+                    let embed_text =
+                        vault_embed_text(parsed.title.as_deref(), &parsed.tags, &parsed.content);
+
+                    if let Err(e) = self
+                        .upsert_vault_document_v2(
+                            &vault_key,
+                            &embed_text,
+                            parsed.tags,
+                            None,
+                            None,
+                            true,
+                            None,
+                        )
+                        .await
+                    {
+                        tracing::warn!(path = %path.display(), error = %e, "v2 ingest: failed to index");
+                    } else {
+                        tracing::debug!(vault_key = %vault_key, "v2 ingest: indexed flat file");
+                        count += 1;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(path = %path.display(), error = %e, "v2 ingest: failed to read");
+                }
+            }
+        }
+        count
+    }
+
+    /// Ingest `30_Synthesis/<node_id>/rXXXX.md` — only the highest-rev file with
+    /// `is_current: true` (or highest rev if no marker found).
+    async fn ingest_synthesis_recursive(&self, synth_dir: &std::path::Path, subdir: &str) -> usize {
+        let mut count = 0usize;
+        let mut node_dirs = match tokio::fs::read_dir(synth_dir).await {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::warn!(dir = %synth_dir.display(), error = %e, "v2 ingest: failed to read synthesis dir");
+                return 0;
+            }
+        };
+
+        while let Ok(Some(node_entry)) = node_dirs.next_entry().await {
+            let node_path = node_entry.path();
+            if !node_path.is_dir() {
+                continue;
+            }
+            let node_id = node_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+            if node_id.is_empty() {
+                continue;
+            }
+
+            // Find highest revision file
+            let mut best_rev: Option<(u32, std::path::PathBuf)> = None;
+            let mut rev_entries = match tokio::fs::read_dir(&node_path).await {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            while let Ok(Some(rev_entry)) = rev_entries.next_entry().await {
+                let name = rev_entry.file_name();
+                let name_str = name.to_string_lossy();
+                if let Some(num_str) = name_str.strip_prefix('r').and_then(|s| s.strip_suffix(".md"))
+                    && let Ok(n) = num_str.parse::<u32>()
+                    && best_rev.as_ref().is_none_or(|(best, _)| n > *best)
+                {
+                    best_rev = Some((n, rev_entry.path()));
+                }
+            }
+
+            let Some((rev, head_path)) = best_rev else {
+                continue;
+            };
+
+            match tokio::fs::read_to_string(&head_path).await {
+                Ok(raw) => {
+                    let parsed = parse_vault_md(&raw);
+                    if parsed.content.trim().is_empty() {
+                        continue;
+                    }
+                    let file_name = head_path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("r0001.md");
+                    let vault_key = format!("{subdir}/{node_id}/{file_name}");
+                    let embed_text =
+                        vault_embed_text(parsed.title.as_deref(), &parsed.tags, &parsed.content);
+
+                    // Extract epistemic_status from frontmatter if present
+                    let epistemic = extract_frontmatter_field(&raw, "epistemic_status");
+
+                    if let Err(e) = self
+                        .upsert_vault_document_v2(
+                            &vault_key,
+                            &embed_text,
+                            parsed.tags,
+                            Some(&node_id),
+                            Some(rev),
+                            true,
+                            epistemic.as_deref(),
+                        )
+                        .await
+                    {
+                        tracing::warn!(
+                            path = %head_path.display(),
+                            error = %e,
+                            "v2 ingest: failed to index synthesis head"
+                        );
+                    } else {
+                        tracing::debug!(
+                            node_id = %node_id,
+                            rev,
+                            vault_key = %vault_key,
+                            "v2 ingest: indexed synthesis head revision"
+                        );
+                        count += 1;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(path = %head_path.display(), error = %e, "v2 ingest: failed to read head revision");
+                }
+            }
+        }
+        count
     }
 
     /// One query embedding, then Qdrant search with optional tag filter; if the filter yields no
@@ -523,7 +661,7 @@ impl SemanticBrain {
         filter_tag: Option<&str>,
     ) -> Result<Vec<MemoryHit>> {
         let mut builder =
-            SearchPointsBuilder::new(&self.config.qdrant_collection, embedding.to_vec(), limit)
+            SearchPointsBuilder::new(&self.config.qdrant_collection_v2, embedding.to_vec(), limit)
                 .with_payload(true);
 
         if let Some(tag) = filter_tag.map(str::trim).filter(|t| !t.is_empty()) {
@@ -656,6 +794,27 @@ pub fn vault_embed_text(title: Option<&str>, tags: &[String], body: &str) -> Str
     out
 }
 
+/// Extract a single string field from YAML frontmatter (e.g. `epistemic_status`).
+fn extract_frontmatter_field(raw: &str, field: &str) -> Option<String> {
+    if !raw.starts_with("---") {
+        return None;
+    }
+    let after = &raw[3..];
+    let end = after.find("---")?;
+    let fm = &after[..end];
+    let prefix = format!("{field}:");
+    for line in fm.lines() {
+        let trimmed = line.trim();
+        if let Some(val) = trimmed.strip_prefix(&prefix) {
+            let v = val.trim().trim_matches(|c| c == '"' || c == '\'');
+            if !v.is_empty() {
+                return Some(v.to_string());
+            }
+        }
+    }
+    None
+}
+
 fn parse_vault_md(raw: &str) -> ParsedVaultMd {
     if !raw.starts_with("---") {
         return ParsedVaultMd {
@@ -749,14 +908,6 @@ mod tests {
         )
         .await;
         assert!(brain_result.is_err(), "expected failure after retries on dead port");
-    }
-
-    #[test]
-    fn vault_ingest_subdirs_include_upload_inbox() {
-        assert!(
-            VAULT_INGEST_SUBDIRS.contains(&"99_USER_UPLOADED"),
-            "boot ingest must scan 99_USER_UPLOADED"
-        );
     }
 
     #[test]
@@ -855,6 +1006,35 @@ Hello there."#;
         let out = filter_hits_vault_prefix(hits, Some("30_Persons/"));
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].text, "a");
+    }
+
+    #[test]
+    fn v2_ingest_subdirs_include_all_roots() {
+        assert!(VAULT_INGEST_SUBDIRS_V2.contains(&"00_Invariants"));
+        assert!(VAULT_INGEST_SUBDIRS_V2.contains(&"10_Topology"));
+        assert!(VAULT_INGEST_SUBDIRS_V2.contains(&"20_Discourse"));
+        assert!(VAULT_INGEST_SUBDIRS_V2.contains(&"30_Synthesis"));
+    }
+
+    #[test]
+    fn extract_frontmatter_field_gets_value() {
+        let raw = "---\ntitle: \"test\"\nepistemic_status: \"stable\"\n---\nbody";
+        assert_eq!(
+            extract_frontmatter_field(raw, "epistemic_status"),
+            Some("stable".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_frontmatter_field_missing() {
+        let raw = "---\ntitle: \"test\"\n---\nbody";
+        assert_eq!(extract_frontmatter_field(raw, "epistemic_status"), None);
+    }
+
+    #[test]
+    fn extract_frontmatter_field_no_frontmatter() {
+        let raw = "just body text";
+        assert_eq!(extract_frontmatter_field(raw, "anything"), None);
     }
 
     #[test]

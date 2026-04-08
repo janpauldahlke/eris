@@ -1,4 +1,4 @@
-//! Sync `00_Core/Identity.md` with `AppConfig::user_name` (`.fcp/config.toml` is source of truth).
+//! Sync `00_Invariants/Identity.md` with `AppConfig::user_name` (`.fcp/config.toml` is source of truth).
 
 use std::path::Path;
 
@@ -9,7 +9,7 @@ const USER_LINE_PREFIX: &str = "User Name is:";
 /// Updates or removes the `User Name is:` line to match `user_name` from config.
 /// Preserves all other lines, including `Agent Name:`.
 pub async fn sync_identity_user_line(workspace_root: &Path, user_name: &str) -> Result<()> {
-    let path = workspace_root.join("00_Core/Identity.md");
+    let path = workspace_root.join("00_Invariants/Identity.md");
     let trimmed = user_name.trim();
 
     let content = match tokio::fs::read_to_string(&path).await {
@@ -78,7 +78,7 @@ mod tests {
     #[tokio::test]
     async fn sync_inserts_after_agent_line() {
         let dir = tempdir().unwrap();
-        let core = dir.path().join("00_Core");
+        let core = dir.path().join("00_Invariants");
         std::fs::create_dir_all(&core).unwrap();
         let path = core.join("Identity.md");
         std::fs::write(
@@ -98,7 +98,7 @@ mod tests {
     #[tokio::test]
     async fn sync_replaces_existing_user_line() {
         let dir = tempdir().unwrap();
-        let core = dir.path().join("00_Core");
+        let core = dir.path().join("00_Invariants");
         std::fs::create_dir_all(&core).unwrap();
         let path = core.join("Identity.md");
         std::fs::write(
@@ -117,7 +117,7 @@ mod tests {
     #[tokio::test]
     async fn sync_empty_removes_user_line() {
         let dir = tempdir().unwrap();
-        let core = dir.path().join("00_Core");
+        let core = dir.path().join("00_Invariants");
         std::fs::create_dir_all(&core).unwrap();
         let path = core.join("Identity.md");
         std::fs::write(
