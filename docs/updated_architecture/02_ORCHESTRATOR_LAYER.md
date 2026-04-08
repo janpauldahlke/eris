@@ -14,12 +14,13 @@
 - **context_view:** `ContextViewSettings` for `build_llm_view`
 - **interrupt_rx:** `watch::Receiver` from heartbeat — triggers idle injection path
 - **tui_tx:** optional UI updates
+- **promotion_suppressed_during_step:** `Arc<std::sync::atomic::AtomicBool>` shared with `spawn_snapshot_daemon`. At the **start** of `step()`, a local `PromotionSuppressedDuringStep` guard sets it to `true` (`Ordering::SeqCst`); `Drop` clears it when `step` returns or unwinds, so promotion/decay never runs concurrently with an in-flight step.
 
 ### `step()` — one “turn”
 
 Rough pipeline:
 
-1. Increment `turn_seq`; reset recovery/tool counters; clear activity line.
+1. Arm promotion suppression (RAII above); increment `turn_seq`; reset recovery/tool counters; clear activity line / last deck dedupe state.
 2. **Empty user message** → synthetic “SY FNORD” idle JSON (`handle_empty_user_turn`).
 3. **Deterministic agenda complete** — if user text matches “done” heuristics and prior `AGENDA_CONFIRM` line → run `agenda:complete` without LLM (`maybe_run_deterministic_agenda_complete`).
 4. **Pre-LLM routing** (`run_pre_llm_routing`):
@@ -32,6 +33,15 @@ Rough pipeline:
 5. **Inner loop** (tool rounds, recovery): assemble system prompt (conversational vs full tools vs selected tools), optional JIT descriptor block, `build_llm_view`, `engine.generate`.
 6. **Interrupt:** `tokio::select!` on `interrupt_rx.changed()` → clear stack, inject idle/agenda prompt, return `FcpError::Interrupted`.
 7. **Parse** assistant JSON → `LlmResponse`; push to stack; condensation if over token threshold (`context_window`); interpret `LoopDirective`; execute tools through gatekeeper; apply `orchestrator::loop::*` policies.
+
+### Assistant text on the TUI (`emit_optional_user_message`)
+
+When the model returns **both** `tool_calls` and a non-empty `message_to_user`:
+
+- **Main transcript (deck):** only `message_to_user` is emitted as `TuiEvent::IncomingMessage` (prefixed with agent name). If the same body was already sent this `step()` (`last_deck_message_body`), the duplicate is skipped (avoids double bubbles when status-driven replays repeat the line).
+- **Status (`activity_line`):** a short line `Tools: <comma-separated tool names>` (trimmed to a fixed character budget), not the old combined “message · tools…” pattern. Full JSON and tool payloads remain in `tracing` (e.g. `UI_TOOL_ROUND_STATUS`, `UI_EMIT_INCOMING_MESSAGE`).
+
+When there are **no** tool calls, behavior is unchanged: non-empty `message_to_user` goes to the deck as before.
 
 ## State machine (`orchestrator/state.rs`)
 

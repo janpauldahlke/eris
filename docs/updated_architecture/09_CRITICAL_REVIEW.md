@@ -76,6 +76,8 @@ Collection creation hardcodes **768** dimensions. If `embed_model_name` changes 
 
 The daemon ties expired web artifacts to Qdrant deletes. Good. Failure modes are **best-effort** (warn logs)—acceptable for local; document that semantic orphans are possible if Qdrant is down during expiry.
 
+**Promotion/decay vs `step()`:** tier evaluation runs on a separate tick from snapshotting; it is **skipped** while `Orchestrator::step` holds `promotion_suppressed_during_step` so slow generations do not interleave with cache mutation. This is a deliberate `Arc<AtomicBool>` exception to “single owner” wording—still no mutex on the orchestrator struct.
+
 ---
 
 ## 5. Naming and operator experience

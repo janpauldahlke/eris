@@ -4,42 +4,57 @@ use std::path::PathBuf;
 
 use crate::tools::ToolContextViewHint;
 
+/// Optional Google Workspace (Gmail API) credentials. When `enabled`, both paths must be set.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Default)]
 pub struct GoogleConfig {
+    /// When true, Gmail tools may run; requires `service_account_key` and `impersonate_user`.
     #[serde(default)]
     pub enabled: bool,
+    /// Path to a service-account JSON key (often `.fcp/eris-sa.json` under the vault).
     pub service_account_key: Option<PathBuf>,
+    /// Workspace user email to impersonate (domain-wide delegation).
     pub impersonate_user: Option<String>,
 }
 
 /// HTTP API profile for [`crate::util::ApiHttpClient`] (URL/query/header templates). Map keys are profile ids (`[apis.<id>]` in `.fcp/config.toml`).
+/// One HTTP template profile for [`crate::util::ApiHttpClient`] (`[apis.<id>]` in TOML).
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct ApiProfile {
+    /// When false, tools that need this profile skip remote calls.
     #[serde(default = "default_api_profile_enabled")]
     pub enabled: bool,
+    /// URL with `{placeholder}` segments replaced at call time.
     pub base_url: String,
+    /// Query string key/value templates (placeholders in values).
     #[serde(default)]
     pub query: HashMap<String, String>,
+    /// Extra headers (e.g. Wikipedia `User-Agent`).
     #[serde(default)]
     pub headers: HashMap<String, String>,
-    /// When unset, [`AppConfig::web_fetch_max_bytes`] is used.
+    /// Response size cap; when unset, [`AppConfig::web_fetch_max_bytes`] applies.
     #[serde(default)]
     pub max_response_bytes: Option<usize>,
+    /// Optional HTTP cache TTL for profiles that support it.
     #[serde(default)]
     pub stale_after_secs: Option<u64>,
 }
 
+/// Built-in weather/wiki API profiles default to enabled.
 fn default_api_profile_enabled() -> bool {
     true
 }
 
 /// Curated vault paths relative to chat `workspace_root`. Identity file paths trigger snapshot hot-reload; `99_USER_UPLOADED` is watched recursively (activity is logged, see `spawn_vault_identity_watch`).
+/// Debounced `notify` paths under the chat workspace root (identity hot-reload, uploads, etc.).
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct VaultWatchConfig {
+    /// Master switch for the vault file watcher in chat startup.
     #[serde(default = "default_vault_watch_enabled")]
     pub enabled: bool,
+    /// Coalesce rapid writes before reloading identity snapshot.
     #[serde(default = "default_vault_watch_debounce_ms")]
     pub debounce_ms: u64,
+    /// Paths relative to vault root; `99_USER_UPLOADED` is watched recursively where supported.
     #[serde(default = "default_vault_watch_paths")]
     pub paths: Vec<String>,
 }
@@ -71,24 +86,33 @@ impl Default for VaultWatchConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct AppConfig {
-    /// Logical id (Qdrant collection `fcp_vault_{workspace}`, ephemeral snapshot suffix, etc.).
-    /// **Not** joined onto paths for chat: the on-disk workspace is always [`Self::config_source_dir`].
+    /// Logical workspace id: Qdrant collection `fcp_vault_v2_{workspace}`, ephemeral file suffix, etc.
+    /// Chat does **not** use `vault_root`/`workspace` as the on-disk vault; see [`Self::active_vault`].
     pub workspace: String,
-    /// Carried in config for compatibility; chat and ignition use the current directory, not `vault_root` + `workspace`.
+    /// Legacy / CLI override path; chat uses [`Self::config_source_dir`] (cwd at load) as the vault.
     pub vault_root: PathBuf,
+    /// `tracing` filter directive (e.g. `info`, `debug`); also read as `FCP_LOG_LEVEL`.
     pub log_level: String,
+    /// Ollama HTTP base URL (no trailing path), e.g. `http://localhost:11434`.
     pub ollama_host: String,
+    /// Default chat model id as understood by Ollama (`ollama pull …`).
     pub model_name: String,
-    /// Human display name from `.fcp/config.toml` / `FCP_USER_NAME`; empty = unset.
+    /// Operator display name for UI / prompts; from TOML or `FCP_USER_NAME`; empty if unset.
     #[serde(default)]
     pub user_name: String,
+    /// Context window size passed to Ollama as `num_ctx` / generation options.
     pub num_ctx: usize,
+    /// Max seconds to wait for a single LLM generation (connect + stream).
     pub generation_timeout_secs: u64,
-    /// Maps to Ollama chat API `think`: `true` enables the thinking/reasoning path; `false` disables it.
+    /// Forwarded to Ollama on each chat request as `.think(...)` in `OllamaClient::generate` (`ollama-rs` `ChatMessageRequest`). `false` (default) turns off the separate thinking/reasoning channel for models that support it—saves tokens and RAM versus `true`. TOML key name is historical; unrelated to `engine::router::ReasoningRouter`.
     pub enable_reasoning_fsm: bool,
+    /// Fraction of estimated context fill (0.0–1.0) at which rolling condensation runs.
     pub condensation_threshold: f32,
+    /// Target token budget after condensation (rolling summary + retained tail).
     pub condensation_target: usize,
+    /// Max tool-call rounds per user `step()` before cap recovery / final pass.
     pub max_tool_rounds: u8,
+    /// Max schema/recovery retries before the orchestrator bails to idle.
     pub max_recovery_attempts: u8,
     /// TTL for `EphemeralTier::Session` rows (seconds). Shortest-lived tier.
     #[serde(default = "default_ephemeral_ttl_session_secs")]
@@ -123,26 +147,35 @@ pub struct AppConfig {
     /// Max characters for the `[ACTIVE_STAGED_MEMORY]` block injected into system prompts; `0` disables.
     #[serde(default = "default_staged_memory_prompt_max_chars")]
     pub staged_memory_prompt_max_chars: usize,
-    /// When true, `web:fetch` is removed from gatekeeper allowlists and unavailable.
+    /// When true, `web:fetch` is stripped from tool allowlists (deprecated in favor of other flows).
     #[serde(default)]
     pub web_fetch_deprecated: bool,
+    /// Qdrant gRPC endpoint URL (semantic memory / `memory:query`).
     pub qdrant_url: String,
     /// Qdrant collection name. Computed at runtime: `fcp_vault_v2_{workspace}`.
     #[serde(skip)]
     pub qdrant_collection_v2: String,
+    /// How often the ephemeral daemon writes `.fcp/ephemeral_{workspace}.bin` and purges expiry.
     pub snapshot_interval_secs: u64,
+    /// Ollama embedding model for ToolRouter and Qdrant upserts (vector width must match collection).
     pub embed_model_name: String,
+    /// Seconds without user input before heartbeat may treat the session as idle (if heartbeat enabled).
     pub idle_timeout_secs: u64,
     /// When true, spawn the idle monitor that may inject [`crate::executive::error::FcpError::Interrupted`] after [`Self::idle_timeout_secs`]. Default off until Gardener/sleep features land.
     #[serde(default)]
     pub idle_heartbeat_enabled: bool,
+    /// HTTP timeout for `web:fetch` tool requests.
     pub web_fetch_timeout_secs: u64,
+    /// Default max response body size for web fetch and API profiles without their own cap.
     pub web_fetch_max_bytes: usize,
-    /// Fraction of [`Self::num_ctx`] used to cap vault read and web chunk sizes (tool budgets; not the condensation trigger).
+    /// Fraction of [`Self::num_ctx`] used to cap vault read and web chunk sizes in tools (not the condensation trigger).
     pub vault_read_ratio: f32,
+    /// Cosine similarity floor for ToolRouter pre-LLM semantic matches (0.0–1.0).
     pub tool_match_threshold: f32,
+    /// Number of semantic-router hits that receive extra “when to use” descriptor text in tool mode.
     #[serde(default = "default_tool_descriptor_jit_top_k")]
     pub tool_descriptor_jit_top_k: usize,
+    /// Character budget for the JIT descriptor block appended to the system prompt.
     #[serde(default = "default_tool_descriptor_jit_max_chars")]
     pub tool_descriptor_jit_max_chars: usize,
     /// When true, tool-mode prompts use a generated phrase map plus tool defs without `parameters` (smaller context). Full JSON Schema is supplied on gatekeeper schema recovery.
@@ -151,8 +184,10 @@ pub struct AppConfig {
     /// When [`Self::slim_tool_prompt`] is true and the semantic router returned hits, include at most this many tools (in router order). `0` means no cap (use full hit list). Ignored when the router returns no hits (full allowed roster, still slim).
     #[serde(default = "default_tool_map_offer_cap")]
     pub tool_map_offer_cap: usize,
+    /// Command used when chat startup asks to launch a local Ollama if unreachable.
     #[serde(default = "default_ollama_daemon")]
     pub ollama_daemon: DaemonCommand,
+    /// Command used when chat startup asks to launch Qdrant if unreachable.
     #[serde(default = "default_qdrant_daemon")]
     pub qdrant_daemon: DaemonCommand,
     /// When true, startup fails if Qdrant gRPC (semantic brain) cannot connect after retries.
@@ -164,8 +199,10 @@ pub struct AppConfig {
     /// Delay between failed gRPC connect attempts (milliseconds).
     #[serde(default = "default_semantic_brain_connect_retry_delay_ms")]
     pub semantic_brain_connect_retry_delay_ms: u64,
+    /// Named HTTP profiles for weather, wiki, etc.; merged over [`default_builtin_apis`] at default time, TOML overrides by key.
     #[serde(default)]
     pub apis: HashMap<String, ApiProfile>,
+    /// Debounced filesystem watch for identity and uploads under the vault (see [`VaultWatchConfig`]).
     #[serde(default)]
     pub vault_watch: VaultWatchConfig,
     /// When true, [`crate::orchestrator::context_view::build_llm_view`] feeds a lean copy to the LLM only; [`crate::orchestrator::core::Orchestrator::chat_stack`] stays full fidelity.
@@ -180,6 +217,7 @@ pub struct AppConfig {
     /// Optional per-tool overrides (merged on top of each tool’s `context_view_hint()`).
     #[serde(default)]
     pub optimize_context_tool_overrides: HashMap<String, ToolContextViewHint>,
+    /// Gmail / Google Workspace integration (service account + domain-wide delegation).
     #[serde(default)]
     pub google: GoogleConfig,
     /// When true, keep full JSON parameter schemas in the LLM view for tool definitions (larger prompt). When false and [`Self::optimize_context`] is true, [`crate::orchestrator::context_view::build_llm_view`] strips `parameters` in that block only; [`crate::orchestrator::core::Orchestrator::chat_stack`] stays full. Independently, the orchestrator forces full schemas for one recovery LLM pass after a Gatekeeper schema fault ([`crate::orchestrator::core::Orchestrator::force_full_tool_schemas_in_llm_view`]).
@@ -211,13 +249,17 @@ pub struct AppConfig {
     pub config_source_dir: PathBuf,
 }
 
+/// Spawnable daemon for peripheral bootstrap (`[ollama_daemon]` / `[qdrant_daemon]`).
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct DaemonCommand {
+    /// Executable name on `PATH` or absolute path.
     pub command: String,
+    /// argv after the program name (may be empty).
     #[serde(default)]
     pub args: Vec<String>,
 }
 
+/// Default peripheral spawn: `ollama serve`.
 fn default_ollama_daemon() -> DaemonCommand {
     DaemonCommand {
         command: "ollama".into(),
@@ -225,6 +267,7 @@ fn default_ollama_daemon() -> DaemonCommand {
     }
 }
 
+/// Default peripheral spawn: `qdrant` with no args (container/binary default config).
 fn default_qdrant_daemon() -> DaemonCommand {
     DaemonCommand {
         command: "qdrant".into(),
@@ -232,119 +275,146 @@ fn default_qdrant_daemon() -> DaemonCommand {
     }
 }
 
+/// How many top semantic router hits get extra JIT descriptor text in the system prompt.
 fn default_tool_descriptor_jit_top_k() -> usize {
     3
 }
 
+/// Character budget for that JIT descriptor block.
 fn default_tool_descriptor_jit_max_chars() -> usize {
     6000
 }
 
 fn default_slim_tool_prompt() -> bool {
-    false
+    true
 }
 
+/// With slim tool prompt + semantic hits, cap how many matched tools appear in the phrase map; `0` = no cap.
 fn default_tool_map_offer_cap() -> usize {
     0
 }
 
+/// When true, chat startup fails if Qdrant is unreachable after retries.
 fn default_require_semantic_brain() -> bool {
     true
 }
 
+/// gRPC connect attempts to Qdrant (including the first try).
 fn default_semantic_brain_connect_attempts() -> u32 {
     12
 }
 
+/// Backoff between failed Qdrant connect attempts (ms).
 fn default_semantic_brain_connect_retry_delay_ms() -> u64 {
     500
 }
 
+/// TTL for `EphemeralTier::Session` (~15 minutes). Idle expiry; turn-end mention can refresh TTL.
 fn default_ephemeral_ttl_session_secs() -> u64 {
-    120
+    900
 }
 
+/// TTL for `EphemeralTier::Scratch` (working notes between session and commit review).
 fn default_ephemeral_ttl_scratch_secs() -> u64 {
-    240
+    3600
 }
 
+/// TTL for `EphemeralTier::Promote` (commit-eligible; long session before user runs commit).
 fn default_ephemeral_ttl_promote_secs() -> u64 {
-    460
+    28800
 }
 
+/// Minimum `promotion_score` to move from Session → Scratch.
 fn default_promotion_threshold_session_to_scratch() -> f64 {
     3.0
 }
 
+/// Minimum `promotion_score` to move from Scratch → Promote.
 fn default_promotion_threshold_scratch_to_promote() -> f64 {
     6.0
 }
 
+/// Subtracted from `promotion_score` on each promotion daemon tick (when not suppressed).
 fn default_promotion_decay_per_tick() -> f64 {
     0.5
 }
 
+/// How often the daemon runs `evaluate_promotions_and_decay` (skipped while `Orchestrator::step` is active).
 fn default_promotion_eval_interval_secs() -> u64 {
-    30
+    120
 }
 
+/// Score added per distinct user turn that references a staged entry’s `canonical_key`.
 fn default_promotion_mention_boost() -> f64 {
     1.0
 }
 
+/// Score added on explicit `memory:stage`; with default decay (0.5) and eval interval, one tick can cross session→scratch (3.0).
 fn default_promotion_stage_boost() -> f64 {
-    // After one daemon tick: 3.5 - decay(0.5) >= session→scratch threshold (3.0).
     3.5
 }
 
+/// Bump promotion score / TTL when user text mentions a staged `canonical_key` after a turn.
 fn default_turn_end_mention_enabled() -> bool {
     true
 }
 
+/// Max size of the `[ACTIVE_STAGED_MEMORY]` block in the system prompt; `0` disables.
 fn default_staged_memory_prompt_max_chars() -> usize {
-    3500
+    1500
 }
 
+/// When true, build a slimmer copy of history for the LLM via [`crate::orchestrator::context_view::build_llm_view`].
 fn default_optimize_context() -> bool {
-    false
+    true
 }
 
+/// Default max chars per tool result body in the LLM view; align with orchestrator caps to avoid double truncation.
 fn default_optimize_context_max_tool_snippet_chars() -> usize {
-    400
+    2500
 }
 
+/// When optimizing context, shrink assistant JSON in the LLM view to `message_to_user` + tool names.
 fn default_optimize_context_assistant_compact() -> bool {
     true
 }
 
+/// When true and `optimize_context`, keep full JSON Schema `parameters` in the tool-def block (larger prompts).
 fn default_optimize_context_full_tool_schemas() -> bool {
     false
 }
 
+/// Default `top_k` for `memory:query` when the model omits it.
 fn default_memory_query_default_top_k() -> u32 {
     5
 }
 
+/// Hard cap for `top_k` (clamps LLM/user args).
 fn default_memory_query_top_k_max() -> u32 {
     25
 }
 
+/// Default total character budget for formatted vector hits returned to the model.
 fn default_memory_query_default_max_total_chars() -> u32 {
     10_000
 }
 
+/// Floor for `max_total_chars` when the caller supplies a value.
 fn default_memory_query_min_max_total_chars() -> u32 {
     256
 }
 
+/// Max Qdrant points to pull when post-filtering (e.g. `vault_path_prefix`) needs headroom.
 fn default_memory_query_oversample_cap() -> u64 {
     200
 }
 
+/// Oversample limit = `top_k * multiplier` before cap/min when a path prefix filter is active.
 fn default_memory_query_oversample_multiplier() -> u64 {
     25
 }
 
+/// Minimum Qdrant limit during oversampling for path-prefix queries.
 fn default_memory_query_oversample_min() -> u64 {
     30
 }
@@ -454,6 +524,7 @@ pub fn default_wikipedia_page_summary_api() -> HashMap<String, ApiProfile> {
     m
 }
 
+/// Weather + Wikipedia profiles merged into [`AppConfig::default`]; TOML `[apis]` entries override by id.
 fn default_builtin_apis() -> HashMap<String, ApiProfile> {
     let mut apis = default_open_meteo_apis();
     apis.extend(default_wikipedia_page_summary_api());
@@ -461,18 +532,19 @@ fn default_builtin_apis() -> HashMap<String, ApiProfile> {
 }
 
 impl Default for AppConfig {
+    /// Baseline profile aligned with a typical local Mac setup (Ollama + Qdrant); override per vault in `.fcp/config.toml` or `FCP_*`.
     fn default() -> Self {
         Self {
             workspace: "default".into(),
             vault_root: PathBuf::from("./vaults/"),
             log_level: "info".into(),
             ollama_host: "http://localhost:11434".into(),
-            model_name: "llama3.2".into(),
+            model_name: "gemma4:26b".into(),
             user_name: String::new(),
-            num_ctx: 32768,
+            num_ctx: 16384,
             generation_timeout_secs: 120,
-            enable_reasoning_fsm: true,
-            condensation_threshold: 0.75,
+            enable_reasoning_fsm: false,
+            condensation_threshold: 0.5,
             condensation_target: 300,
             max_tool_rounds: 5,
             max_recovery_attempts: 3,
@@ -498,8 +570,8 @@ impl Default for AppConfig {
             web_fetch_max_bytes: 20480,
             vault_read_ratio: 0.5,
             tool_match_threshold: 0.50,
-            tool_descriptor_jit_top_k: 3,
-            tool_descriptor_jit_max_chars: 6000,
+            tool_descriptor_jit_top_k: default_tool_descriptor_jit_top_k(),
+            tool_descriptor_jit_max_chars: default_tool_descriptor_jit_max_chars(),
             slim_tool_prompt: default_slim_tool_prompt(),
             tool_map_offer_cap: default_tool_map_offer_cap(),
             ollama_daemon: default_ollama_daemon(),
@@ -741,9 +813,9 @@ mod tests {
     #[test]
     fn ttl_for_tier_returns_configured_values() {
         let c = AppConfig::default();
-        assert_eq!(c.ttl_for_tier(crate::memory::types::EphemeralTier::Session), 120);
-        assert_eq!(c.ttl_for_tier(crate::memory::types::EphemeralTier::Scratch), 240);
-        assert_eq!(c.ttl_for_tier(crate::memory::types::EphemeralTier::Promote), 460);
+        assert_eq!(c.ttl_for_tier(crate::memory::types::EphemeralTier::Session), 900);
+        assert_eq!(c.ttl_for_tier(crate::memory::types::EphemeralTier::Scratch), 3600);
+        assert_eq!(c.ttl_for_tier(crate::memory::types::EphemeralTier::Promote), 28800);
     }
 
     #[test]

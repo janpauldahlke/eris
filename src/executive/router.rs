@@ -371,7 +371,9 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                 }
             });
 
-            // 7. Snapshot + promotion daemon
+            // 7. Snapshot + promotion daemon (promotion/decay gated off while `Orchestrator::step` runs)
+            let promotion_suppressed_during_step =
+                Arc::new(std::sync::atomic::AtomicBool::new(false));
             crate::memory::ephemeral::spawn_snapshot_daemon(
                 ephemeral.clone(),
                 workspace_root.clone(),
@@ -379,6 +381,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                 config.snapshot_interval_secs,
                 cancel_token.clone(),
                 config.clone(),
+                promotion_suppressed_during_step.clone(),
             );
 
             // 8. Build Orchestrator
@@ -414,6 +417,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                 context_view,
                 config.clone(),
                 identity_rx,
+                promotion_suppressed_during_step,
             );
 
             tracing::info!(
@@ -775,6 +779,7 @@ mod tests {
             crate::orchestrator::context_view::ContextViewSettings::default(),
             Arc::new(crate::config::AppConfig::default()),
             id_rx,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
         );
 
         let (action_tx, mut action_rx) = mpsc::channel::<UserAction>(100);

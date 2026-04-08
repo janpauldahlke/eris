@@ -1,6 +1,6 @@
 # Updated architecture (code-aligned)
 
-This folder is a **developer and agent** guide to the `eris` crate (`src/`). It reflects the codebase as of the repository state when authored; prefer `src` and `Cargo.toml` for ground truth.
+This folder is a **developer and agent** guide to the `eris` crate (`src/`). It is maintained against `src/` and `Cargo.toml`; when they disagree, **code wins**—update these files after refactors that touch bootstrap, orchestrator, memory, or TUI contracts.
 
 ## Reading order
 

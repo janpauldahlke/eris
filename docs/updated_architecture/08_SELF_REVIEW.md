@@ -5,7 +5,7 @@ This section records a **second pass** over the doc set for consistency, known g
 ## Consistency checks
 
 - **Vault root:** Documented as `cwd` at `AppConfig::load` everywhere; matches `active_vault()` and chat router behavior.
-- **ContextAssembler path:** With `workspace` `""` in chat, `core_dir` = `vault_root.join("00_Core")` — verified against `ContextAssembler::new`.
+- **ContextAssembler path:** With `workspace` `""` in chat, `core_dir` = `vault_root / 00_Invariants` — verified against `ContextAssembler::new` (`orchestrator/context.rs`).
 - **ToolRouter input:** Pre-LLM routing calls `match_tools` with **user** text, not model `thought`; the API name `thought` in `match_tools` is slightly misleading—callers pass user input for the first pass.
 - **Binary name vs clap:** `Cargo.toml` package and `#[command(name = "eris")]` match.
 
@@ -25,6 +25,9 @@ This section records a **second pass** over the doc set for consistency, known g
 - Added explicit note on ToolRouter parameter naming vs user input.
 - Called out `ephemeral_{workspace}.bin` path for operators debugging session restore.
 - Clarified preflight skip for Chat vs peripheral checks in router.
+- Corrected vault layout naming (`00_Invariants`, v2 ingest roots) and Qdrant collection (`qdrant_collection_v2` / `fcp_vault_v2_*`).
+- Documented ephemeral **promotion/decay** vs **snapshot** ticks and **suppression during `Orchestrator::step`** (`Arc<AtomicBool>`).
+- Documented **tool-round UI split**: `message_to_user` on deck, `Tools: …` on status, duplicate deck suppression.
 
 For a **critical engineering** take (debt, refactors, redesign triggers), see [09_CRITICAL_REVIEW.md](./09_CRITICAL_REVIEW.md).
 

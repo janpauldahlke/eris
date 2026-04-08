@@ -21,11 +21,11 @@ Architecture detail: [docs/updated_architecture/README.md](docs/updated_architec
 Eris talks to Ollama over HTTP; defaults match `AppConfig` (`ollama_host`, typically `**http://localhost:11434`**).
 
 1. **Install** [Ollama](https://ollama.com) for your OS and ensure the daemon is running (`ollama serve`, or the background service the installer sets up).
-2. **Pull a chat model** — must match `**model_name`** in `.fcp/config.toml` (default in code: `**llama3.2`**):
+2. **Pull a chat model** — must match `**model_name`** in `.fcp/config.toml` (default in code: `**gemma4:26b`**):
   ```bash
-   ollama pull llama3.2
+   ollama pull gemma4:26b
   ```
-   Use any tag you prefer (`llama3.2:3b`, etc.); set `model_name` accordingly.
+   Use any tag you prefer; set `model_name` accordingly.
 3. **Pull an embedding model** — must match `**embed_model_name`** (default: `**nomic-embed-text`**) for ToolRouter similarity and Qdrant upserts:
   ```bash
    ollama pull nomic-embed-text
@@ -57,7 +57,7 @@ If Qdrant is unreachable and `**require_semantic_brain`** is `true` (default), *
 | Piece       | `.fcp/config.toml` keys | Notes                                               |
 | ----------- | ----------------------- | --------------------------------------------------- |
 | Ollama HTTP | `ollama_host`           | Default `http://localhost:11434`                    |
-| Chat model  | `model_name`            | Match what you `ollama pull` (default `llama3.2`)   |
+| Chat model  | `model_name`            | Match what you `ollama pull` (default `gemma4:26b`) |
 | Embed model | `embed_model_name`      | Default `nomic-embed-text` (768-d vectors → Qdrant) |
 | Qdrant URL  | `qdrant_url`            | Default `http://localhost:6334` (gRPC)              |
 

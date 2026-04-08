@@ -21,6 +21,7 @@ use crate::ui::events::SYSTEM_ALARM_PREFIX;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::path::Path;
 use std::time::Instant;
@@ -40,6 +41,24 @@ Do not request tools; they will not run."#;
 const TOOL_ROUND_CAP_USER_FOOTNOTE: &str = "(Per-turn tool limit reached; further tool calls were not executed. Send another message to continue with tools.)";
 
 const EMPTY_USER_SHRUGS: &[&str] = &["¯\\_(ツ)_/¯", "(・_・)", "(╯°□°）╯︵ ┻━┻"];
+
+/// RAII: sets [`Orchestrator::promotion_suppressed_during_step`] for the whole `step()` await tree.
+struct PromotionSuppressedDuringStep {
+    flag: Arc<AtomicBool>,
+}
+
+impl PromotionSuppressedDuringStep {
+    fn arm(flag: Arc<AtomicBool>) -> Self {
+        flag.store(true, Ordering::SeqCst);
+        Self { flag }
+    }
+}
+
+impl Drop for PromotionSuppressedDuringStep {
+    fn drop(&mut self) {
+        self.flag.store(false, Ordering::SeqCst);
+    }
+}
 
 pub struct Orchestrator<E: LlmEngine> {
     pub state: AgentState,
@@ -93,6 +112,8 @@ pub struct Orchestrator<E: LlmEngine> {
     last_deck_message_body: Option<String>,
     /// After [`Self::max_tool_rounds`] successful tool runs in this `step()`, the next loop iteration runs one final conversational generation (no tools / no JIT), then idles.
     tool_round_cap_final_pass_pending: bool,
+    /// Shared with [`crate::memory::ephemeral::spawn_snapshot_daemon`]: while `true`, promotion/decay ticks are skipped.
+    promotion_suppressed_during_step: Arc<AtomicBool>,
 }
 
 impl<E: LlmEngine> Orchestrator<E> {
@@ -437,6 +458,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         context_view: ContextViewSettings,
         config: Arc<AppConfig>,
         identity: tokio::sync::watch::Receiver<Arc<str>>,
+        promotion_suppressed_during_step: Arc<AtomicBool>,
     ) -> Self {
         Self {
             state: AgentState::Idle,
@@ -479,6 +501,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             activity_line: None,
             last_deck_message_body: None,
             tool_round_cap_final_pass_pending: false,
+            promotion_suppressed_during_step,
         }
     }
 
@@ -497,6 +520,9 @@ impl<E: LlmEngine> Orchestrator<E> {
     /// generation per user turn unless interrupted.
     #[allow(clippy::never_loop)]
     pub async fn step(&mut self, _user_input: Option<String>) -> Result<()> {
+        let _promotion_hold = PromotionSuppressedDuringStep::arm(
+            self.promotion_suppressed_during_step.clone(),
+        );
         self.turn_seq = self.turn_seq.saturating_add(1);
         let turn_seq = self.turn_seq;
         // No `info_span!().entered()` here: `EnteredSpan` is not `Send` and `step()` awaits
@@ -985,7 +1011,8 @@ impl<E: LlmEngine> Orchestrator<E> {
     }
 
     /// Emits an assistant-facing message to TUI when present in the model JSON.
-    /// Tool rounds: activity goes to Status only; final lines without tools go to the main deck.
+    /// Tool rounds: only `message_to_user` is shown on the main transcript; tool names go to Status
+    /// (and full payloads remain in tracing via existing LLM/tool logs).
     async fn emit_optional_user_message(&mut self, response_content: &str) {
         let Some(tx) = &self.tui_tx else {
             return;
@@ -1005,11 +1032,50 @@ impl<E: LlmEngine> Orchestrator<E> {
             .map(|s| s.to_string());
 
         if has_tools {
-            let line = match msg_opt {
-                Some(ref m) => format!("{} · tools…", Self::trim_chars(m, 100)),
-                None => String::from("Running tools…"),
-            };
-            self.activity_line = Some(line);
+            let joined = parsed
+                .tool_calls
+                .iter()
+                .map(|t| t.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            tracing::debug!(
+                event = "UI_TOOL_ROUND_STATUS",
+                tool_count = parsed.tool_calls.len(),
+                tool_names = %joined,
+                "Tool round: names on status line; deck is message_to_user only"
+            );
+            let tool_names_line = format!("Tools: {}", Self::trim_chars(&joined, 88));
+            if let Some(msg) = msg_opt {
+                if self
+                    .last_deck_message_body
+                    .as_deref()
+                    .is_some_and(|prev| prev == msg.as_str())
+                {
+                    tracing::debug!(
+                        event = "UI_SKIP_DUPLICATE_DECK_MESSAGE",
+                        msg_len = msg.len(),
+                        preview = %msg.chars().take(120).collect::<String>(),
+                        "Skipping duplicate assistant deck message (tool round)"
+                    );
+                } else {
+                    self.last_deck_message_body = Some(msg.clone());
+                    let agent_name = self.agent_name();
+                    tracing::info!(
+                        event = "UI_EMIT_INCOMING_MESSAGE",
+                        agent = %agent_name,
+                        msg_len = msg.len(),
+                        preview = %msg.chars().take(120).collect::<String>(),
+                        "Emitting assistant message to TUI deck (tool round)"
+                    );
+                    let _ = tx
+                        .send(crate::ui::events::TuiEvent::IncomingMessage(format!(
+                            "[{}]: {}",
+                            agent_name, msg
+                        )))
+                        .await;
+                }
+            }
+            self.activity_line = Some(tool_names_line);
             self.broadcast_state().await;
             return;
         }
@@ -1521,7 +1587,7 @@ mod tests {
     use crate::config::AppConfig;
     use crate::engine::{Message, EngineResponse};
     use async_trait::async_trait;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use tokio::sync::mpsc;
     use crate::executive::error::Result;
 
@@ -1619,6 +1685,7 @@ mod tests {
             ContextViewSettings::default(),
             Arc::new(AppConfig::default()),
             id_rx,
+            Arc::new(AtomicBool::new(false)),
         );
 
         assert_eq!(orchestrator.state, AgentState::Idle);
@@ -1663,6 +1730,7 @@ mod tests {
             ContextViewSettings::default(),
             Arc::new(AppConfig::default()),
             id_rx,
+            Arc::new(AtomicBool::new(false)),
         )
     }
 
@@ -2088,6 +2156,7 @@ mod tests {
             ContextViewSettings::default(),
             Arc::new(AppConfig::default()),
             id_rx,
+            Arc::new(AtomicBool::new(false)),
         );
 
         orchestrator.state = AgentState::Chat;
@@ -2201,6 +2270,7 @@ mod tests {
             ContextViewSettings::default(),
             Arc::new(AppConfig::default()),
             id_rx,
+            Arc::new(AtomicBool::new(false)),
         );
         orchestrator.state = AgentState::Chat;
         orchestrator.chat_stack.push(Message { role: "user".to_string(), content: "remember my name".to_string() });

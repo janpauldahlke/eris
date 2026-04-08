@@ -78,7 +78,7 @@ sequenceDiagram
 | Term | Meaning |
 |------|---------|
 | **Vault root / active vault** | `AppConfig::config_source_dir` (= cwd at load); `active_vault()` |
-| **Workspace** | Logical id for Qdrant collection `fcp_vault_{workspace}`, ephemeral snapshot filename, etc. |
+| **Workspace** | Logical id for Qdrant collection `fcp_vault_v2_{workspace}`, ephemeral snapshot filename `.fcp/ephemeral_{workspace}.bin`, etc. |
 | **Layer 1 / Layer 2** | Legacy docs sometimes call the LLM “Layer 1” and orchestrator+tools “Layer 2”; code modules are `engine` and `orchestrator` |
 | **chat_stack** | Canonical `Vec<Message>`; LLM may see a *view* via `build_llm_view` |
 | **Tool mode vs conversational** | Pre-LLM routing: some user turns skip tools (short input, system alarm prefix); else tools enabled with full or slim schemas |

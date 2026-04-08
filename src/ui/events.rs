@@ -48,7 +48,7 @@ pub struct AgentStateUpdate {
     pub tool_rounds: u8,
     pub recovery_count: u8,
     pub active_task: Option<String>,
-    /// Short hint shown in Status while tools run (not on the main transcript).
+    /// Status-only hint while tools run (e.g. `Tools: …`); user text stays on the main transcript.
     pub activity_line: Option<String>,
     pub queued_inputs: usize,
     pub router_ms: u64,

@@ -454,6 +454,9 @@ pub async fn evaluate_promotions_and_decay(
     }
 }
 
+/// When `true`, the orchestrator is inside [`crate::orchestrator::core::Orchestrator::step`]; the
+/// snapshot daemon skips [`evaluate_promotions_and_decay`] so decay/tier moves do not race slow LLM
+/// or tool batches. Snapshot + expiry handling still run on their timers.
 pub fn spawn_snapshot_daemon(
     memory: Arc<EphemeralMemory>,
     vault_root: PathBuf,
@@ -461,6 +464,7 @@ pub fn spawn_snapshot_daemon(
     interval_secs: u64,
     cancel_token: CancellationToken,
     config: Arc<crate::config::AppConfig>,
+    promotion_suppressed_during_step: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
     tokio::spawn(async move {
         let snapshot_interval = std::time::Duration::from_secs(interval_secs);
@@ -498,7 +502,16 @@ pub fn spawn_snapshot_daemon(
                     }
                 }
                 _ = promo_tick.tick() => {
-                    evaluate_promotions_and_decay(&memory, &config).await;
+                    if promotion_suppressed_during_step
+                        .load(std::sync::atomic::Ordering::SeqCst)
+                    {
+                        tracing::trace!(
+                            event = "promotion_tick_skipped_step_active",
+                            "Skipping promotion/decay tick while orchestrator step is in progress"
+                        );
+                    } else {
+                        evaluate_promotions_and_decay(&memory, &config).await;
+                    }
                 }
                 _ = cancel_token.cancelled() => {
                     if let Err(e) = memory.snapshot_to_disk(&vault_root).await {
@@ -677,6 +690,7 @@ mod tests {
             9999,
             cancel_token.clone(),
             Arc::new(crate::config::AppConfig::default()),
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         );
         
         // Immediately cancel
