@@ -117,3 +117,4 @@
 - [x] breakdown orchestratror, clean code!
 - [x] better user facing message after failed recovery
 - [x] better telemetry in TUI, shortening
+- [x] undo: remove rolling_summary_condensation write to memory sidefect
