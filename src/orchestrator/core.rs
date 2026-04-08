@@ -73,6 +73,10 @@ pub struct Orchestrator<E: LlmEngine> {
     pub last_turn_tools_enabled: bool,
     pub descriptor_jit_top_k: usize,
     pub descriptor_jit_max_chars: usize,
+    /// Phrase map + tool defs without parameters when true (`slim_tool_prompt` in config).
+    pub slim_tool_prompt: bool,
+    /// Cap semantic router hits included in slim map (`0` = no cap).
+    pub tool_map_offer_cap: usize,
     pub descriptor_registry: Option<Arc<ToolDescriptorRegistry>>,
     /// LLM-only stack transform; stored [`Self::chat_stack`] is unchanged.
     pub context_view: ContextViewSettings,
@@ -422,6 +426,8 @@ impl<E: LlmEngine> Orchestrator<E> {
         num_ctx: usize,
         descriptor_jit_top_k: usize,
         descriptor_jit_max_chars: usize,
+        slim_tool_prompt: bool,
+        tool_map_offer_cap: usize,
         interrupt_rx: tokio::sync::watch::Receiver<()>,
         tui_tx: Option<tokio::sync::mpsc::Sender<crate::ui::events::TuiEvent>>,
         tool_router: Option<ToolRouter>,
@@ -455,6 +461,8 @@ impl<E: LlmEngine> Orchestrator<E> {
             last_turn_tools_enabled: false,
             descriptor_jit_top_k,
             descriptor_jit_max_chars,
+            slim_tool_prompt,
+            tool_map_offer_cap,
             descriptor_registry,
             context_view,
             force_full_tool_schemas_in_llm_view: false,
@@ -573,12 +581,46 @@ impl<E: LlmEngine> Orchestrator<E> {
 
         // 2. Context Assembly (WITH tool schemas)
         self.last_turn_tools_enabled = tools_needed;
+        let slim_assembly = self.slim_tool_prompt
+            && tools_needed
+            && targeted_tools.is_empty()
+            && !self.force_full_tool_schemas_in_llm_view;
+
         let system_prompt = if !tools_needed {
             self.context_assembler.assemble_conversational(&self.ephemeral).await?
         } else if !targeted_tools.is_empty() {
             let tool_names = targeted_tools.iter().cloned().collect::<Vec<_>>();
             self.context_assembler
                 .assemble_with_selected_tools(&self.state, &self.ephemeral, &self.gatekeeper, &tool_names)
+                .await?
+        } else if slim_assembly {
+            let offered: Vec<String> = if pre_llm_matched_tools.is_empty() {
+                vec![]
+            } else {
+                let cap = self.tool_map_offer_cap;
+                if cap == 0 {
+                    pre_llm_matched_tools.clone()
+                } else {
+                    pre_llm_matched_tools.iter().take(cap).cloned().collect()
+                }
+            };
+            tracing::info!(
+                event = "fcp.tool_prompt.assembly",
+                mode = "slim_phrase_map",
+                offered_count = offered.len(),
+                router_hit_count = pre_llm_matched_tools.len(),
+                cap = self.tool_map_offer_cap,
+                "Slim tool prompt assembly"
+            );
+            let descriptors = self.descriptor_registry.as_deref();
+            self.context_assembler
+                .assemble_slim_tool_map(
+                    &self.state,
+                    &self.ephemeral,
+                    &self.gatekeeper,
+                    descriptors,
+                    &offered,
+                )
                 .await?
         } else {
             self.context_assembler.assemble(&self.state, &self.ephemeral, &self.gatekeeper).await?
@@ -1551,6 +1593,8 @@ mod tests {
             4096,
             3,
             6000,
+            false,
+            0,
             rx,
             None,
             None,
@@ -1592,6 +1636,8 @@ mod tests {
             4096,
             3,
             6000,
+            false,
+            0,
             rx,
             None,
             None,
@@ -2014,6 +2060,8 @@ mod tests {
             4096,
             3,
             6000,
+            false,
+            0,
             rx,
             None,
             None,
@@ -2124,6 +2172,8 @@ mod tests {
             4096,
             3,
             6000,
+            false,
+            0,
             rx,
             None,
             None,

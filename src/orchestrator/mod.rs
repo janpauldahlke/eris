@@ -9,6 +9,7 @@ pub mod alarm_scheduler;
 pub mod missed_agenda;
 pub mod core;
 pub mod tool_router;
+pub mod tool_compendium;
 pub mod r#loop;
 
 pub use self::core::Orchestrator;

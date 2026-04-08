@@ -177,6 +177,12 @@ pub struct AppConfig {
     pub tool_descriptor_jit_top_k: usize,
     #[serde(default = "default_tool_descriptor_jit_max_chars")]
     pub tool_descriptor_jit_max_chars: usize,
+    /// When true, tool-mode prompts use a generated phrase map plus tool defs without `parameters` (smaller context). Full JSON Schema is supplied on gatekeeper schema recovery.
+    #[serde(default = "default_slim_tool_prompt")]
+    pub slim_tool_prompt: bool,
+    /// When [`Self::slim_tool_prompt`] is true and the semantic router returned hits, include at most this many tools (in router order). `0` means no cap (use full hit list). Ignored when the router returns no hits (full allowed roster, still slim).
+    #[serde(default = "default_tool_map_offer_cap")]
+    pub tool_map_offer_cap: usize,
     #[serde(default = "default_ollama_daemon")]
     pub ollama_daemon: DaemonCommand,
     #[serde(default = "default_qdrant_daemon")]
@@ -266,6 +272,14 @@ fn default_tool_descriptor_jit_top_k() -> usize {
 
 fn default_tool_descriptor_jit_max_chars() -> usize {
     6000
+}
+
+fn default_slim_tool_prompt() -> bool {
+    false
+}
+
+fn default_tool_map_offer_cap() -> usize {
+    0
 }
 
 fn default_require_semantic_brain() -> bool {
@@ -464,6 +478,8 @@ impl Default for AppConfig {
             tool_match_threshold: 0.50,
             tool_descriptor_jit_top_k: 3,
             tool_descriptor_jit_max_chars: 6000,
+            slim_tool_prompt: default_slim_tool_prompt(),
+            tool_map_offer_cap: default_tool_map_offer_cap(),
             ollama_daemon: default_ollama_daemon(),
             qdrant_daemon: default_qdrant_daemon(),
             require_semantic_brain: default_require_semantic_brain(),

@@ -13,6 +13,7 @@ pub mod wiki;
 pub mod mail;
 pub mod descriptors;
 pub mod specs;
+pub mod routing_phrases;
 
 pub use traits::Tool;
 pub use context_view_hint::ToolContextViewHint;

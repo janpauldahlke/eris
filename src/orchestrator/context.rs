@@ -1,10 +1,18 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::executive::error::Result;
 use crate::memory::ephemeral::EphemeralMemory;
 use crate::orchestrator::state::AgentState;
+use crate::tools::descriptors::ToolDescriptorRegistry;
 use crate::tools::gatekeeper::Gatekeeper;
+
+/// How tool definitions are embedded in the system prompt.
+enum ToolPromptTooling {
+    Full,
+    Slim { phrase_map: String },
+}
 
 pub struct ContextAssembler {
     pub core_dir: PathBuf,
@@ -32,7 +40,40 @@ impl ContextAssembler {
     pub async fn assemble(&self, state: &AgentState, _ephemeral: &EphemeralMemory, gatekeeper: &Gatekeeper) -> Result<String> {
         let identity_content = self.identity_text();
         let allowed_tools = gatekeeper.get_allowed_tools(state);
-        Self::build_tool_prompt(identity_content, allowed_tools)
+        Self::build_tool_prompt(identity_content, allowed_tools, ToolPromptTooling::Full)
+    }
+
+    /// Tool mode with phrase compendium and OpenAI-style tool entries **without** `function.parameters`
+    /// (smaller prompt; gatekeeper still validates args; schema recovery supplies full schemas on failure).
+    pub async fn assemble_slim_tool_map(
+        &self,
+        state: &AgentState,
+        _ephemeral: &EphemeralMemory,
+        gatekeeper: &Gatekeeper,
+        descriptors: Option<&ToolDescriptorRegistry>,
+        offered_tool_names: &[String],
+    ) -> Result<String> {
+        let identity_content = self.identity_text();
+        let allowed = gatekeeper.get_allowed_tools(state);
+        let filtered = filter_tools_by_offered_order(allowed, offered_tool_names);
+        let tool_rows: Vec<(String, String)> = filtered
+            .iter()
+            .filter_map(tool_row_from_entry)
+            .collect();
+        let phrase_map =
+            crate::orchestrator::tool_compendium::build_phrase_compendium(descriptors, &tool_rows);
+        let mut slim_tools = filtered;
+        strip_parameters_from_tool_values(&mut slim_tools);
+        tracing::info!(
+            tool_count = slim_tools.len(),
+            phrase_map_chars = phrase_map.len(),
+            "Assembling slim tool prompt (phrase map + tool defs without parameters)"
+        );
+        Self::build_tool_prompt(
+            identity_content,
+            slim_tools,
+            ToolPromptTooling::Slim { phrase_map },
+        )
     }
 
     pub async fn assemble_with_selected_tools(
@@ -63,10 +104,14 @@ impl ContextAssembler {
             "Assembling targeted tool schema prompt"
         );
 
-        Self::build_tool_prompt(identity_content, allowed_tools)
+        Self::build_tool_prompt(identity_content, allowed_tools, ToolPromptTooling::Full)
     }
 
-    fn build_tool_prompt(identity_content: String, allowed_tools: Vec<serde_json::Value>) -> Result<String> {
+    fn build_tool_prompt(
+        identity_content: String,
+        allowed_tools: Vec<serde_json::Value>,
+        tooling: ToolPromptTooling,
+    ) -> Result<String> {
         tracing::info!(tool_count = allowed_tools.len(), "Tools included in assembled prompt");
         let tools_schema_string = serde_json::to_string_pretty(&allowed_tools)
             .unwrap_or_else(|_| "[]".to_string());
@@ -77,6 +122,16 @@ impl ContextAssembler {
             tools = tools_schema_string,
             end = crate::orchestrator::context_view::FCP_TOOL_DEFS_END,
         );
+
+        let slim_block = match tooling {
+            ToolPromptTooling::Full => String::new(),
+            ToolPromptTooling::Slim { phrase_map } => {
+                format!(
+                    "Slim tool mode: the JSON tool block below lists each tool's name and description only (parameter schemas are omitted here). The runtime validates arguments with full JSON Schema. If a call is rejected, you will receive the full schema for that tool and must retry with corrected tool_calls.\n\n{phrase_map}\n\n",
+                    phrase_map = phrase_map
+                )
+            }
+        };
 
         let system_prompt = format!(
             "{identity}\n\n\
@@ -121,7 +176,7 @@ impl ContextAssembler {
               \"message_to_user\": \"I found the note and summarized it above.\",\n\
               \"tool_calls\": []\n\
             }}\n\n\
-            Available tools for current state:\n{tools}\n\n\
+            {slim_block}Available tools for current state:\n{tools}\n\n\
             Memory lifecycle rules (follow exactly):\n\
             - memory:stage creates temporary entries in ephemeral memory and returns a staged_id; it does NOT write vault files.\n\
             - Staged entries EXPIRE on TTL; they do not auto-promote.\n\
@@ -137,6 +192,7 @@ impl ContextAssembler {
             - Everything else → stored in 10_Episodic/\n\
             The tags you provide at stage time determine where content is physically stored on disk.",
             identity = identity_content,
+            slim_block = slim_block,
             tools = tools_block
         );
 
@@ -172,6 +228,56 @@ impl ContextAssembler {
 
         Ok(system_prompt)
     }
+}
+
+fn tool_name_from_entry(v: &serde_json::Value) -> Option<String> {
+    v.get("function")?
+        .get("name")?
+        .as_str()
+        .map(std::string::ToString::to_string)
+}
+
+fn tool_row_from_entry(v: &serde_json::Value) -> Option<(String, String)> {
+    let func = v.get("function")?;
+    let name = func.get("name")?.as_str()?.to_string();
+    let desc = func
+        .get("description")
+        .and_then(|d| d.as_str())
+        .unwrap_or("")
+        .to_string();
+    Some((name, desc))
+}
+
+fn strip_parameters_from_tool_values(tools: &mut [serde_json::Value]) {
+    for item in tools.iter_mut() {
+        if let Some(func) = item.get_mut("function").and_then(|f| f.as_object_mut()) {
+            let _ = func.remove("parameters");
+        }
+    }
+}
+
+/// When `offered` is empty, returns `allowed` unchanged (full roster). Otherwise keeps only
+/// names present in `offered`, in `offered` order.
+fn filter_tools_by_offered_order(
+    allowed: Vec<serde_json::Value>,
+    offered: &[String],
+) -> Vec<serde_json::Value> {
+    if offered.is_empty() {
+        return allowed;
+    }
+    let mut by_name: HashMap<String, serde_json::Value> = HashMap::with_capacity(allowed.len());
+    for v in allowed {
+        if let Some(n) = tool_name_from_entry(&v) {
+            by_name.insert(n, v);
+        }
+    }
+    let mut out = Vec::new();
+    for name in offered {
+        if let Some(v) = by_name.get(name) {
+            out.push(v.clone());
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -230,5 +336,35 @@ mod tests {
             .expect("assemble v2");
         assert!(assembled_v2.contains("I am version 2."));
         assert_ne!(assembled_v1, assembled_v2);
+    }
+
+    #[tokio::test]
+    async fn test_assemble_slim_tool_map_omits_parameters_in_defs() {
+        let vault_root = std::path::Path::new("/tmp/unused_for_snapshot_test");
+        let workspace = "test_workspace";
+        let (_tx, rx) = tokio::sync::watch::channel(Arc::from("I am the test agent."));
+        let assembler = ContextAssembler::new(vault_root, workspace, rx);
+        let ephemeral = EphemeralMemory::new(workspace.to_string());
+        let state = AgentState::Chat;
+        let mut gatekeeper = crate::tools::gatekeeper::Gatekeeper::new();
+        gatekeeper.register(Arc::new(crate::tools::system::health::SystemHealthTool {
+            config: Arc::new(crate::config::AppConfig::default()),
+        }));
+        let assembled = assembler
+            .assemble_slim_tool_map(&state, &ephemeral, &gatekeeper, None, &[])
+            .await
+            .expect("assemble_slim");
+        assert!(
+            assembled.contains("Slim tool mode"),
+            "expected slim preamble"
+        );
+        assert!(
+            assembled.contains("[FCP_TOOL_PHRASE_MAP]"),
+            "expected phrase map"
+        );
+        assert!(
+            !assembled.contains("\"parameters\""),
+            "slim prompt must not embed JSON parameter schemas"
+        );
     }
 }

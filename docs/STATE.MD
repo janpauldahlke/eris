@@ -103,4 +103,8 @@
 
 - [x] improvement (s02): maps tags to vault spaces
 - [x] fix: better startup to prevent multiple ollama instances that kill RAM
-- [] improved mail, mail:delete, mail:check, mail:move
+- [x] improved mail, mail:delete, mail:check, mail:move
+
+08/04/2026
+
+- [x] feature: agent facing tool compendium to prevent systemprompt bloat
