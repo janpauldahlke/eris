@@ -35,7 +35,7 @@
 
 | Tier | Technology | Purpose |
 |------|------------|---------|
-| Ephemeral | moka + optional bincode file | Staging, web artifact cache lines, rolling summary (see `context_window`), tiered promotion toward commit |
+| Ephemeral | moka + optional bincode file | Staging, web artifact cache lines, rolling summary (see `orchestrator::context` / `context/window.rs`), tiered promotion toward commit |
 | Semantic | Qdrant + Ollama embeddings | Long-term vector search, vault chunk recall (v2 layout + synthesis heads) |
 
 ```mermaid

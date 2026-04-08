@@ -14,7 +14,7 @@ Orchestrator maps many failures into recovery loops or idle; **`Interrupted`** i
 - **CPU-heavy work:** bincode in ephemeral, some JSON work uses `spawn_blocking`.
 - **`CancellationToken`** (tokio-util) for graceful shutdown.
 
-## Context window / condensation (`orchestrator/context_window.rs`)
+## Context window / condensation (`orchestrator/context/window.rs`, re-exported as `orchestrator::context`)
 
 When estimated tokens exceed threshold, older messages fold into a **rolling summary** stored as ephemeral entry `fcp:rolling_context_summary` with structured JSON (`RollingSummaryV1`). Web-heavy turns may use a higher condensation threshold (`WEB_CONDENSATION_THRESHOLD` in core).
 

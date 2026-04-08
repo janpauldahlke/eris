@@ -17,4 +17,4 @@ Use the **TUI relay**—do not add a second queue inside the orchestrator for th
 
 **Lexical bypass:** the prefixed alarm line is short; `SHORT_INPUT_GUARD` in `tool_router.rs` tends to force conversational mode—desirable for a quick user-facing nudge instead of deep tool escalation.
 
-**Reference implementation:** `clock:timer`, `clock:alarm`, and `src/orchestrator/alarm_scheduler.rs`.
+**Reference implementation:** `clock:timer`, `clock:alarm`, and the background scheduler in `src/orchestrator/alarms/scheduler.rs` (wired from `executive/router.rs` via `orchestrator::alarms::spawn_alarm_scheduler`).

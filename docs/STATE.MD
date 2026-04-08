@@ -108,9 +108,10 @@
 08/04/2026
 
 - [x] feature: agent facing tool compendium to prevent systemprompt bloat
-- [] feature ZETTELKASTEN - complete redesign of the vault structure and persistnce layer
+- [x] feature ZETTELKASTEN - complete redesign of the vault structure and persistnce layer
   - do a each turn check on prending memories to raise score, daemon will deacy is
   - move promotion/decay to idle ticks
   - finding middle ground in config
   - updated architecture
   - clean up config
+- [x] breakdown orchestratror, clean code!

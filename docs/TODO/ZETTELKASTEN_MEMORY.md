@@ -127,14 +127,14 @@ flowchart LR
 
 - **[`src/tools/gatekeeper.rs`](../../src/tools/gatekeeper.rs):** per-state allowlists — drop `web:fetch` when deprecated; add new tools (`memory:query_history`, `memory:promotion_list`, etc.).
 - **Tool compendium + JIT recovery:** register new tools and routing phrases ([`src/tools/specs.rs`](../../src/tools/specs.rs), [`src/tools/routing_phrases.rs`](../../src/tools/routing_phrases.rs), orchestrator compendium paths) so slim prompts and schema recovery know names and when to use them.
-- **[`src/orchestrator/context.rs`](../../src/orchestrator/context.rs):** memory lifecycle copy — three tiers, promote-only `commit_all`, `staged_list` fields, history vs default query.
+- **[`src/orchestrator/context/assembler.rs`](../../src/orchestrator/context/assembler.rs):** memory lifecycle copy — three tiers, promote-only `commit_all`, `staged_list` fields, history vs default query.
 
 ## Current code touchpoints
 
 - [`src/memory/ephemeral.rs`](../../src/memory/ephemeral.rs) — cache, TTLs per tier, daemon.
 - [`src/tools/memory/`](../../src/tools/memory/) — stage, staged_list, commit, commit_all, query (+ history tool or query args).
 - [`src/memory/semantic.rs`](../../src/memory/semantic.rs) — collection v2, ingest roots, recursion, payload, head-only ingest.
-- [`src/orchestrator/context.rs`](../../src/orchestrator/context.rs) — prompts.
+- [`src/orchestrator/context/assembler.rs`](../../src/orchestrator/context/assembler.rs) — prompts.
 - [`src/config.rs`](../../src/config.rs) — TTL triple, collection v2, vault watch paths, `web_fetch_deprecated` (or similar), tag→root routing.
 
 ## Target data model (v2)

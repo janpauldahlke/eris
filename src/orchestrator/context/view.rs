@@ -7,7 +7,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::engine::Message;
-use crate::orchestrator::json_envelope::split_leading_json_object;
+use crate::orchestrator::llm_support::json_envelope::split_leading_json_object;
 use crate::tools::ToolContextViewHint;
 
 /// Start delimiter for the JSON tool-definition array inside the assembled system prompt ([`crate::orchestrator::context::ContextAssembler::build_tool_prompt`]).

@@ -205,7 +205,7 @@ pub struct AppConfig {
     /// Debounced filesystem watch for identity and uploads under the vault (see [`VaultWatchConfig`]).
     #[serde(default)]
     pub vault_watch: VaultWatchConfig,
-    /// When true, [`crate::orchestrator::context_view::build_llm_view`] feeds a lean copy to the LLM only; [`crate::orchestrator::core::Orchestrator::chat_stack`] stays full fidelity.
+    /// When true, [`crate::orchestrator::context::build_llm_view`] feeds a lean copy to the LLM only; [`crate::orchestrator::core::Orchestrator::chat_stack`] stays full fidelity.
     #[serde(default = "default_optimize_context")]
     pub optimize_context: bool,
     /// Default max chars for tool result bodies in the LLM view when a tool uses [`ToolContextViewHint::Default`].
@@ -220,7 +220,7 @@ pub struct AppConfig {
     /// Gmail / Google Workspace integration (service account + domain-wide delegation).
     #[serde(default)]
     pub google: GoogleConfig,
-    /// When true, keep full JSON parameter schemas in the LLM view for tool definitions (larger prompt). When false and [`Self::optimize_context`] is true, [`crate::orchestrator::context_view::build_llm_view`] strips `parameters` in that block only; [`crate::orchestrator::core::Orchestrator::chat_stack`] stays full. Independently, the orchestrator forces full schemas for one recovery LLM pass after a Gatekeeper schema fault ([`crate::orchestrator::core::Orchestrator::force_full_tool_schemas_in_llm_view`]).
+    /// When true, keep full JSON parameter schemas in the LLM view for tool definitions (larger prompt). When false and [`Self::optimize_context`] is true, [`crate::orchestrator::context::build_llm_view`] strips `parameters` in that block only; [`crate::orchestrator::core::Orchestrator::chat_stack`] stays full. Independently, the orchestrator forces full schemas for one recovery LLM pass after a Gatekeeper schema fault ([`crate::orchestrator::core::Orchestrator::force_full_tool_schemas_in_llm_view`]).
     #[serde(default = "default_optimize_context_full_tool_schemas")]
     pub optimize_context_full_tool_schemas: bool,
     /// Default `top_k` for [`crate::tools::memory::MemoryQueryTool`] when the LLM omits it.
@@ -364,7 +364,7 @@ fn default_staged_memory_prompt_max_chars() -> usize {
     1500
 }
 
-/// When true, build a slimmer copy of history for the LLM via [`crate::orchestrator::context_view::build_llm_view`].
+/// When true, build a slimmer copy of history for the LLM via [`crate::orchestrator::context::build_llm_view`].
 fn default_optimize_context() -> bool {
     true
 }
@@ -533,6 +533,7 @@ fn default_builtin_apis() -> HashMap<String, ApiProfile> {
 
 impl Default for AppConfig {
     /// Baseline profile aligned with a typical local Mac setup (Ollama + Qdrant); override per vault in `.fcp/config.toml` or `FCP_*`.
+    /// A checked-in full example (including optional Gmail) is `vaults/nemo/.fcp/config.toml` — copy and trim for new vaults.
     fn default() -> Self {
         Self {
             workspace: "default".into(),

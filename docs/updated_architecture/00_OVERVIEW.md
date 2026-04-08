@@ -93,7 +93,7 @@ sequenceDiagram
 | `vault_layout.rs` | Paths under `.fcp/` |
 | `workspace.rs` | `init_workspace` for multi-workspace vault roots (legacy/bootstrap) |
 | `engine/` | `LlmEngine`, Ollama, token metrics, reasoning FSM |
-| `orchestrator/` | Core loop, context, state, ToolRouter, heartbeat, alarms |
+| `orchestrator/` | `core/` loop, `state`, `context/` (assembler, LLM view, condensation, compendium), `llm_support/` (JSON envelope + post-tool copy), `tool_router`, `heartbeat/`, `alarms/`, `loop/` policies |
 | `memory/` | Ephemeral + semantic |
 | `tools/` | Trait, gatekeeper, tool implementations, descriptors |
 | `ingest/` | Chunking helpers for semantic pipeline |

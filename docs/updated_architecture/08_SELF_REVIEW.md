@@ -5,7 +5,7 @@ This section records a **second pass** over the doc set for consistency, known g
 ## Consistency checks
 
 - **Vault root:** Documented as `cwd` at `AppConfig::load` everywhere; matches `active_vault()` and chat router behavior.
-- **ContextAssembler path:** With `workspace` `""` in chat, `core_dir` = `vault_root / 00_Invariants` — verified against `ContextAssembler::new` (`orchestrator/context.rs`).
+- **ContextAssembler path:** With `workspace` `""` in chat, `core_dir` = `vault_root / 00_Invariants` — verified against `ContextAssembler::new` (`orchestrator/context/assembler.rs`).
 - **ToolRouter input:** Pre-LLM routing calls `match_tools` with **user** text, not model `thought`; the API name `thought` in `match_tools` is slightly misleading—callers pass user input for the first pass.
 - **Binary name vs clap:** `Cargo.toml` package and `#[command(name = "eris")]` match.
 
@@ -17,7 +17,7 @@ This section records a **second pass** over the doc set for consistency, known g
 
 ## Diagram limitations
 
-- Mermaid state diagram for `AgentState` is **illustrative**; real transitions depend on `core.rs` and `loop/*` branches.
+- Mermaid state diagram for `AgentState` is **illustrative**; real transitions depend on `orchestrator/core/` and `orchestrator/loop/*` branches.
 - Layer diagram omits `ingest` and `util` for clarity—they sit between tools/memory and filesystem/network.
 
 ## Improvements made during review

@@ -78,7 +78,7 @@ In [`executive/router.rs`](src/executive/router.rs) chat branch:
 - **Engine selection:** `match config.llm_backend` → `OllamaClient::with_token_metrics(...)` vs `OpenAiCompatChatEngine::new(...)`.
 - If `gemini_openai` and `FCP_GEMINI_API_KEY` is missing/empty → clear [`FcpError::Config`](src/executive/error.rs) at startup (fail fast).
 
-[`Orchestrator`](src/orchestrator/core.rs) stays generic; only the concrete `E` type at the call site changes (compiler may need a small type-erasure wrapper **only if** the two engine types make the orchestrator type unwieldy — try direct match first; if needed, a thin `enum Engine { Ollama(OllamaClient), OpenAi(OpenAiCompatChatEngine) }` with `impl LlmEngine` avoids `Box<dyn>`).
+[`Orchestrator`](src/orchestrator/core/orchestrator.rs) (re-exported from `orchestrator::core`) stays generic; only the concrete `E` type at the call site changes (compiler may need a small type-erasure wrapper **only if** the two engine types make the orchestrator type unwieldy — try direct match first; if needed, a thin `enum Engine { Ollama(OllamaClient), OpenAi(OpenAiCompatChatEngine) }` with `impl LlmEngine` avoids `Box<dyn>`).
 
 ### 5. Ignition
 

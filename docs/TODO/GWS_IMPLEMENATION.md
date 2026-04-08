@@ -188,7 +188,7 @@ Three new `DESCRIPTOR_TOMLS` entries:
 
 ### 4d. Agent recovery prompts
 
-In [src/orchestrator/post_tool_guidance.rs](src/orchestrator/post_tool_guidance.rs) or a new `src/tools/mail/prompts.rs`:
+In [src/orchestrator/llm_support/post_tool_guidance.rs](../../src/orchestrator/llm_support/post_tool_guidance.rs) or a new `src/tools/mail/prompts.rs`:
 
 - **Auth failure recovery**: When GoogleAuth returns 401/403, the tool returns a clear error message guiding the agent to inform the user that Gmail credentials are not configured or the service account lacks delegation.
 - **Rate limit recovery**: Gmail API has rate limits. If 429 is returned, the tool should advise the agent to wait and retry, or inform the user.

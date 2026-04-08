@@ -77,8 +77,7 @@ impl ContextAssembler {
             .iter()
             .filter_map(tool_row_from_entry)
             .collect();
-        let phrase_map =
-            crate::orchestrator::tool_compendium::build_phrase_compendium(descriptors, &tool_rows);
+        let phrase_map = super::compendium::build_phrase_compendium(descriptors, &tool_rows);
         let mut slim_tools = filtered;
         strip_parameters_from_tool_values(&mut slim_tools);
         tracing::info!(
@@ -136,9 +135,9 @@ impl ContextAssembler {
 
         let tools_block = format!(
             "{begin}\n{tools}\n{end}",
-            begin = crate::orchestrator::context_view::FCP_TOOL_DEFS_BEGIN,
+            begin = super::view::FCP_TOOL_DEFS_BEGIN,
             tools = tools_schema_string,
-            end = crate::orchestrator::context_view::FCP_TOOL_DEFS_END,
+            end = super::view::FCP_TOOL_DEFS_END,
         );
 
         let slim_block = match tooling {
@@ -326,8 +325,8 @@ mod tests {
         assert!(assembled.contains("I am the test agent."));
         assert!(assembled.contains("Reply with ONE valid JSON object only"));
         assert!(assembled.contains("\"status\": \"Task|Reflect|Idle\""));
-        assert!(assembled.contains(crate::orchestrator::context_view::FCP_TOOL_DEFS_BEGIN));
-        assert!(assembled.contains(crate::orchestrator::context_view::FCP_TOOL_DEFS_END));
+        assert!(assembled.contains(super::super::view::FCP_TOOL_DEFS_BEGIN));
+        assert!(assembled.contains(super::super::view::FCP_TOOL_DEFS_END));
     }
 
     #[tokio::test]

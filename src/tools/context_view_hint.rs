@@ -1,4 +1,4 @@
-//! Per-tool hints for [`crate::orchestrator::context_view::build_llm_view`]: each [`super::Tool`] may
+//! Per-tool hints for [`crate::orchestrator::context::build_llm_view`]: each [`super::Tool`] may
 //! override [`ToolContextViewHint::Default`] so the LLM-facing view stays lean without stringly `if`
 //! chains in the orchestrator.
 

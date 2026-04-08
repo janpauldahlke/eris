@@ -55,9 +55,9 @@ High-level sequence:
 10. **Gatekeeper:** register all tools (vault, agenda, web, system, clock, weather, wiki, memory—memory tools conditional on semantic).
 11. **Descriptors:** `ToolDescriptorRegistry::load_embedded` + `assert_covers_registered_tools`.
 12. **ToolRouter:** optional; if `new` fails, orchestrator runs with full tool roster always.
-13. **Heartbeat:** `heartbeat::spawn_heartbeat_monitor` → idle `watch` trigger when idle timeout exceeded.
-14. **Alarm scheduler:** `alarm_scheduler::spawn_alarm_scheduler` reads `.fcp/tools/alarms.json`.
-15. **Missed agenda hint:** `missed_agenda::startup_overdue_agenda_hint` (async spawn).
+13. **Heartbeat:** `orchestrator::heartbeat::spawn_heartbeat_monitor` → idle `watch` trigger when idle timeout exceeded.
+14. **Alarm scheduler:** `orchestrator::alarms::spawn_alarm_scheduler` reads `.fcp/tools/alarms.json`.
+15. **Missed agenda hint:** `orchestrator::alarms::startup_overdue_agenda_hint` (async spawn).
 16. **Ephemeral snapshot + promotion daemon:** `memory::ephemeral::spawn_snapshot_daemon`. The router allocates `Arc<AtomicBool> promotion_suppressed_during_step`, passes **clones** to the daemon and to `Orchestrator::new`. While `Orchestrator::step` runs, the daemon still performs snapshot/expiry ticks but **skips** `evaluate_promotions_and_decay` so tier moves and decay do not race long LLM or tool work (see [02_ORCHESTRATOR_LAYER.md](./02_ORCHESTRATOR_LAYER.md), [04_MEMORY_SUBSYSTEM.md](./04_MEMORY_SUBSYSTEM.md)).
 17. **Orchestrator::new** with `vault_root` = cwd, `workspace` **string empty** so `ContextAssembler` resolves `vault_root/00_Invariants` (not `vault_root/<name>/00_Invariants` for a non-empty workspace segment).
 18. **Spawn** orchestrator loop that drains `action_rx` (Submit, Cancel, SystemInject, AgendaAlarmPending).

@@ -6,7 +6,7 @@ use unicode_normalization::UnicodeNormalization;
 use crate::config::AppConfig;
 use crate::memory::ephemeral::{is_web_artifact_staging, EphemeralMemory};
 use crate::memory::types::EphemeralTier;
-use crate::orchestrator::context_window::ROLLING_SUMMARY_TITLE;
+use crate::orchestrator::context::ROLLING_SUMMARY_TITLE;
 
 /// Outcome of applying user-turn mention boosts.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

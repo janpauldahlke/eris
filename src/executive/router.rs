@@ -352,7 +352,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                 tracing::info!("Idle heartbeat disabled (idle_heartbeat_enabled = false); Esc cancel still active");
             }
 
-            crate::orchestrator::alarm_scheduler::spawn_alarm_scheduler(
+            crate::orchestrator::alarms::spawn_alarm_scheduler(
                 workspace_root.clone(),
                 tui_tx.clone(),
                 alarm_reschedule_rx,
@@ -363,7 +363,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
             let startup_tui = tui_tx.clone();
             tokio::spawn(async move {
                 if let Some(msg) =
-                    crate::orchestrator::missed_agenda::startup_overdue_agenda_hint(&startup_wp).await
+                    crate::orchestrator::alarms::startup_overdue_agenda_hint(&startup_wp).await
                 {
                     let _ = startup_tui
                         .send(crate::ui::events::TuiEvent::SystemError(msg))
@@ -388,7 +388,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
             // Pass workspace_root directly as vault_root with empty workspace string
             // so ContextAssembler resolves 00_Invariants at workspace_root/00_Invariants (not workspace_root/default/00_Invariants)
             let context_view_hints = gatekeeper.merge_context_view_hints(&config.optimize_context_tool_overrides);
-            let context_view = crate::orchestrator::context_view::ContextViewSettings {
+            let context_view = crate::orchestrator::context::ContextViewSettings {
                 enabled: config.optimize_context,
                 default_snippet_chars: config.optimize_context_max_tool_snippet_chars,
                 assistant_compact: config.optimize_context_assistant_compact,
@@ -776,7 +776,7 @@ mod tests {
             None,
             None,
             None,
-            crate::orchestrator::context_view::ContextViewSettings::default(),
+            crate::orchestrator::context::ContextViewSettings::default(),
             Arc::new(crate::config::AppConfig::default()),
             id_rx,
             Arc::new(std::sync::atomic::AtomicBool::new(false)),

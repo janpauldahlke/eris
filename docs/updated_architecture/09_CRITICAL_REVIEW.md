@@ -6,7 +6,7 @@ Audience: senior Rust engineers and anyone designing LLM control planes. Opinion
 
 ## 1. Verdict in one paragraph
 
-The codebase is **coherent for a single-binary, local-first agent**: clear error taxonomy, channel-based UI, explicit gatekeeper, tests around the orchestrator. The main liabilities are **scale** (`orchestrator/core.rs` ~2k lines), **product surface** (`Run`/`Tool` stubs, `FcpError` vs `eris` naming), **duplicate routing knowledge** (embeddings + giant `match` hint strings + TOML descriptors), and **latent config debt** (`enable_reasoning_fsm` unused, vector size implicit). None of that requires a rewrite; it requires **surgical extraction and honesty in the CLI**.
+The codebase is **coherent for a single-binary, local-first agent**: clear error taxonomy, channel-based UI, explicit gatekeeper, tests around the orchestrator. The main liabilities are **scale** (`orchestrator/core/` still coordinates a large `step()` and many concerns—now split across `step.rs`, `tool_dispatch.rs`, etc., but the loop remains dense), **product surface** (`Run`/`Tool` stubs, `FcpError` vs `eris` naming), **duplicate routing knowledge** (embeddings + giant `match` hint strings + TOML descriptors), and **latent config debt** (`enable_reasoning_fsm` unused, vector size implicit). None of that requires a rewrite; it requires **surgical extraction and honesty in the CLI**.
 
 ---
 
@@ -14,7 +14,7 @@ The codebase is **coherent for a single-binary, local-first agent**: clear error
 
 ### 2.1 `Orchestrator::step` and friends
 
-`core.rs` is the cognitive center and a **review bottleneck**. The inner loop mixes: pre-LLM routing, system prompt assembly, `build_llm_view`, generation, condensation, directive parsing, tool batch execution, recovery, and TUI side effects. **Low risk to extract** (no behavior change): `run_pre_llm_routing`, condensation trigger, and “first LLM call vs tool loop” into separate modules or inherent methods on a smaller `StepContext` struct. **High risk** to “re-architect” into a generic state machine without tests—your existing tests are valuable; keep them green.
+`orchestrator/core/` (especially `step.rs`) is the cognitive center and a **review bottleneck**. The inner loop mixes: pre-LLM routing, system prompt assembly, `build_llm_view`, generation, condensation, directive parsing, tool batch execution, recovery, and TUI side effects. Some pieces already live in sibling files (`pre_llm_routing.rs`, `tool_dispatch.rs`, `transitions.rs`, etc.); tightening further is **low risk** if tests stay green. **High risk** to “re-architect” into a generic state machine without tests—your existing tests are valuable.
 
 ### 2.2 `executive/router.rs` chat command
 
@@ -33,7 +33,7 @@ Hundreds of lines in one `match` arm: wiring channels, watchers, gatekeeper regi
 Forcing **one JSON object per turn** with Ollama `FormatType::Json` is a reasonable constraint. Weaknesses:
 
 - **Fragile** if the model emits preamble or multiple JSON objects; you already slice JSON with `find`/`rfind`—that is pragmatic but not robust against adversarial or sloppy models.
-- **Recovery** depends on `Recover` + system injects; that is correct, but the number of edge cases grows with `core.rs`.
+- **Recovery** depends on `Recover` + system injects; that is correct, but the number of edge cases grows with the orchestrator core loop and `llm_support` recovery copy.
 
 **Low-hanging fruit:** centralize JSON extraction in one function with unit tests (valid JSON, junk prefix, fenced code—decide policy explicitly).
 
