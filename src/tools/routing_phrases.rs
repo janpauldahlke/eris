@@ -28,7 +28,7 @@ pub fn fallback_triggers(tool_name: &str) -> &'static str {
         "wiki:summary" => "wikipedia, encyclopedia, what is X, who was, summary of topic, general knowledge, what does wikipedia say, define concept, historical figure, science topic overview",
         "mail:check" => "check email, new mail, inbox, unread messages, check gmail, any new emails, email summary, recent emails, list messages, gmail search, list threads, search inbox, from filter, mail listing",
         "mail:read" => "read email, open message, show email, email details, message content, full email, read message, opens mail, full gmail body, message id, open thread body",
-        "mail:write" => "send email, compose mail, write email, reply, email to, send a message, draft email, dispatch mail, send the greeting",
+        "mail:write" => "send email, compose mail, write email, reply, email to, send a message, draft email, dispatch mail, send the greeting, send mail",
         "mail:digest" => "summarize email, today's mail, digest inbox, what came in today, recap messages, overview of recent gmail, batch list mail",
         "mail:delete" => "delete email, trash message, remove email, get rid of mail, discard message",
         "mail:move" => "move email to folder, label message, file under label, move to spam, archive to label, put mail in ebay folder",

@@ -6,13 +6,10 @@ use crate::executive::error::{FcpError, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-/// Stable title for [`EphemeralMemory`](crate::memory::ephemeral::EphemeralMemory) upserts.
+/// Stable identifier for the rolling summary (stack message content is JSON; not stored in ephemeral).
 pub const ROLLING_SUMMARY_TITLE: &str = "fcp:rolling_context_summary";
 
 pub const ROLLING_SUMMARY_KIND: &str = "rolling_summary_v1";
-
-/// TTL for rolling summary in ephemeral (session-scale; aligns with typical multi-day use).
-pub const ROLLING_SUMMARY_TTL_SECS: u64 = 60 * 60 * 24 * 7;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RollingSummaryV1 {
@@ -169,23 +166,17 @@ pub struct CondensationPlan {
 }
 
 /// Build a condensation plan, or `None` if there is nothing worth folding (no LLM call).
-pub fn plan_sliding_condensation(
-    stack: &[Message],
-    num_ctx: usize,
-    ephemeral_previous_json: Option<String>,
-) -> Result<Option<CondensationPlan>> {
+pub fn plan_sliding_condensation(stack: &[Message], num_ctx: usize) -> Result<Option<CondensationPlan>> {
     let head = split_stack_head(stack)?;
     let tail = tail_after_head(stack, &head);
     if tail.is_empty() {
         return Ok(None);
     }
 
-    let previous_from_message = head
+    let previous_rolling_json = head
         .rolling
         .as_ref()
-        .map(|m| m.content.clone());
-    let previous_rolling_json = previous_from_message
-        .or(ephemeral_previous_json)
+        .map(|m| m.content.clone())
         .filter(|s| !s.trim().is_empty());
 
     let budget = retain_budget_tokens(num_ctx).max(32);

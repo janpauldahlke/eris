@@ -5,8 +5,9 @@ use crate::orchestrator::state::AgentState;
 use super::Orchestrator;
 
 impl<E: LlmEngine> Orchestrator<E> {
-    /// Folds older `chat_stack` tail into a rolling JSON summary (sliding window), persists it to
-    /// ephemeral, and retains recent messages under a token budget.
+    /// Folds older `chat_stack` tail into a rolling JSON summary (sliding window) and retains
+    /// recent messages under a token budget. The summary lives only on the chat stack, not in
+    /// ephemeral memory.
     pub async fn execute_condensation(&mut self) -> Result<()> {
         if self.chat_stack.is_empty() {
             tracing::warn!("execute_condensation: empty chat stack");
@@ -15,15 +16,9 @@ impl<E: LlmEngine> Orchestrator<E> {
             ));
         }
 
-        let ep_prev = self
-            .ephemeral
-            .get(crate::orchestrator::context::ROLLING_SUMMARY_TITLE)
-            .await;
-
         let plan = match crate::orchestrator::context::plan_sliding_condensation(
             &self.chat_stack,
             self.num_ctx,
-            ep_prev,
         )? {
             Some(p) => p,
             None => {
@@ -45,15 +40,6 @@ impl<E: LlmEngine> Orchestrator<E> {
         let json_out = crate::orchestrator::context::normalize_rolling_summary_response(
             &response.content,
         )?;
-
-        self.ephemeral
-            .upsert_by_title(
-                crate::orchestrator::context::ROLLING_SUMMARY_TITLE,
-                &json_out,
-                vec!["context".to_string(), "rolling_summary".to_string()],
-                crate::orchestrator::context::ROLLING_SUMMARY_TTL_SECS,
-            )
-            .await?;
 
         let mut new_stack = Vec::new();
         new_stack.push(plan.main_system.clone());

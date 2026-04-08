@@ -18,5 +18,4 @@ pub use window::{
     normalize_rolling_summary_response, plan_sliding_condensation, retain_budget_tokens,
     rolling_summary_system_message, split_stack_head, split_tail_fold_and_keep, tail_after_head,
     CondensationPlan, RollingSummaryV1, StackHead, ROLLING_SUMMARY_KIND, ROLLING_SUMMARY_TITLE,
-    ROLLING_SUMMARY_TTL_SECS,
 };

@@ -444,7 +444,7 @@ async fn test_step_halt_directive_resets_state() {
 }
 
 #[tokio::test]
-async fn test_execute_condensation_sliding_window_and_ephemeral() {
+async fn test_execute_condensation_sliding_window_stack_only() {
     let rolling_json = r#"{"kind":"rolling_summary_v1","summary":"folded","key_facts":[],"open_threads":[],"last_updated":"2026-01-01T00:00:00+00:00"}"#;
     let engine = MockEngine::with_content(rolling_json);
     let mut orchestrator = setup_orchestrator_with_engine(engine);
@@ -473,20 +473,23 @@ async fn test_execute_condensation_sliding_window_and_ephemeral() {
     assert!(head.rolling.is_some());
     assert!(orchestrator.chat_stack.len() >= 3);
 
-    let stored = orchestrator
-        .ephemeral
-        .get(crate::orchestrator::context::ROLLING_SUMMARY_TITLE)
-        .await;
-    let Some(stored) = stored else {
-        panic!("expected rolling summary in ephemeral");
-    };
+    let rolling_content = head.rolling.as_ref().expect("rolling").content.as_str();
     let parsed: crate::orchestrator::context::RollingSummaryV1 =
-        serde_json::from_str(&stored).expect("rolling json");
+        serde_json::from_str(rolling_content).expect("rolling json");
     assert_eq!(
         parsed.kind,
         crate::orchestrator::context::ROLLING_SUMMARY_KIND
     );
     assert_eq!(parsed.summary, "folded");
+
+    let stored = orchestrator
+        .ephemeral
+        .get(crate::orchestrator::context::ROLLING_SUMMARY_TITLE)
+        .await;
+    assert!(
+        stored.is_none(),
+        "rolling summary must not be written to ephemeral"
+    );
 
     assert_eq!(orchestrator.state, AgentState::Chat);
 }
