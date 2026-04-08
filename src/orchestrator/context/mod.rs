@@ -3,11 +3,17 @@
 
 mod assembler;
 mod compendium;
+pub mod resolved_tool_recovery;
+pub mod stack_lines;
 mod view;
 mod window;
 
 pub use assembler::ContextAssembler;
 pub use compendium::{build_phrase_compendium, typical_phrasing_for_tool};
+pub use stack_lines::{
+    format_tool_success_line, parse_system_line, try_parse_tool_success_line, ParsedSystemLine,
+    ToolSuccessLine, TOOL_SUCCESS_INFIX, TOOL_SUCCESS_PREFIX,
+};
 pub use view::{
     build_llm_view, slim_tool_definitions_inner, ContextViewSettings, FCP_TOOL_DEFS_BEGIN,
     FCP_TOOL_DEFS_END, SlimToolDefsMeta,

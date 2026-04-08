@@ -132,7 +132,10 @@ impl<E: LlmEngine> Orchestrator<E> {
                         "Tool succeeded"
                     );
                     let bounded_result = Self::trim_chars(&result, Self::MAX_TOOL_RESULT_CHARS);
-                    let msg = format!("Tool '{}' succeeded: {}", tool_name, bounded_result);
+                    let msg = crate::orchestrator::context::format_tool_success_line(
+                        &tool_name,
+                        &bounded_result,
+                    );
                     self.chat_stack.push(crate::engine::Message {
                         role: "system".to_string(),
                         content: msg.clone(),

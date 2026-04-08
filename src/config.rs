@@ -223,6 +223,9 @@ pub struct AppConfig {
     /// When true, keep full JSON parameter schemas in the LLM view for tool definitions (larger prompt). When false and [`Self::optimize_context`] is true, [`crate::orchestrator::context::build_llm_view`] strips `parameters` in that block only; [`crate::orchestrator::core::Orchestrator::chat_stack`] stays full. Independently, the orchestrator forces full schemas for one recovery LLM pass after a Gatekeeper schema fault ([`crate::orchestrator::core::Orchestrator::force_full_tool_schemas_in_llm_view`]).
     #[serde(default = "default_optimize_context_full_tool_schemas")]
     pub optimize_context_full_tool_schemas: bool,
+    /// When true and [`Self::optimize_context`] is true, collapse resolved tool-recovery spans in the LLM view only (canonical [`crate::orchestrator::core::Orchestrator::chat_stack`] unchanged).
+    #[serde(default = "default_optimize_context_omit_resolved_tool_recovery")]
+    pub optimize_context_omit_resolved_tool_recovery: bool,
     /// Default `top_k` for [`crate::tools::memory::MemoryQueryTool`] when the LLM omits it.
     #[serde(default = "default_memory_query_default_top_k")]
     pub memory_query_default_top_k: u32,
@@ -382,6 +385,10 @@ fn default_optimize_context_assistant_compact() -> bool {
 /// When true and `optimize_context`, keep full JSON Schema `parameters` in the tool-def block (larger prompts).
 fn default_optimize_context_full_tool_schemas() -> bool {
     false
+}
+
+fn default_optimize_context_omit_resolved_tool_recovery() -> bool {
+    true
 }
 
 /// Default `top_k` for `memory:query` when the model omits it.
@@ -589,6 +596,8 @@ impl Default for AppConfig {
             google: GoogleConfig::default(),
 
             optimize_context_full_tool_schemas: default_optimize_context_full_tool_schemas(),
+            optimize_context_omit_resolved_tool_recovery:
+                default_optimize_context_omit_resolved_tool_recovery(),
             memory_query_default_top_k: default_memory_query_default_top_k(),
             memory_query_top_k_max: default_memory_query_top_k_max(),
             memory_query_default_max_total_chars: default_memory_query_default_max_total_chars(),

@@ -10,6 +10,9 @@ use crate::engine::Message;
 use crate::orchestrator::llm_support::json_envelope::split_leading_json_object;
 use crate::tools::ToolContextViewHint;
 
+use super::resolved_tool_recovery::apply_omit_resolved_tool_recovery;
+use super::stack_lines::try_parse_tool_success_line;
+
 /// Start delimiter for the JSON tool-definition array inside the assembled system prompt ([`crate::orchestrator::context::ContextAssembler::build_tool_prompt`]).
 pub const FCP_TOOL_DEFS_BEGIN: &str = "<<<FCP_TOOL_DEFS_JSON>>>";
 /// End delimiter for that JSON block (paired with [`FCP_TOOL_DEFS_BEGIN`]).
@@ -123,6 +126,8 @@ pub struct ContextViewSettings {
     pub assistant_compact: bool,
     /// When false and [`Self::enabled`] is true, strip `parameters` from tool defs in the LLM view only.
     pub full_tool_schemas_in_llm_view: bool,
+    /// When true and [`Self::enabled`] is true, collapse resolved tool-recovery spans before successful tool batches in the LLM view only.
+    pub omit_resolved_tool_recovery: bool,
     pub hints: Arc<HashMap<String, ToolContextViewHint>>,
 }
 
@@ -133,6 +138,7 @@ impl Default for ContextViewSettings {
             default_snippet_chars: 400,
             assistant_compact: true,
             full_tool_schemas_in_llm_view: false,
+            omit_resolved_tool_recovery: true,
             hints: Arc::new(HashMap::new()),
         }
     }
@@ -149,13 +155,6 @@ fn trim_snippet(input: &str, max_len: usize) -> String {
     let mut out = input[..limit].to_string();
     out.push_str("… [truncated]");
     out
-}
-
-fn try_parse_tool_success_line(content: &str) -> Option<(&str, &str)> {
-    const PREFIX: &str = "Tool '";
-    let rest = content.strip_prefix(PREFIX)?;
-    let (name, body) = rest.split_once("' succeeded: ")?;
-    Some((name, body))
 }
 
 fn rewrite_tool_line(
@@ -226,12 +225,22 @@ pub fn build_llm_view(messages: &[Message], settings: &ContextViewSettings) -> V
         return messages.to_vec();
     }
 
-    let hints = settings.hints.as_ref();
-    let before = approx_stack_chars(messages);
-    let mut rewritten = 0usize;
-    let mut out: Vec<Message> = Vec::with_capacity(messages.len());
+    let folded: Option<Vec<Message>> = if settings.omit_resolved_tool_recovery {
+        Some(apply_omit_resolved_tool_recovery(messages))
+    } else {
+        None
+    };
+    let source: &[Message] = match &folded {
+        Some(v) => v.as_slice(),
+        None => messages,
+    };
 
-    for m in messages {
+    let hints = settings.hints.as_ref();
+    let before = approx_stack_chars(source);
+    let mut rewritten = 0usize;
+    let mut out: Vec<Message> = Vec::with_capacity(source.len());
+
+    for m in source {
         if m.role == "assistant"
             && settings.assistant_compact
             && let Some(compact) = compact_assistant_json(&m.content)
@@ -273,8 +282,10 @@ pub fn build_llm_view(messages: &[Message], settings: &ContextViewSettings) -> V
         }
 
         if m.role == "system"
-            && let Some((tool_name, body)) = try_parse_tool_success_line(&m.content)
+            && let Some(ts) = try_parse_tool_success_line(&m.content)
         {
+            let tool_name = ts.tool_name;
+            let body = ts.body;
             let hint = hints
                 .get(tool_name)
                 .copied()
@@ -298,7 +309,7 @@ pub fn build_llm_view(messages: &[Message], settings: &ContextViewSettings) -> V
     if before != after || rewritten > 0 {
         tracing::info!(
             target: "fcp.context_view",
-            messages_total = messages.len(),
+            messages_total = source.len(),
             messages_rewritten = rewritten,
             approx_chars_before = before,
             approx_chars_after = after,
@@ -312,6 +323,8 @@ pub fn build_llm_view(messages: &[Message], settings: &ContextViewSettings) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::orchestrator::context::resolved_tool_recovery::OMIT_RESOLVED_TOOL_RECOVERY_PLACEHOLDER;
+    use crate::orchestrator::context::stack_lines::format_tool_success_line;
 
     fn hint_map(names: &[(&str, ToolContextViewHint)]) -> Arc<HashMap<String, ToolContextViewHint>> {
         Arc::new(
@@ -346,6 +359,7 @@ mod tests {
             default_snippet_chars: 100,
             assistant_compact: false,
             full_tool_schemas_in_llm_view: false,
+            omit_resolved_tool_recovery: false,
             hints: hint_map(&[("t:1", ToolContextViewHint::Default)]),
         };
         let v = build_llm_view(&m, &settings);
@@ -366,6 +380,7 @@ mod tests {
             default_snippet_chars: 10,
             assistant_compact: false,
             full_tool_schemas_in_llm_view: false,
+            omit_resolved_tool_recovery: false,
             hints: hint_map(&[("t:2", ToolContextViewHint::Full)]),
         };
         let v = build_llm_view(&m, &settings);
@@ -383,6 +398,7 @@ mod tests {
             default_snippet_chars: 400,
             assistant_compact: false,
             full_tool_schemas_in_llm_view: false,
+            omit_resolved_tool_recovery: false,
             hints: hint_map(&[("t:3", ToolContextViewHint::MarkerOnly)]),
         };
         let v = build_llm_view(&m, &settings);
@@ -401,6 +417,7 @@ mod tests {
             default_snippet_chars: 400,
             assistant_compact: true,
             full_tool_schemas_in_llm_view: false,
+            omit_resolved_tool_recovery: false,
             hints: Arc::new(HashMap::new()),
         };
         let v = build_llm_view(&m, &settings);
@@ -421,6 +438,7 @@ mod tests {
             default_snippet_chars: 400,
             assistant_compact: true,
             full_tool_schemas_in_llm_view: false,
+            omit_resolved_tool_recovery: false,
             hints: Arc::new(HashMap::new()),
         };
         let v = build_llm_view(&m, &settings);
@@ -456,6 +474,7 @@ mod tests {
             default_snippet_chars: 400,
             assistant_compact: false,
             full_tool_schemas_in_llm_view: false,
+            omit_resolved_tool_recovery: false,
             hints: Arc::new(HashMap::new()),
         };
         let v = build_llm_view(&m, &settings);
@@ -482,9 +501,54 @@ mod tests {
             default_snippet_chars: 400,
             assistant_compact: false,
             full_tool_schemas_in_llm_view: true,
+            omit_resolved_tool_recovery: false,
             hints: Arc::new(HashMap::new()),
         };
         let v = build_llm_view(&m, &settings);
         assert!(v[0].content.contains("\"parameters\""));
+    }
+
+    #[test]
+    fn omit_resolved_tool_recovery_then_tool_snippet_still_applies() {
+        let stack = vec![
+            Message {
+                role: "user".to_string(),
+                content: "hi".to_string(),
+            },
+            Message {
+                role: "assistant".to_string(),
+                content: "bad".to_string(),
+            },
+            Message {
+                role: "system".to_string(),
+                content: "[SYSTEM OVERRIDE: FUCKUP DETECTED] x".to_string(),
+            },
+            Message {
+                role: "assistant".to_string(),
+                content: r#"{"tool_calls":[{"name":"t:1","args":{}}]}"#.to_string(),
+            },
+            Message {
+                role: "system".to_string(),
+                content: format_tool_success_line("t:1", &"z".repeat(300)),
+            },
+        ];
+        let settings = ContextViewSettings {
+            enabled: true,
+            default_snippet_chars: 80,
+            assistant_compact: false,
+            full_tool_schemas_in_llm_view: false,
+            omit_resolved_tool_recovery: true,
+            hints: hint_map(&[("t:1", ToolContextViewHint::Default)]),
+        };
+        let v = build_llm_view(&stack, &settings);
+        assert_eq!(
+            v.iter()
+                .filter(|m| m.content == OMIT_RESOLVED_TOOL_RECOVERY_PLACEHOLDER)
+                .count(),
+            1
+        );
+        let tool_line = v.iter().find(|m| m.content.contains("[tool] t:1 ok"));
+        assert!(tool_line.is_some());
+        assert!(tool_line.expect("tool line").content.contains("… [truncated]"));
     }
 }
