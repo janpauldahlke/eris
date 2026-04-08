@@ -10,7 +10,10 @@ use crate::telemetry::routing_codes;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
-use super::{Orchestrator, PromotionSuppressedDuringStep, TOOL_ROUND_CAP_SYSTEM_GUIDANCE};
+use super::{
+    Orchestrator, PromotionSuppressedDuringStep, RECOVERY_BUDGET_EXHAUSTED_DECK_LINE,
+    TOOL_ROUND_CAP_SYSTEM_GUIDANCE,
+};
 
 impl<E: LlmEngine> Orchestrator<E> {
     /// The main cognitive loop.
@@ -74,9 +77,31 @@ impl<E: LlmEngine> Orchestrator<E> {
         loop {
             // 1. Bailout Checks
             if self.recovery_count >= self.max_recovery_attempts {
-                tracing::warn!(recovery_count = self.recovery_count, max = self.max_recovery_attempts, "Max recovery attempts reached, bailing out");
+                tracing::warn!(
+                    recovery_count = self.recovery_count,
+                    max = self.max_recovery_attempts,
+                    "Max recovery attempts reached, bailing out"
+                );
+                let notice = format!(
+                    "[fcp] Recovery budget exhausted ({} of {} recovery passes this turn). The assistant is idle — send a new message or simplify the request.",
+                    self.recovery_count,
+                    self.max_recovery_attempts,
+                );
                 self.state = AgentState::Idle;
-                self.broadcast_state().await;
+                self.recovery_count = 0;
+                self.tool_rounds = 0;
+                self.activity_line = None;
+                if let Some(tx) = &self.tui_tx {
+                    let _ = tx
+                        .send(crate::ui::events::TuiEvent::SystemError(notice))
+                        .await;
+                }
+                if self.tui_tx.is_some() {
+                    self.emit_assistant_deck_line(RECOVERY_BUDGET_EXHAUSTED_DECK_LINE)
+                        .await;
+                } else {
+                    self.broadcast_state().await;
+                }
                 return Ok(());
             }
             if self.tool_rounds >= self.max_tool_rounds {

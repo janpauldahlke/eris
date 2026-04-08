@@ -115,3 +115,5 @@
   - updated architecture
   - clean up config
 - [x] breakdown orchestratror, clean code!
+- [x] better user facing message after failed recovery
+- [x] better telemetry in TUI, shortening

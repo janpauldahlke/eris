@@ -25,6 +25,9 @@ Do not request tools; they will not run."#;
 /// Appended when the model still emitted `tool_calls` after the cap recovery pass.
 pub(crate) const TOOL_ROUND_CAP_USER_FOOTNOTE: &str = "(Per-turn tool limit reached; further tool calls were not executed. Send another message to continue with tools.)";
 
+/// Deck line when [`Orchestrator::max_recovery_attempts`] is exhausted mid-turn (mirrors tool-cap footnote style).
+pub(crate) const RECOVERY_BUDGET_EXHAUSTED_DECK_LINE: &str = "(Recovery budget exhausted this turn; assistant is idle. Send a new message or simplify the request.)";
+
 /// RAII: sets [`Orchestrator::promotion_suppressed_during_step`] for the whole `step()` await tree.
 pub(crate) struct PromotionSuppressedDuringStep {
     flag: Arc<AtomicBool>,
@@ -105,7 +108,9 @@ impl<E: LlmEngine> Orchestrator<E> {
             let update = crate::ui::events::AgentStateUpdate {
                 state: self.state,
                 tool_rounds: self.tool_rounds,
+                max_tool_rounds: self.max_tool_rounds,
                 recovery_count: self.recovery_count,
+                max_recovery_attempts: self.max_recovery_attempts,
                 active_task: None,
                 activity_line: self.activity_line.clone(),
                 queued_inputs: self.queued_inputs,

@@ -72,8 +72,9 @@ impl<E: LlmEngine> Orchestrator<E> {
                     content: msg.clone(),
                 });
                 if let Some(tx) = &self.tui_tx {
+                    let telemetry = format!("[tool] {} · duplicate suppressed", tool_name);
                     let _ = tx
-                        .send(crate::ui::events::TuiEvent::SystemError(msg))
+                        .send(crate::ui::events::TuiEvent::SystemError(telemetry))
                         .await;
                 }
                 continue;
@@ -137,8 +138,9 @@ impl<E: LlmEngine> Orchestrator<E> {
                         content: msg.clone(),
                     });
                     if let Some(tx) = &self.tui_tx {
+                        let telemetry = format!("[tool] {} · success", tool_name);
                         let _ = tx
-                            .send(crate::ui::events::TuiEvent::SystemError(msg))
+                            .send(crate::ui::events::TuiEvent::SystemError(telemetry))
                             .await;
                     }
                     self.broadcast_state().await;

@@ -293,14 +293,19 @@ pub fn draw(f: &mut Frame, app: &TuiApp, llm_tokens: &LlmTokenSnapshot) {
         .as_deref()
         .map(|s| truncate_status_line(s, STATUS_ACTIVITY_MAX_CHARS));
 
+    let max_t = app.state.max_tool_rounds.max(1);
+    let max_r = app.state.max_recovery_attempts.max(1);
+
     let status_text = if let Some(ref act) = activity_line {
         format!(
-            "{}\n{}\n{}\nT:{}/5 R:{}/3\nQ:{}\nrt:{}ms llm:{}ms\ntool:{}ms total:{}ms\nmatch:{}\nollama tok: p{} g{} sum{}",
+            "{}\n{}\n{}\nT:{}/{} R:{}/{}\nQ:{}\nrt:{}ms llm:{}ms\ntool:{}ms total:{}ms\nmatch:{}\nollama tok: p{} g{} sum{}",
             pulse_str,
             state_label,
             act,
             app.state.tool_rounds,
+            max_t,
             app.state.recovery_count,
+            max_r,
             queued,
             app.state.router_ms,
             app.state.llm_ms,
@@ -313,11 +318,13 @@ pub fn draw(f: &mut Frame, app: &TuiApp, llm_tokens: &LlmTokenSnapshot) {
         )
     } else {
         format!(
-            "{}\n{}\nT:{}/5 R:{}/3\nQ:{}\nrt:{}ms llm:{}ms\ntool:{}ms total:{}ms\nmatch:{}\nollama tok: p{} g{} sum{}",
+            "{}\n{}\nT:{}/{} R:{}/{}\nQ:{}\nrt:{}ms llm:{}ms\ntool:{}ms total:{}ms\nmatch:{}\nollama tok: p{} g{} sum{}",
             pulse_str,
             state_label,
             app.state.tool_rounds,
+            max_t,
             app.state.recovery_count,
+            max_r,
             queued,
             app.state.router_ms,
             app.state.llm_ms,
