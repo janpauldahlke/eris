@@ -149,7 +149,7 @@ impl<E: LlmEngine> Orchestrator<E> {
 
             let system_prompt = if !tools_needed {
                 self.context_assembler
-                    .assemble_conversational(&self.ephemeral)
+                    .assemble_conversational(&self.state, &self.ephemeral)
                     .await?
             } else if !targeted_tools.is_empty() {
                 let tool_names = targeted_tools.iter().cloned().collect::<Vec<_>>();

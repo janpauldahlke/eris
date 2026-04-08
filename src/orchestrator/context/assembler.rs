@@ -8,6 +8,25 @@ use crate::orchestrator::state::AgentState;
 use crate::tools::descriptors::ToolDescriptorRegistry;
 use crate::tools::gatekeeper::Gatekeeper;
 
+/// Short, state-specific reminder appended to the system prompt so the model aligns with
+/// [`AgentState`] (runtime) without duplicating the full JSON spec (that stays below).
+fn runtime_state_json_contract_focus(state: &AgentState) -> &'static str {
+    match state {
+        AgentState::Chat => {
+            "Runtime state Chat: reply with exactly one JSON object (`{` through `}`). User-visible text belongs only in `message_to_user`. If `tool_calls` is non-empty, each element must be a complete object — close `args` and the tool object with `}` before the array `]`."
+        }
+        AgentState::Reflect => {
+            "Runtime state Reflect: tool palette is reduced. Same single-object JSON contract; double-check `tool_calls` brace balance before sending."
+        }
+        AgentState::Idle => {
+            "Runtime state Idle: when finishing without tools, use `status` Idle and non-empty `message_to_user`. Entire reply is still one JSON object only."
+        }
+        AgentState::Recover => {
+            "Runtime state Recover: repair pass — previous output failed parsing. Emit one syntactically valid JSON object only (no markdown fences, no text before `{` or after `}`). Put user-facing explanation in `message_to_user` inside that object."
+        }
+    }
+}
+
 /// How tool definitions are embedded in the system prompt.
 enum ToolPromptTooling {
     Full,
@@ -56,7 +75,12 @@ impl ContextAssembler {
         let identity_content = self.identity_text();
         let identity_block = self.identity_plus_staged_sidebar(identity_content, ephemeral);
         let allowed_tools = gatekeeper.get_allowed_tools(state);
-        Self::build_tool_prompt(identity_block, allowed_tools, ToolPromptTooling::Full)
+        Self::build_tool_prompt(
+            identity_block,
+            allowed_tools,
+            ToolPromptTooling::Full,
+            state,
+        )
     }
 
     /// Tool mode with phrase compendium and OpenAI-style tool entries **without** `function.parameters`
@@ -89,6 +113,7 @@ impl ContextAssembler {
             identity_block,
             slim_tools,
             ToolPromptTooling::Slim { phrase_map },
+            state,
         )
     }
 
@@ -121,13 +146,19 @@ impl ContextAssembler {
             "Assembling targeted tool schema prompt"
         );
 
-        Self::build_tool_prompt(identity_block, allowed_tools, ToolPromptTooling::Full)
+        Self::build_tool_prompt(
+            identity_block,
+            allowed_tools,
+            ToolPromptTooling::Full,
+            state,
+        )
     }
 
     fn build_tool_prompt(
         identity_block: String,
         allowed_tools: Vec<serde_json::Value>,
         tooling: ToolPromptTooling,
+        state: &AgentState,
     ) -> Result<String> {
         tracing::info!(tool_count = allowed_tools.len(), "Tools included in assembled prompt");
         let tools_schema_string = serde_json::to_string_pretty(&allowed_tools)
@@ -150,8 +181,10 @@ impl ContextAssembler {
             }
         };
 
+        let state_focus = runtime_state_json_contract_focus(state);
         let system_prompt = format!(
             "{identity}\n\n\
+            {state_focus}\n\n\
             You are inside a strict agent loop. Reply with ONE valid JSON object only.\n\
             No code fences around the JSON. Markdown, poems, lists, code blocks, and multi-paragraph answers are allowed ONLY inside the message_to_user string (use \\n escapes for newlines inside that string). There must be zero characters after the final closing brace of the JSON object; your entire reply is only that one JSON object and nothing may follow it.\n\
             No prose outside the JSON object.\n\n\
@@ -209,6 +242,7 @@ impl ContextAssembler {
             00_Invariants/ is read-only (user-maintained identity and facts).\n\
             Tags are free-form for classification; kind determines physical storage.",
             identity = identity_block,
+            state_focus = state_focus,
             slim_block = slim_block,
             tools = tools_block
         );
@@ -219,12 +253,18 @@ impl ContextAssembler {
     /// Builds a tool-free conversational prompt.
     /// The LLM responds naturally; its `thought` field is later fed to the
     /// ToolRouter for semantic gating.
-    pub async fn assemble_conversational(&self, ephemeral: &EphemeralMemory) -> Result<String> {
+    pub async fn assemble_conversational(
+        &self,
+        state: &AgentState,
+        ephemeral: &EphemeralMemory,
+    ) -> Result<String> {
         let identity_content = self.identity_text();
         let identity_block = self.identity_plus_staged_sidebar(identity_content, ephemeral);
+        let state_focus = runtime_state_json_contract_focus(state);
 
         let system_prompt = format!(
             "{identity}\n\n\
+            {state_focus}\n\n\
             Reply with ONE valid JSON object only. No code fences around the JSON.\n\
             Markdown, poems, lists, code blocks, and multi-paragraph answers are allowed ONLY inside the message_to_user string (use \\n escapes for newlines inside that string). There must be zero characters after the final closing brace of the JSON object; your entire reply is only that one JSON object and nothing may follow it.\n\
             No prose outside the JSON object.\n\n\
@@ -242,6 +282,7 @@ impl ContextAssembler {
             4) Leave tool_calls as [] unless the session is in tool-enabled mode.\n\
             5) Answer the user directly, conversationally, and helpfully.",
             identity = identity_block,
+            state_focus = state_focus,
         );
 
         Ok(system_prompt)
@@ -327,6 +368,29 @@ mod tests {
         assert!(assembled.contains("\"status\": \"Task|Reflect|Idle\""));
         assert!(assembled.contains(super::super::view::FCP_TOOL_DEFS_BEGIN));
         assert!(assembled.contains(super::super::view::FCP_TOOL_DEFS_END));
+    }
+
+    #[tokio::test]
+    async fn test_runtime_state_recover_injects_repair_focus() {
+        let vault_root = std::path::Path::new("/tmp/unused_for_snapshot_test");
+        let workspace = "test_workspace";
+        let (_tx, rx) = tokio::sync::watch::channel(Arc::from("identity"));
+        let assembler = ContextAssembler::new(vault_root, workspace, rx, 3500);
+        let ephemeral = EphemeralMemory::new(workspace.to_string());
+        let state = AgentState::Recover;
+        let gatekeeper = crate::tools::gatekeeper::Gatekeeper::new();
+        let assembled = assembler
+            .assemble(&state, &ephemeral, &gatekeeper)
+            .await
+            .expect("assemble");
+        assert!(
+            assembled.contains("Runtime state Recover"),
+            "expected Recover-specific JSON contract line"
+        );
+        assert!(
+            assembled.contains("repair pass"),
+            "expected repair-pass wording for Recover state"
+        );
     }
 
     #[tokio::test]
