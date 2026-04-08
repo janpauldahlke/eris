@@ -62,7 +62,7 @@ impl Tool for AgendaCompleteTool {
             .map_err(FcpError::Io)?;
         fs::write(&agenda_path, new_content).await.map_err(FcpError::Io)?;
 
-        let episodic_dir = self.workspace_root.join("10_Episodic");
+        let episodic_dir = self.workspace_root.join("20_Discourse");
         if !episodic_dir.exists() {
             fs::create_dir_all(&episodic_dir).await.map_err(FcpError::Io)?;
         }

@@ -1,8 +1,8 @@
 //! Embedded TOML descriptors for **JIT tool routing**: `when_to_use`, examples, hints—not runtime output schemas.
 //!
 //! **User-facing wording** after tools (`message_to_user` in Idle) is enforced by orchestrator injects:
-//! success path [`crate::orchestrator::post_tool_guidance::POST_TOOL_USER_REPLY_GUIDANCE`], tool-failure recover
-//! [`crate::orchestrator::post_tool_guidance::POST_TOOL_FAILURE_TRUST_GUIDANCE`], so we do not repeat that in every descriptor block.
+//! success path [`crate::orchestrator::llm_support::post_tool_guidance::POST_TOOL_USER_REPLY_GUIDANCE`], tool-failure recover
+//! [`crate::orchestrator::llm_support::post_tool_guidance::POST_TOOL_FAILURE_TRUST_GUIDANCE`], so we do not repeat that in every descriptor block.
 
 pub const DESCRIPTOR_TOMLS: &[&str] = &[
     r#"descriptor_version = 1
@@ -44,7 +44,16 @@ tool_name = "agenda:push"
 short_description = "Queue a background agenda task."
 when_to_use = "Use to create a new background task for later completion."
 when_not_to_use = "Do not use to read tasks, mark completion, remove, cancel, or schedule reminders; use agenda:list, agenda:complete, agenda:remove, or agenda:remind_at."
-routing_hints = ["add task", "remind me", "todo", "queue task"]
+routing_hints = [
+    "add task",
+    "todo",
+    "queue task",
+    "queue work",
+    "background task",
+    "add to my list",
+    "new errand",
+    "track this for later",
+]
 
 [[examples_good]]
 name = "push_task"
@@ -88,7 +97,34 @@ tool_name = "agenda:remind_at"
 short_description = "Create or update an agenda row and link it to a fire time in .fcp/tools/alarms.json (task + alarm). Default for user reminders, including wall time (e.g. remind me at 3pm to call X)."
 when_to_use = "Use when the user ties the reminder to a todo or new description: task_id or new description, plus minutes or hour:minute. After AGENDA_CONFIRM, snooze with same task_id. This is the only tool that writes both agenda and linked alarm. Prefer this over clock:alarm for phrasing like remind me at, remind me in, remind me about, or anything that is a task/errand to track."
 when_not_to_use = "Do not use for a generic relative timer with no task meaning (use clock:timer). Do not use for a wake-only or alarm-clock-only ping with no todo (use clock:alarm). Do not use for listing or completing tasks alone; use agenda:list or agenda:complete."
-routing_hints = ["remind me at", "remind me in", "remind me about", "remind me tomorrow", "remember to", "do not forget", "nudge me at", "ping me at", "todo reminder", "snooze this task", "alarm for my task", "in 10 minutes for this", "at 3pm for this", "schedule this reminder", "on my agenda", "on my todo list", "task_id reminder", "agenda item"]
+routing_hints = [
+    "remind me at",
+    "remind me in",
+    "remind me about",
+    "remind me tomorrow",
+    "remember to",
+    "do not forget",
+    "nudge me at",
+    "ping me at",
+    "todo reminder",
+    "snooze this task",
+    "alarm for my task",
+    "in 10 minutes for this",
+    "in two minutes",
+    "in 2 minutes",
+    "at 3pm for this",
+    "schedule this reminder",
+    "on my agenda",
+    "on my todo list",
+    "task_id reminder",
+    "agenda item",
+    "multi-step task",
+    "several steps later",
+    "then send email",
+    "after that do",
+    "remind yourself to",
+    "delayed checklist",
+]
 
 [[examples_good]]
 name = "relative_minutes"
@@ -147,9 +183,35 @@ rationale = "Tool does not require args."
     r#"descriptor_version = 1
 tool_name = "memory:query"
 short_description = "Search long-term semantic memory for facts, user identity, preferences, and past context."
-when_to_use = "Use for fuzzy recall, who am I / what is my name, user preferences, and anything stored in indexed vault memory. Prefer query alone; use filter_tag only when you know an exact frontmatter tag. Optional: top_k (1..25), max_total_chars, min_score (0..1), vault_path_prefix (e.g. 30_Persons/) to narrow by vault path."
+when_to_use = "Use for fuzzy recall, who am I / what is my name, user preferences, and anything stored in indexed vault memory. Prefer query alone; use filter_tag only when you know an exact frontmatter tag. Optional: top_k (1..25), max_total_chars, min_score (0..1), vault_path_prefix (e.g. 30_Synthesis/) to narrow by vault path. In multi-step flows (reminder then email, contact then send), query memory for stored addresses or contact facts before guessing from inbox metadata."
 when_not_to_use = "Do not use for exact file reads by path; use vault:read."
-routing_hints = ["search memory", "do you remember", "what is my name", "who am I", "user preferences", "my identity", "recall context", "semantic query"]
+routing_hints = [
+    "search memory",
+    "do you remember",
+    "what is my name",
+    "who am I",
+    "user preferences",
+    "my identity",
+    "recall context",
+    "semantic query",
+    "look up contact",
+    "stored email address",
+    "email address in memory",
+    "contact info we saved",
+    "before sending email",
+    "before I email",
+    "before I mail",
+    "find their email",
+    "multi-step reminder",
+    "after the alarm",
+    "when the timer fires",
+    "synthesis folder",
+    "30_Synthesis",
+    "what did I save about",
+    "facts about the user",
+    "long-term recall",
+    "vector memory",
+]
 
 [[examples_good]]
 name = "query_broad"
@@ -163,8 +225,8 @@ rationale = "Optional narrowing when the tag is known from vault metadata."
 
 [[examples_good]]
 name = "query_with_path_prefix"
-args = { query = "Pauline", vault_path_prefix = "30_Persons/", top_k = 8 }
-rationale = "Narrow to Persons folder when asking about people."
+args = { query = "Pauline", vault_path_prefix = "30_Synthesis/", top_k = 8 }
+rationale = "Narrow to Synthesis folder when looking for specific concepts."
 
 [[examples_bad]]
 name = "empty_query"
@@ -231,12 +293,12 @@ routing_hints = ["list files", "show directory", "browse folder", "what files ex
 
 [[examples_good]]
 name = "list_episodic"
-args = { directory = "10_Episodic" }
+args = { directory = "20_Discourse" }
 rationale = "Lists files in a concrete folder."
 
 [[examples_bad]]
 name = "wrong_key"
-args = { path = "10_Episodic" }
+args = { path = "20_Discourse" }
 rationale = "directory is required."
 "#,
     r#"descriptor_version = 1
@@ -248,29 +310,29 @@ routing_hints = ["read file", "open note", "show file", "inspect markdown"]
 
 [[examples_good]]
 name = "read_project_note"
-args = { relative_path = "10_Episodic/today.md" }
+args = { relative_path = "20_Discourse/today.md" }
 rationale = "Reads a concrete file by relative path."
 
 [[examples_bad]]
 name = "wrong_field_name"
-args = { path = "10_Episodic/today.md" }
+args = { path = "20_Discourse/today.md" }
 rationale = "Invalid key; must use relative_path."
 "#,
     r#"descriptor_version = 1
 tool_name = "vault:write"
 short_description = "Write content to a vault file using overwrite or append mode."
 when_to_use = "Use when you need to create or update a vault file on disk."
-when_not_to_use = "Do not use for reading, listing, or writing immutable 00_Core paths."
+when_not_to_use = "Do not use for reading, listing, or writing immutable 00_Invariants paths."
 routing_hints = ["save note", "write file", "append note", "create markdown"]
 
 [[examples_good]]
 name = "write_overwrite"
-args = { relative_path = "10_Episodic/new_note.md", content = "Hello", mode = "overwrite" }
+args = { relative_path = "20_Discourse/new_note.md", content = "Hello", mode = "overwrite" }
 rationale = "Valid write request with required fields."
 
 [[examples_bad]]
 name = "missing_mode"
-args = { relative_path = "10_Episodic/new_note.md", content = "Hello" }
+args = { relative_path = "20_Discourse/new_note.md", content = "Hello" }
 rationale = "mode is required."
 "#,
     r#"descriptor_version = 1
@@ -429,7 +491,23 @@ tool_name = "mail:check"
 short_description = "List recent or filtered Gmail messages with subject, from, date, and preview per row."
 when_to_use = "Use when the user wants to see recent or filtered messages. Supports Gmail search query syntax (e.g. is:unread, from:boss@co.com). Each row includes id, thread, subject, from, date, and a short preview; use mail:read for full body."
 when_not_to_use = "Do not use to read full message body (use mail:read) or send mail (use mail:write)."
-routing_hints = ["check email", "new mail", "inbox", "unread messages", "check gmail", "any new emails", "email summary", "subject line", "who emailed me"]
+routing_hints = [
+    "check email",
+    "new mail",
+    "inbox",
+    "unread messages",
+    "check gmail",
+    "any new emails",
+    "email summary",
+    "subject line",
+    "who emailed me",
+    "gmail search",
+    "list threads",
+    "recent gmail",
+    "from: filter",
+    "search inbox",
+    "mail listing",
+]
 
 [[examples_good]]
 name = "check_unread"
@@ -451,7 +529,18 @@ tool_name = "mail:read"
 short_description = "Read full content of a Gmail message by ID."
 when_to_use = "Use to read the full content of a specific message by ID (from mail:check results). Returns parsed headers and body text."
 when_not_to_use = "Do not use without a message_id from mail:check. Do not use to list messages or send mail."
-routing_hints = ["read email", "open message", "show email", "email details", "message content", "full email"]
+routing_hints = [
+    "read email",
+    "open message",
+    "show email",
+    "email details",
+    "message content",
+    "full email",
+    "full gmail body",
+    "message_id",
+    "open thread body",
+    "read that message",
+]
 
 [[examples_good]]
 name = "read_by_id"
@@ -468,7 +557,17 @@ tool_name = "mail:write"
 short_description = "Send an email via Gmail."
 when_to_use = "Use to compose and send an email. Requires to, subject, and body. Optionally cc and bcc."
 when_not_to_use = "Do not use to read or check mail. Do not use without explicit user intent to send."
-routing_hints = ["send email", "compose mail", "write email", "reply", "email to", "send a message"]
+routing_hints = [
+    "send email",
+    "compose mail",
+    "write email",
+    "reply",
+    "email to",
+    "send a message",
+    "dispatch mail",
+    "send them the greeting",
+    "mail write",
+]
 
 [[examples_good]]
 name = "send_basic"

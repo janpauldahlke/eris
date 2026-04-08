@@ -17,7 +17,8 @@ Forbidden in crate: `unsafe`; `unwrap`/`expect` outside tests (see workspace rul
 
 - **LLM:** `ollama_host`, `model_name`, `num_ctx`, `generation_timeout_secs`, `embed_model_name`.
 - **Loop limits:** `max_tool_rounds`, `max_recovery_attempts`, condensation thresholds.
-- **Semantic:** `qdrant_url`, computed `qdrant_collection` = `fcp_vault_{workspace}`, `require_semantic_brain`, retry knobs.
+- **Semantic:** `qdrant_url`, computed `qdrant_collection_v2` = `fcp_vault_v2_{workspace}` (see `AppConfig` merge), `require_semantic_brain`, retry knobs.
+- **Ephemeral promotion:** TTLs per `EphemeralTier`, score thresholds, `promotion_eval_interval_secs`, decay per tick, optional `turn_end_mention_enabled` and `staged_memory_prompt_max_chars` (see `config.rs` and [04_MEMORY_SUBSYSTEM.md](./04_MEMORY_SUBSYSTEM.md)).
 - **Context optimization:** `optimize_context*` flags for `build_llm_view` (slim tool schemas, snippet caps).
 - **API profiles:** `apis` map for `util::ApiHttpClient` (weather, Wikipedia, etc.).
 - **Vault watch:** `VaultWatchConfig` (`vault_watch` in TOML) for paths debounced via `notify`.
@@ -34,7 +35,7 @@ Canonical paths from a workspace root:
 
 ## `workspace.rs`
 
-`init_workspace(vault_root, workspace, model)` creates a **nested** workspace under `vault_root/workspace/` with `00_Core`…`99_USER_UPLOADED`, seal file, Identity. Used for **multi-workspace** vault layouts; **chat** uses cwd as vault root directly (see router).
+`init_workspace(vault_root, workspace, model)` creates a **nested** workspace under `vault_root/workspace/` with `00_Invariants` (contains `Identity.md`), `10_Topology`, `20_Discourse`, `30_Synthesis`, `.fcp/` seal and tools dir. Used for **multi-workspace** vault layouts; **chat** uses cwd as vault root directly (see router).
 
 ## Executive router (`executive/router.rs`)
 
@@ -50,15 +51,15 @@ High-level sequence:
 6. **Peripherals:** `peripherals::ensure_peripherals_for_chat` — start Ollama/Qdrant if not reachable.
 7. **Engine:** `Ollama::new` + `OllamaClient::with_token_metrics`.
 8. **SemanticBrain:** `SemanticBrain::new_with_connect_retries` or `None` if `require_semantic_brain` is false and connection fails.
-9. **Boot ingest:** `semantic.ingest_vault(&workspace_root)` if brain online (top-level `.md` in episodic/semantic/persons/user/**`99_USER_UPLOADED`** dirs).
+9. **Boot ingest:** `semantic.ingest_vault_v2(&workspace_root)` if brain online. Indexes markdown under vault roots `00_Invariants`, `10_Topology`, `20_Discourse`, and `30_Synthesis` (synthesis uses per–`node_id` “head” revision indexing). No-op when `qdrant_collection_v2` is empty or embeddings are unreachable at boot.
 10. **Gatekeeper:** register all tools (vault, agenda, web, system, clock, weather, wiki, memory—memory tools conditional on semantic).
 11. **Descriptors:** `ToolDescriptorRegistry::load_embedded` + `assert_covers_registered_tools`.
 12. **ToolRouter:** optional; if `new` fails, orchestrator runs with full tool roster always.
-13. **Heartbeat:** `heartbeat::spawn_heartbeat_monitor` → idle `watch` trigger when idle timeout exceeded.
-14. **Alarm scheduler:** `alarm_scheduler::spawn_alarm_scheduler` reads `.fcp/tools/alarms.json`.
-15. **Missed agenda hint:** `missed_agenda::startup_overdue_agenda_hint` (async spawn).
-16. **Ephemeral snapshot daemon:** `memory::ephemeral::spawn_snapshot_daemon`.
-17. **Orchestrator::new** with `vault_root` = cwd, `workspace` **string empty** so `ContextAssembler` resolves `vault_root/00_Core` (not `vault_root/default/00_Core`).
+13. **Heartbeat:** `orchestrator::heartbeat::spawn_heartbeat_monitor` → idle `watch` trigger when idle timeout exceeded.
+14. **Alarm scheduler:** `orchestrator::alarms::spawn_alarm_scheduler` reads `.fcp/tools/alarms.json`.
+15. **Missed agenda hint:** `orchestrator::alarms::startup_overdue_agenda_hint` (async spawn).
+16. **Ephemeral snapshot + promotion daemon:** `memory::ephemeral::spawn_snapshot_daemon`. The router allocates `Arc<AtomicBool> promotion_suppressed_during_step`, passes **clones** to the daemon and to `Orchestrator::new`. While `Orchestrator::step` runs, the daemon still performs snapshot/expiry ticks but **skips** `evaluate_promotions_and_decay` so tier moves and decay do not race long LLM or tool work (see [02_ORCHESTRATOR_LAYER.md](./02_ORCHESTRATOR_LAYER.md), [04_MEMORY_SUBSYSTEM.md](./04_MEMORY_SUBSYSTEM.md)).
+17. **Orchestrator::new** with `vault_root` = cwd, `workspace` **string empty** so `ContextAssembler` resolves `vault_root/00_Invariants` (not `vault_root/<name>/00_Invariants` for a non-empty workspace segment).
 18. **Spawn** orchestrator loop that drains `action_rx` (Submit, Cancel, SystemInject, AgendaAlarmPending).
 19. **TUI:** `TuiApp::run` until exit; then cancel token, restore terminal, shutdown managed daemons.
 

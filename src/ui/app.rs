@@ -49,7 +49,9 @@ impl TuiApp {
             state: AgentStateUpdate {
                 state: crate::orchestrator::state::AgentState::Idle,
                 tool_rounds: 0,
+                max_tool_rounds: 5,
                 recovery_count: 0,
+                max_recovery_attempts: 3,
                 active_task: None,
                 activity_line: None,
                 queued_inputs: 0,

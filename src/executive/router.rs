@@ -43,7 +43,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
             crate::executive::identity_md::sync_identity_user_line(&workspace_root, &config.user_name)
                 .await?;
 
-            let default_identity = workspace_root.join("00_Core/Identity.md");
+            let default_identity = workspace_root.join("00_Invariants/Identity.md");
             let mut identity_path = default_identity.clone();
             let mut upload_dirs: Vec<std::path::PathBuf> = Vec::new();
             let mut extra_watched_files: Vec<std::path::PathBuf> = Vec::new();
@@ -137,7 +137,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                     let semantic = Arc::new(semantic_brain);
                     tracing::info!("Semantic Brain online. Vector tools registered.");
 
-                    match semantic.ingest_vault(&workspace_root).await {
+                    match semantic.ingest_vault_v2(&workspace_root).await {
                         Ok(count) if count > 0 => {
                             tracing::info!(files = count, "Boot-time vault ingestion complete");
                         }
@@ -208,15 +208,19 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                 workspace_root: workspace_root.clone(),
                 reschedule_tx: alarm_reschedule_tx.clone(),
             }));
-            gatekeeper.register(Arc::new(crate::tools::web::WebFetchTool::new(
-                config.web_fetch_timeout_secs,
-                effective_web_fetch_max_bytes,
-                web_chunk_chars,
-                web_preview_chars,
-                config.ephemeral_ttl_secs,
-                ephemeral.clone(),
-                semantic_arc.clone(),
-            )));
+            if config.web_fetch_deprecated {
+                tracing::info!("web:fetch deprecated by config — not registered");
+            } else {
+                gatekeeper.register(Arc::new(crate::tools::web::WebFetchTool::new(
+                    config.web_fetch_timeout_secs,
+                    effective_web_fetch_max_bytes,
+                    web_chunk_chars,
+                    web_preview_chars,
+                    config.ephemeral_ttl_session_secs,
+                    ephemeral.clone(),
+                    semantic_arc.clone(),
+                )));
+            }
             gatekeeper.register(Arc::new(crate::tools::web::WebArtifactQueryTool {
                 ephemeral: ephemeral.clone(),
                 semantic: semantic_arc.clone(),
@@ -260,7 +264,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
             let max_content_chars = config.num_ctx * 3;
             gatekeeper.register(Arc::new(crate::tools::memory::MemoryStageTool {
                 ephemeral: ephemeral.clone(),
-                ttl_secs: config.ephemeral_ttl_secs,
+                config: config.clone(),
                 max_content_chars,
             }));
             gatekeeper.register(Arc::new(crate::tools::memory::MemoryStagedListTool {
@@ -273,13 +277,11 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                     workspace_root: workspace_root.clone(),
                     semantic: semantic.clone(),
                     ephemeral: ephemeral.clone(),
-                    memory_routing: config.memory_routing.clone(),
                 }));
                 gatekeeper.register(Arc::new(crate::tools::memory::MemoryCommitAllTool {
                     workspace_root: workspace_root.clone(),
                     semantic: semantic.clone(),
                     ephemeral: ephemeral.clone(),
-                    memory_routing: config.memory_routing.clone(),
                 }));
                 gatekeeper.register(Arc::new(crate::tools::memory::MemoryQueryTool {
                     workspace: config.workspace.clone(),
@@ -350,7 +352,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                 tracing::info!("Idle heartbeat disabled (idle_heartbeat_enabled = false); Esc cancel still active");
             }
 
-            crate::orchestrator::alarm_scheduler::spawn_alarm_scheduler(
+            crate::orchestrator::alarms::spawn_alarm_scheduler(
                 workspace_root.clone(),
                 tui_tx.clone(),
                 alarm_reschedule_rx,
@@ -361,7 +363,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
             let startup_tui = tui_tx.clone();
             tokio::spawn(async move {
                 if let Some(msg) =
-                    crate::orchestrator::missed_agenda::startup_overdue_agenda_hint(&startup_wp).await
+                    crate::orchestrator::alarms::startup_overdue_agenda_hint(&startup_wp).await
                 {
                     let _ = startup_tui
                         .send(crate::ui::events::TuiEvent::SystemError(msg))
@@ -369,20 +371,24 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                 }
             });
 
-            // 7. Snapshot + promotion daemon
+            // 7. Snapshot + promotion daemon (promotion/decay gated off while `Orchestrator::step` runs)
+            let promotion_suppressed_during_step =
+                Arc::new(std::sync::atomic::AtomicBool::new(false));
             crate::memory::ephemeral::spawn_snapshot_daemon(
                 ephemeral.clone(),
                 workspace_root.clone(),
                 semantic_arc,
                 config.snapshot_interval_secs,
                 cancel_token.clone(),
+                config.clone(),
+                promotion_suppressed_during_step.clone(),
             );
 
             // 8. Build Orchestrator
             // Pass workspace_root directly as vault_root with empty workspace string
-            // so ContextAssembler resolves 00_Core at workspace_root/00_Core (not workspace_root/default/00_Core)
+            // so ContextAssembler resolves 00_Invariants at workspace_root/00_Invariants (not workspace_root/default/00_Invariants)
             let context_view_hints = gatekeeper.merge_context_view_hints(&config.optimize_context_tool_overrides);
-            let context_view = crate::orchestrator::context_view::ContextViewSettings {
+            let context_view = crate::orchestrator::context::ContextViewSettings {
                 enabled: config.optimize_context,
                 default_snippet_chars: config.optimize_context_max_tool_snippet_chars,
                 assistant_compact: config.optimize_context_assistant_compact,
@@ -409,7 +415,9 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                 tool_router,
                 descriptor_registry,
                 context_view,
+                config.clone(),
                 identity_rx,
+                promotion_suppressed_during_step,
             );
 
             tracing::info!(
@@ -739,7 +747,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let vault_root = dir.path();
         let workspace = "relay_ws";
-        tokio::fs::create_dir_all(vault_root.join(workspace).join("00_Core"))
+        tokio::fs::create_dir_all(vault_root.join(workspace).join("00_Invariants"))
             .await
             .expect("mkdir");
 
@@ -768,8 +776,10 @@ mod tests {
             None,
             None,
             None,
-            crate::orchestrator::context_view::ContextViewSettings::default(),
+            crate::orchestrator::context::ContextViewSettings::default(),
+            Arc::new(crate::config::AppConfig::default()),
             id_rx,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
         );
 
         let (action_tx, mut action_rx) = mpsc::channel::<UserAction>(100);

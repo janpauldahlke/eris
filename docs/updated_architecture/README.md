@@ -1,6 +1,6 @@
 # Updated architecture (code-aligned)
 
-This folder is a **developer and agent** guide to the `eris` crate (`src/`). It reflects the codebase as of the repository state when authored; prefer `src` and `Cargo.toml` for ground truth.
+This folder is a **developer and agent** guide to the `eris` crate (`src/`). It is maintained against `src/` and `Cargo.toml`; when they disagree, **code wins**—update these files after refactors that touch bootstrap, orchestrator, memory, or TUI contracts.
 
 ## Reading order
 
@@ -8,7 +8,7 @@ This folder is a **developer and agent** guide to the `eris` crate (`src/`). It 
 |-----|----------|
 | [00_OVERVIEW.md](./00_OVERVIEW.md) | Mental model, layer diagram, glossary |
 | [01_BOOTSTRAP_AND_EXECUTIVE.md](./01_BOOTSTRAP_AND_EXECUTIVE.md) | `main`, CLI, config, vault paths, ignition, peripherals |
-| [02_ORCHESTRATOR_LAYER.md](./02_ORCHESTRATOR_LAYER.md) | `Orchestrator::step`, state machine, routing, context view |
+| [02_ORCHESTRATOR_LAYER.md](./02_ORCHESTRATOR_LAYER.md) | `Orchestrator::step`, state machine, routing, `context/`, `llm_support/`, alarms, heartbeat |
 | [03_ENGINE_LLM_AND_ROUTING.md](./03_ENGINE_LLM_AND_ROUTING.md) | `LlmEngine`, Ollama, ToolRouter, optional reasoning FSM |
 | [04_MEMORY_SUBSYSTEM.md](./04_MEMORY_SUBSYSTEM.md) | Ephemeral cache, Qdrant semantic brain, ingest, snapshot daemon |
 | [05_TOOLS_GATEKEEPER_DESCRIPTORS.md](./05_TOOLS_GATEKEEPER_DESCRIPTORS.md) | `Tool` trait, registry, gatekeeper, embedded descriptors |

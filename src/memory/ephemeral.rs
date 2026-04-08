@@ -3,10 +3,11 @@ use moka::future::Cache;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use crate::executive::error::Result;
+use crate::memory::types::{EphemeralTier, VaultKind};
 
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
-use crate::config::MemoryRoutingConfig;
+
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CacheValue {
@@ -15,6 +16,37 @@ pub struct CacheValue {
     pub data: String,
     pub tags: Vec<String>,
     pub expires_at: u64, // Absolute UNIX timestamp
+    /// Stable UUID for this concept across turns and commits.
+    #[serde(default = "default_node_id")]
+    pub node_id: String,
+    /// Normalized form of the title (NFKC, lowercase, slug). Primary dedupe key.
+    #[serde(default)]
+    pub canonical_key: String,
+    /// Current ephemeral tier. Determines TTL bucket and commit eligibility.
+    #[serde(default)]
+    pub tier: EphemeralTier,
+    /// Numeric score driving tier promotion. Incremented by mentions and explicit staging.
+    #[serde(default)]
+    pub promotion_score: f64,
+    /// Number of distinct turns this concept has appeared in.
+    #[serde(default)]
+    pub mention_count: u32,
+    /// When true, this entry has a detected contradiction and should not auto-promote.
+    #[serde(default)]
+    pub needs_review: bool,
+    /// UNIX timestamp of first appearance.
+    #[serde(default)]
+    pub first_seen_at: u64,
+    /// UNIX timestamp of most recent mention/update.
+    #[serde(default)]
+    pub last_seen_at: u64,
+    /// Vault root category hint for commit routing. Default: `Synthesis`.
+    #[serde(default)]
+    pub kind: VaultKind,
+}
+
+fn default_node_id() -> String {
+    uuid::Uuid::new_v4().to_string()
 }
 
 pub struct EphemeralMemory {
@@ -32,9 +64,24 @@ impl EphemeralMemory {
     }
 
     pub async fn insert(&self, title: &str, value: &str, tags: Vec<String>, ttl_secs: u64) -> Result<CacheValue> {
+        self.insert_with_tier(title, value, tags, ttl_secs, EphemeralTier::Session, VaultKind::default()).await
+    }
+
+    pub async fn insert_with_tier(
+        &self,
+        title: &str,
+        value: &str,
+        tags: Vec<String>,
+        ttl_secs: u64,
+        tier: EphemeralTier,
+        kind: VaultKind,
+    ) -> Result<CacheValue> {
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
-        let expires_at = now.as_secs() + ttl_secs;
+        let now_secs = now.as_secs();
+        let expires_at = now_secs + ttl_secs;
         let staged_id = uuid::Uuid::new_v4().to_string();
+        let node_id = uuid::Uuid::new_v4().to_string();
+        let canonical_key = normalize_canonical_key(title);
 
         let cache_value = CacheValue {
             staged_id: staged_id.clone(),
@@ -42,9 +89,28 @@ impl EphemeralMemory {
             data: value.to_string(),
             tags,
             expires_at,
+            node_id,
+            canonical_key,
+            tier,
+            promotion_score: 0.0,
+            mention_count: 1,
+            needs_review: false,
+            first_seen_at: now_secs,
+            last_seen_at: now_secs,
+            kind,
         };
 
         self.cache.insert(staged_id, cache_value.clone()).await;
+        tracing::debug!(
+            staged_id = %cache_value.staged_id,
+            title = %cache_value.title,
+            node_id = %cache_value.node_id,
+            canonical_key = %cache_value.canonical_key,
+            tier = %cache_value.tier,
+            kind = %cache_value.kind,
+            ttl_secs,
+            "Ephemeral insert"
+        );
         Ok(cache_value)
     }
 
@@ -92,6 +158,7 @@ impl EphemeralMemory {
     }
 
     /// Replaces any existing entry with `title` by inserting a fresh value.
+    /// Preserves `node_id` from a prior entry with the same canonical_key if one exists.
     pub async fn upsert_by_title(
         &self,
         title: &str,
@@ -99,8 +166,68 @@ impl EphemeralMemory {
         tags: Vec<String>,
         ttl_secs: u64,
     ) -> Result<CacheValue> {
+        let prior = self.get_by_canonical_key(&normalize_canonical_key(title)).await;
         self.invalidate_by_title(title).await;
-        self.insert(title, value, tags, ttl_secs).await
+        let mut new_val = self.insert(title, value, tags, ttl_secs).await?;
+        if let Some(prev) = prior {
+            // Preserve stable identity across upserts
+            let staged_id = new_val.staged_id.clone();
+            new_val.node_id = prev.node_id;
+            new_val.first_seen_at = prev.first_seen_at;
+            new_val.mention_count = prev.mention_count.saturating_add(1);
+            new_val.promotion_score = prev.promotion_score;
+            new_val.tier = prev.tier;
+            new_val.needs_review = prev.needs_review;
+            new_val.kind = prev.kind;
+            self.cache.insert(staged_id, new_val.clone()).await;
+        }
+        Ok(new_val)
+    }
+
+    /// Set `needs_review` on an entry by `staged_id`. Returns `true` if found and updated.
+    pub async fn set_needs_review(&self, staged_id: &str, needs_review: bool) -> bool {
+        if let Some(mut val) = self.cache.get(staged_id).await {
+            if val.needs_review != needs_review {
+                val.needs_review = needs_review;
+                self.cache.insert(staged_id.to_string(), val).await;
+                tracing::info!(
+                    staged_id = %staged_id,
+                    needs_review,
+                    "Ephemeral entry needs_review updated"
+                );
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Find an entry by its normalized `canonical_key`.
+    pub async fn get_by_canonical_key(&self, canonical_key: &str) -> Option<CacheValue> {
+        for (id, entry) in self.cache.iter() {
+            if entry.canonical_key == canonical_key {
+                if Self::is_expired(entry.expires_at) {
+                    self.cache.invalidate(id.as_str()).await;
+                    continue;
+                }
+                return Some(entry);
+            }
+        }
+        None
+    }
+
+    /// Find an entry by `node_id`.
+    pub async fn get_by_node_id(&self, node_id: &str) -> Option<CacheValue> {
+        for (id, entry) in self.cache.iter() {
+            if entry.node_id == node_id {
+                if Self::is_expired(entry.expires_at) {
+                    self.cache.invalidate(id.as_str()).await;
+                    continue;
+                }
+                return Some(entry);
+            }
+        }
+        None
     }
 
     pub fn list_entries(&self) -> Vec<CacheValue> {
@@ -211,63 +338,145 @@ impl EphemeralMemory {
     }
 }
 
+/// NFKC-normalize, lowercase, collapse non-alphanumeric runs to `_`, trim edges.
+/// This is the authoritative canonical_key for ephemeral dedupe.
+pub fn normalize_canonical_key(title: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    let nfkc: String = title.nfkc().collect();
+    let lower = nfkc.to_lowercase();
+    let mut slug = String::with_capacity(lower.len());
+    let mut last_was_sep = true; // suppress leading separator
+    for ch in lower.chars() {
+        if ch.is_ascii_alphanumeric() || ch.is_alphanumeric() {
+            slug.push(ch);
+            last_was_sep = false;
+        } else if !last_was_sep {
+            slug.push('_');
+            last_was_sep = true;
+        }
+    }
+    // Trim trailing separator
+    while slug.ends_with('_') {
+        slug.pop();
+    }
+    slug
+}
+
 /// Staged rows from `web:fetch` must not be promoted to vault markdown (bloated HTML/JSON).
 /// They are indexed in Qdrant at fetch time; `memory:commit` treats them as semantic-only.
 pub fn is_web_artifact_staging(tags: &[String], title: &str) -> bool {
     tags.iter().any(|t| t == "web_artifact") || title.starts_with("web_artifact:")
 }
 
-pub fn resolve_vault_subdir<'a>(tags: &[String], routing: &'a MemoryRoutingConfig) -> &'a str {
-    fn split_fragments(tag: &str) -> Vec<String> {
-        tag.to_lowercase()
-            .split(|c: char| !c.is_ascii_alphanumeric())
-            .filter(|part| !part.is_empty())
-            .map(ToOwned::to_owned)
-            .collect()
-    }
+/// Evaluate tier transitions and apply decay for all live ephemeral entries.
+/// Called by the snapshot daemon on each tick.
+pub async fn evaluate_promotions_and_decay(
+    memory: &EphemeralMemory,
+    config: &crate::config::AppConfig,
+) {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
 
-    let normalized_keywords: Vec<(&str, Vec<String>)> = routing
-        .rules
+    let entries: Vec<CacheValue> = memory
+        .cache
         .iter()
-        .map(|rule| {
-            let keys = rule
-                .keywords
-                .iter()
-                .flat_map(|k| split_fragments(k))
-                .collect::<Vec<_>>();
-            (rule.folder.as_str(), keys)
-        })
+        .filter_map(|(_, v)| (!EphemeralMemory::is_expired(v.expires_at)).then_some(v.clone()))
         .collect();
 
-    let mut normalized = Vec::new();
-    for tag in tags {
-        normalized.extend(split_fragments(tag));
-    }
+    let mut promoted = 0u32;
+    let mut demoted = 0u32;
 
-    for token in &normalized {
-        for (folder, keywords) in &normalized_keywords {
-            if keywords.iter().any(|k| k == token) {
-                return folder;
+    for entry in entries {
+        let mut updated = entry.clone();
+
+        // Apply decay
+        updated.promotion_score = (updated.promotion_score - config.promotion_decay_per_tick).max(0.0);
+
+        // Check upward promotion
+        if let Some(threshold) = config.promotion_threshold_for_tier(updated.tier)
+            && updated.promotion_score >= threshold
+            && !updated.needs_review
+            && let Some(next_tier) = updated.tier.next()
+        {
+            updated.tier = next_tier;
+            let new_ttl = config.ttl_for_tier(next_tier);
+            updated.expires_at = now + new_ttl;
+            promoted += 1;
+            tracing::debug!(
+                node_id = %updated.node_id,
+                title = %updated.title,
+                new_tier = %next_tier,
+                score = updated.promotion_score,
+                "Tier promotion"
+            );
+        }
+
+        // Check downward demotion (decay-driven)
+        if let Some(prev_tier) = updated.tier.prev() {
+            // Demotion: if score dropped below the threshold that got us here
+            let threshold_to_current = config
+                .promotion_threshold_for_tier(prev_tier)
+                .unwrap_or(0.0);
+            if updated.promotion_score < threshold_to_current * 0.5 {
+                updated.tier = prev_tier;
+                let new_ttl = config.ttl_for_tier(prev_tier);
+                updated.expires_at = now + new_ttl;
+                demoted += 1;
+                tracing::debug!(
+                    node_id = %updated.node_id,
+                    title = %updated.title,
+                    new_tier = %prev_tier,
+                    score = updated.promotion_score,
+                    "Tier demotion (decay)"
+                );
             }
         }
+
+        // Write back if changed
+        if updated.tier != entry.tier
+            || (updated.promotion_score - entry.promotion_score).abs() > f64::EPSILON
+        {
+            memory
+                .cache
+                .insert(entry.staged_id.clone(), updated)
+                .await;
+        }
     }
-    routing.default.as_str()
+
+    if promoted > 0 || demoted > 0 {
+        tracing::info!(
+            promoted,
+            demoted,
+            "Promotion daemon tick: tier transitions applied"
+        );
+    }
 }
 
+/// When `true`, the orchestrator is inside [`crate::orchestrator::core::Orchestrator::step`]; the
+/// snapshot daemon skips [`evaluate_promotions_and_decay`] so decay/tier moves do not race slow LLM
+/// or tool batches. Snapshot + expiry handling still run on their timers.
 pub fn spawn_snapshot_daemon(
     memory: Arc<EphemeralMemory>,
     vault_root: PathBuf,
     _semantic: Option<Arc<crate::memory::semantic::SemanticBrain>>,
     interval_secs: u64,
     cancel_token: CancellationToken,
+    config: Arc<crate::config::AppConfig>,
+    promotion_suppressed_during_step: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
-        interval.tick().await;
+        let snapshot_interval = std::time::Duration::from_secs(interval_secs);
+        let promo_interval = std::time::Duration::from_secs(config.promotion_eval_interval_secs);
+        let mut snapshot_tick = tokio::time::interval(snapshot_interval);
+        let mut promo_tick = tokio::time::interval(promo_interval);
+        snapshot_tick.tick().await;
+        promo_tick.tick().await;
 
         loop {
             tokio::select! {
-                _ = interval.tick() => {
+                _ = snapshot_tick.tick() => {
                     let expired_entries = memory.collect_expired_entries();
                     for entry in &expired_entries {
                         if entry.tags.iter().any(|t| t == "web_artifact")
@@ -292,6 +501,18 @@ pub fn spawn_snapshot_daemon(
                         tracing::error!("Daemon failed to snapshot memory: {}", e);
                     }
                 }
+                _ = promo_tick.tick() => {
+                    if promotion_suppressed_during_step
+                        .load(std::sync::atomic::Ordering::SeqCst)
+                    {
+                        tracing::trace!(
+                            event = "promotion_tick_skipped_step_active",
+                            "Skipping promotion/decay tick while orchestrator step is in progress"
+                        );
+                    } else {
+                        evaluate_promotions_and_decay(&memory, &config).await;
+                    }
+                }
                 _ = cancel_token.cancelled() => {
                     if let Err(e) = memory.snapshot_to_disk(&vault_root).await {
                         tracing::error!("Daemon failed to snapshot memory on cancellation: {}", e);
@@ -312,20 +533,6 @@ mod tests {
         assert!(is_web_artifact_staging(&["web_artifact".into(), "external".into()], "anything"));
         assert!(is_web_artifact_staging(&["news".into()], "web_artifact:uuid-here"));
         assert!(!is_web_artifact_staging(&["user".into()], "hagbard_profile"));
-    }
-
-    #[test]
-    fn test_resolve_vault_subdir_splits_compound_tags() {
-        let tags = vec!["user/preference".to_string()];
-        let routing = MemoryRoutingConfig::default();
-        assert_eq!(resolve_vault_subdir(&tags, &routing), "40_User");
-    }
-
-    #[test]
-    fn test_resolve_vault_subdir_routes_technical_knowledge_to_semantic() {
-        let tags = vec!["system-knowledge".to_string(), "programmer".to_string()];
-        let routing = MemoryRoutingConfig::default();
-        assert_eq!(resolve_vault_subdir(&tags, &routing), "20_Semantic");
     }
 
     #[tokio::test]
@@ -373,9 +580,18 @@ mod tests {
             data: "expired_data".to_string(),
             tags: vec![],
             expires_at: past_timestamp,
+            node_id: uuid::Uuid::new_v4().to_string(),
+            canonical_key: "expired_key".to_string(),
+            tier: EphemeralTier::Session,
+            promotion_score: 0.0,
+            mention_count: 1,
+            needs_review: false,
+            first_seen_at: past_timestamp,
+            last_seen_at: past_timestamp,
+            kind: VaultKind::default(),
         };
         memory.cache.insert("expired_id".to_string(), expired_value).await;
-        
+
         let result = memory.get("expired_key").await;
         assert_eq!(result, None);
     }
@@ -413,6 +629,15 @@ mod tests {
             data: "expired".to_string(),
             tags: vec![],
             expires_at: past_timestamp,
+            node_id: uuid::Uuid::new_v4().to_string(),
+            canonical_key: "expired_key".to_string(),
+            tier: EphemeralTier::Session,
+            promotion_score: 0.0,
+            mention_count: 1,
+            needs_review: false,
+            first_seen_at: past_timestamp,
+            last_seen_at: past_timestamp,
+            kind: VaultKind::default(),
         };
         let valid_value = CacheValue {
             staged_id: "valid_id".to_string(),
@@ -420,6 +645,15 @@ mod tests {
             data: "valid".to_string(),
             tags: vec!["test".into()],
             expires_at: future_timestamp,
+            node_id: uuid::Uuid::new_v4().to_string(),
+            canonical_key: "valid_key".to_string(),
+            tier: EphemeralTier::Session,
+            promotion_score: 0.0,
+            mention_count: 1,
+            needs_review: false,
+            first_seen_at: now,
+            last_seen_at: now,
+            kind: VaultKind::default(),
         };
         
         memory.cache.insert("expired_id".to_string(), expired_value).await;
@@ -455,6 +689,8 @@ mod tests {
             None,
             9999,
             cancel_token.clone(),
+            Arc::new(crate::config::AppConfig::default()),
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         );
         
         // Immediately cancel
@@ -468,5 +704,154 @@ mod tests {
         
         let loaded = EphemeralMemory::load_from_disk("daemon_test_ws", &vault_root, 10_000).await.unwrap();
         assert_eq!(loaded.get("key1").await, Some("value1".to_string()));
+    }
+
+    #[test]
+    fn test_normalize_canonical_key_basic() {
+        assert_eq!(normalize_canonical_key("Hagbard Profile"), "hagbard_profile");
+    }
+
+    #[test]
+    fn test_normalize_canonical_key_special_chars() {
+        assert_eq!(normalize_canonical_key("API/REST endpoint"), "api_rest_endpoint");
+    }
+
+    #[test]
+    fn test_normalize_canonical_key_collapses_runs() {
+        assert_eq!(normalize_canonical_key("  hello---world  "), "hello_world");
+    }
+
+    #[test]
+    fn test_normalize_canonical_key_unicode() {
+        // NFKC normalizes e.g. ﬁ -> fi
+        assert_eq!(normalize_canonical_key("ﬁle_path"), "file_path");
+    }
+
+    #[tokio::test]
+    async fn test_insert_populates_v2_fields() {
+        let memory = EphemeralMemory::new("test_ws".to_string());
+        let entry = memory.insert("My Title", "content", vec!["tag".into()], 60).await.unwrap();
+
+        assert!(!entry.node_id.is_empty());
+        assert_eq!(entry.canonical_key, "my_title");
+        assert_eq!(entry.tier, EphemeralTier::Session);
+        assert_eq!(entry.mention_count, 1);
+        assert_eq!(entry.promotion_score, 0.0);
+        assert!(!entry.needs_review);
+        assert!(entry.first_seen_at > 0);
+        assert_eq!(entry.first_seen_at, entry.last_seen_at);
+        assert_eq!(entry.kind, VaultKind::Synthesis);
+    }
+
+    #[tokio::test]
+    async fn test_insert_with_tier_uses_given_tier() {
+        let memory = EphemeralMemory::new("test_ws".to_string());
+        let entry = memory.insert_with_tier("t", "c", vec![], 60, EphemeralTier::Promote, VaultKind::Discourse).await.unwrap();
+        assert_eq!(entry.tier, EphemeralTier::Promote);
+        assert_eq!(entry.kind, VaultKind::Discourse);
+    }
+
+    #[tokio::test]
+    async fn test_upsert_preserves_node_id() {
+        let memory = EphemeralMemory::new("test_ws".to_string());
+        let first = memory.insert("same_title", "v1", vec!["a".into()], 60).await.unwrap();
+        let second = memory.upsert_by_title("same_title", "v2", vec!["b".into()], 60).await.unwrap();
+
+        assert_eq!(first.node_id, second.node_id, "node_id must be preserved across upserts");
+        assert_eq!(second.mention_count, 2);
+        assert_eq!(second.first_seen_at, first.first_seen_at);
+    }
+
+    #[tokio::test]
+    async fn test_get_by_canonical_key() {
+        let memory = EphemeralMemory::new("test_ws".to_string());
+        memory.insert("Coffee Preference", "black, no sugar", vec!["user".into()], 60).await.unwrap();
+
+        let found = memory.get_by_canonical_key("coffee_preference").await;
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().data, "black, no sugar");
+    }
+
+    #[tokio::test]
+    async fn test_get_by_node_id() {
+        let memory = EphemeralMemory::new("test_ws".to_string());
+        let entry = memory.insert("lookup", "by node", vec![], 60).await.unwrap();
+
+        let found = memory.get_by_node_id(&entry.node_id).await;
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().staged_id, entry.staged_id);
+    }
+
+    #[tokio::test]
+    async fn test_promotion_engine_promotes_on_threshold() {
+        let memory = EphemeralMemory::new("test_ws".to_string());
+        let mut config = crate::config::AppConfig::default();
+        config.promotion_threshold_session_to_scratch = 3.0;
+        config.promotion_decay_per_tick = 0.0; // disable decay for this test
+
+        // Insert with score above threshold
+        let mut entry = memory.insert("promotable", "content", vec![], 300).await.unwrap();
+        entry.promotion_score = 5.0;
+        entry.tier = EphemeralTier::Session;
+        memory.cache.insert(entry.staged_id.clone(), entry.clone()).await;
+
+        evaluate_promotions_and_decay(&memory, &config).await;
+
+        let updated = memory.get_by_id(&entry.staged_id).await.unwrap();
+        assert_eq!(updated.tier, EphemeralTier::Scratch, "should have been promoted to scratch");
+    }
+
+    #[tokio::test]
+    async fn test_promotion_engine_applies_decay() {
+        let memory = EphemeralMemory::new("test_ws".to_string());
+        let mut config = crate::config::AppConfig::default();
+        config.promotion_decay_per_tick = 1.0;
+        config.promotion_threshold_session_to_scratch = 100.0; // won't promote
+
+        let mut entry = memory.insert("decaying", "content", vec![], 300).await.unwrap();
+        entry.promotion_score = 3.0;
+        memory.cache.insert(entry.staged_id.clone(), entry.clone()).await;
+
+        evaluate_promotions_and_decay(&memory, &config).await;
+
+        let updated = memory.get_by_id(&entry.staged_id).await.unwrap();
+        assert!((updated.promotion_score - 2.0).abs() < 0.01, "score should have decayed by 1.0");
+    }
+
+    #[tokio::test]
+    async fn test_promotion_engine_demotes_on_low_score() {
+        let memory = EphemeralMemory::new("test_ws".to_string());
+        let mut config = crate::config::AppConfig::default();
+        config.promotion_threshold_session_to_scratch = 3.0;
+        config.promotion_decay_per_tick = 0.0;
+
+        // Start at scratch with very low score (below 50% of session->scratch threshold)
+        let mut entry = memory.insert("demotable", "content", vec![], 300).await.unwrap();
+        entry.tier = EphemeralTier::Scratch;
+        entry.promotion_score = 0.5; // below 3.0 * 0.5 = 1.5
+        memory.cache.insert(entry.staged_id.clone(), entry.clone()).await;
+
+        evaluate_promotions_and_decay(&memory, &config).await;
+
+        let updated = memory.get_by_id(&entry.staged_id).await.unwrap();
+        assert_eq!(updated.tier, EphemeralTier::Session, "should have been demoted back to session");
+    }
+
+    #[tokio::test]
+    async fn test_needs_review_blocks_promotion() {
+        let memory = EphemeralMemory::new("test_ws".to_string());
+        let mut config = crate::config::AppConfig::default();
+        config.promotion_threshold_session_to_scratch = 1.0;
+        config.promotion_decay_per_tick = 0.0;
+
+        let mut entry = memory.insert("contested", "content", vec![], 300).await.unwrap();
+        entry.promotion_score = 10.0;
+        entry.needs_review = true;
+        memory.cache.insert(entry.staged_id.clone(), entry.clone()).await;
+
+        evaluate_promotions_and_decay(&memory, &config).await;
+
+        let updated = memory.get_by_id(&entry.staged_id).await.unwrap();
+        assert_eq!(updated.tier, EphemeralTier::Session, "needs_review should block promotion");
     }
 }

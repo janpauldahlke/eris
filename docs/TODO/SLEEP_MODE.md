@@ -29,7 +29,7 @@ Status rules (follow exactly):
 
 How the Rust State Machine Handles This
 
-In your src/orchestrator/core.rs, you will add a new match arm to your process_llm_response logic.
+In `src/orchestrator/core/llm_directive.rs` (`process_llm_response`), you will add a new match arm (or equivalent) for the sleep/yield directive.
 
     If status == Idle: The Orchestrator pushes the message_to_user to the TUI and transitions to AgentState::HaltAndAwaitInput. It physically blocks on the MPSC channel waiting for your keyboard.
 

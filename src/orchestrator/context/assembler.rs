@@ -17,6 +17,7 @@ enum ToolPromptTooling {
 pub struct ContextAssembler {
     pub core_dir: PathBuf,
     identity: tokio::sync::watch::Receiver<Arc<str>>,
+    staged_memory_prompt_max_chars: usize,
 }
 
 impl ContextAssembler {
@@ -24,10 +25,12 @@ impl ContextAssembler {
         vault_root: &std::path::Path,
         workspace: &str,
         identity: tokio::sync::watch::Receiver<Arc<str>>,
+        staged_memory_prompt_max_chars: usize,
     ) -> Self {
         Self {
-            core_dir: vault_root.join(workspace).join("00_Core"),
+            core_dir: vault_root.join(workspace).join("00_Invariants"),
             identity,
+            staged_memory_prompt_max_chars,
         }
     }
 
@@ -35,12 +38,25 @@ impl ContextAssembler {
         (*self.identity.borrow()).as_ref().to_string()
     }
 
+    fn identity_plus_staged_sidebar(&self, identity: String, ephemeral: &EphemeralMemory) -> String {
+        let block = crate::memory::turn_end::format_staged_digest_for_prompt(
+            ephemeral,
+            self.staged_memory_prompt_max_chars,
+        );
+        if block.is_empty() {
+            identity
+        } else {
+            format!("{identity}\n\n{block}")
+        }
+    }
+
     /// Reads Identity.md and formats the Ephemeral cache into a single string.
     /// CRITICAL: `ephemeral.cache` is an async moka cache. You must iterate it safely.
-    pub async fn assemble(&self, state: &AgentState, _ephemeral: &EphemeralMemory, gatekeeper: &Gatekeeper) -> Result<String> {
+    pub async fn assemble(&self, state: &AgentState, ephemeral: &EphemeralMemory, gatekeeper: &Gatekeeper) -> Result<String> {
         let identity_content = self.identity_text();
+        let identity_block = self.identity_plus_staged_sidebar(identity_content, ephemeral);
         let allowed_tools = gatekeeper.get_allowed_tools(state);
-        Self::build_tool_prompt(identity_content, allowed_tools, ToolPromptTooling::Full)
+        Self::build_tool_prompt(identity_block, allowed_tools, ToolPromptTooling::Full)
     }
 
     /// Tool mode with phrase compendium and OpenAI-style tool entries **without** `function.parameters`
@@ -48,20 +64,20 @@ impl ContextAssembler {
     pub async fn assemble_slim_tool_map(
         &self,
         state: &AgentState,
-        _ephemeral: &EphemeralMemory,
+        ephemeral: &EphemeralMemory,
         gatekeeper: &Gatekeeper,
         descriptors: Option<&ToolDescriptorRegistry>,
         offered_tool_names: &[String],
     ) -> Result<String> {
         let identity_content = self.identity_text();
+        let identity_block = self.identity_plus_staged_sidebar(identity_content, ephemeral);
         let allowed = gatekeeper.get_allowed_tools(state);
         let filtered = filter_tools_by_offered_order(allowed, offered_tool_names);
         let tool_rows: Vec<(String, String)> = filtered
             .iter()
             .filter_map(tool_row_from_entry)
             .collect();
-        let phrase_map =
-            crate::orchestrator::tool_compendium::build_phrase_compendium(descriptors, &tool_rows);
+        let phrase_map = super::compendium::build_phrase_compendium(descriptors, &tool_rows);
         let mut slim_tools = filtered;
         strip_parameters_from_tool_values(&mut slim_tools);
         tracing::info!(
@@ -70,7 +86,7 @@ impl ContextAssembler {
             "Assembling slim tool prompt (phrase map + tool defs without parameters)"
         );
         Self::build_tool_prompt(
-            identity_content,
+            identity_block,
             slim_tools,
             ToolPromptTooling::Slim { phrase_map },
         )
@@ -79,11 +95,12 @@ impl ContextAssembler {
     pub async fn assemble_with_selected_tools(
         &self,
         state: &AgentState,
-        _ephemeral: &EphemeralMemory,
+        ephemeral: &EphemeralMemory,
         gatekeeper: &Gatekeeper,
         selected_tools: &[String],
     ) -> Result<String> {
         let identity_content = self.identity_text();
+        let identity_block = self.identity_plus_staged_sidebar(identity_content, ephemeral);
 
         let allowed_tools = gatekeeper
             .get_allowed_tools(state)
@@ -104,11 +121,11 @@ impl ContextAssembler {
             "Assembling targeted tool schema prompt"
         );
 
-        Self::build_tool_prompt(identity_content, allowed_tools, ToolPromptTooling::Full)
+        Self::build_tool_prompt(identity_block, allowed_tools, ToolPromptTooling::Full)
     }
 
     fn build_tool_prompt(
-        identity_content: String,
+        identity_block: String,
         allowed_tools: Vec<serde_json::Value>,
         tooling: ToolPromptTooling,
     ) -> Result<String> {
@@ -118,9 +135,9 @@ impl ContextAssembler {
 
         let tools_block = format!(
             "{begin}\n{tools}\n{end}",
-            begin = crate::orchestrator::context_view::FCP_TOOL_DEFS_BEGIN,
+            begin = super::view::FCP_TOOL_DEFS_BEGIN,
             tools = tools_schema_string,
-            end = crate::orchestrator::context_view::FCP_TOOL_DEFS_END,
+            end = super::view::FCP_TOOL_DEFS_END,
         );
 
         let slim_block = match tooling {
@@ -179,19 +196,19 @@ impl ContextAssembler {
             {slim_block}Available tools for current state:\n{tools}\n\n\
             Memory lifecycle rules (follow exactly):\n\
             - memory:stage creates temporary entries in ephemeral memory and returns a staged_id; it does NOT write vault files.\n\
-            - Staged entries EXPIRE on TTL; they do not auto-promote.\n\
-            - Use memory:staged_list to inspect staged entries before committing.\n\
+            - The runtime refreshes TTL and promotion_score when the user's message matches a staged row's topic (see [ACTIVE_STAGED_MEMORY] if present). Tier moves (session→scratch→promote) are evaluated by a background timer.\n\
+            - Use memory:staged_list for details; the prompt sidebar is a digest only.\n\
             - Do NOT call memory:commit in the same multi-tool turn immediately after memory:stage unless the user clearly asked to save to the vault, keep forever, or persist to disk.\n\
             - When the user wants long-term vault storage, use memory:commit with staged_id for single-item persistence.\n\
-            - Use memory:commit_all for best-effort bulk persistence.\n\
+            - Use memory:commit_all for bulk persistence of promote-tier rows only.\n\
             - Web fetch staging (tags web_artifact): committing does NOT write markdown to disk; semantic chunks were stored at fetch time.\n\n\
-            Vault taxonomy — when using memory:stage, include tags from the correct category:\n\
-            - person, contact, people → stored in 30_Persons/\n\
-            - user, preference, about_me → stored in 40_User/\n\
-            - semantic, knowledge, api, reference, concept → stored in 20_Semantic/\n\
-            - Everything else → stored in 10_Episodic/\n\
-            The tags you provide at stage time determine where content is physically stored on disk.",
-            identity = identity_content,
+            Vault taxonomy — use the 'kind' field in memory:stage to route to the correct root:\n\
+            - kind=topology → 10_Topology/ (environment, config, infrastructure)\n\
+            - kind=discourse → 20_Discourse/ (raw interaction, append-only stream)\n\
+            - kind=synthesis → 30_Synthesis/ (zettelkasten nodes, revisioned atomic concepts) [default]\n\
+            00_Invariants/ is read-only (user-maintained identity and facts).\n\
+            Tags are free-form for classification; kind determines physical storage.",
+            identity = identity_block,
             slim_block = slim_block,
             tools = tools_block
         );
@@ -202,8 +219,9 @@ impl ContextAssembler {
     /// Builds a tool-free conversational prompt.
     /// The LLM responds naturally; its `thought` field is later fed to the
     /// ToolRouter for semantic gating.
-    pub async fn assemble_conversational(&self, _ephemeral: &EphemeralMemory) -> Result<String> {
+    pub async fn assemble_conversational(&self, ephemeral: &EphemeralMemory) -> Result<String> {
         let identity_content = self.identity_text();
+        let identity_block = self.identity_plus_staged_sidebar(identity_content, ephemeral);
 
         let system_prompt = format!(
             "{identity}\n\n\
@@ -223,7 +241,7 @@ impl ContextAssembler {
             3) Do not invent status strings other than Task, Reflect, Idle (or Process as alias for Task).\n\
             4) Leave tool_calls as [] unless the session is in tool-enabled mode.\n\
             5) Answer the user directly, conversationally, and helpfully.",
-            identity = identity_content,
+            identity = identity_block,
         );
 
         Ok(system_prompt)
@@ -289,7 +307,7 @@ mod tests {
         let vault_root = std::path::Path::new("/tmp/unused_for_snapshot_test");
         let workspace = "test_workspace";
         let (_tx, rx) = tokio::sync::watch::channel(Arc::from("I am the test agent."));
-        let assembler = ContextAssembler::new(vault_root, workspace, rx);
+        let assembler = ContextAssembler::new(vault_root, workspace, rx, 3500);
         let ephemeral = EphemeralMemory::new(workspace.to_string());
 
         ephemeral
@@ -307,8 +325,8 @@ mod tests {
         assert!(assembled.contains("I am the test agent."));
         assert!(assembled.contains("Reply with ONE valid JSON object only"));
         assert!(assembled.contains("\"status\": \"Task|Reflect|Idle\""));
-        assert!(assembled.contains(crate::orchestrator::context_view::FCP_TOOL_DEFS_BEGIN));
-        assert!(assembled.contains(crate::orchestrator::context_view::FCP_TOOL_DEFS_END));
+        assert!(assembled.contains(super::super::view::FCP_TOOL_DEFS_BEGIN));
+        assert!(assembled.contains(super::super::view::FCP_TOOL_DEFS_END));
     }
 
     #[tokio::test]
@@ -316,7 +334,7 @@ mod tests {
         let vault_root = std::path::Path::new("/tmp/unused_for_snapshot_test");
         let workspace = "test_workspace";
         let (tx, rx) = tokio::sync::watch::channel(Arc::from("I am version 1."));
-        let assembler = ContextAssembler::new(vault_root, workspace, rx);
+        let assembler = ContextAssembler::new(vault_root, workspace, rx, 3500);
         let ephemeral = EphemeralMemory::new(workspace.to_string());
         let state = AgentState::Idle;
         let gatekeeper = crate::tools::gatekeeper::Gatekeeper::new();
@@ -343,7 +361,7 @@ mod tests {
         let vault_root = std::path::Path::new("/tmp/unused_for_snapshot_test");
         let workspace = "test_workspace";
         let (_tx, rx) = tokio::sync::watch::channel(Arc::from("I am the test agent."));
-        let assembler = ContextAssembler::new(vault_root, workspace, rx);
+        let assembler = ContextAssembler::new(vault_root, workspace, rx, 3500);
         let ephemeral = EphemeralMemory::new(workspace.to_string());
         let state = AgentState::Chat;
         let mut gatekeeper = crate::tools::gatekeeper::Gatekeeper::new();

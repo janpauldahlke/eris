@@ -58,15 +58,13 @@ pub async fn init_workspace(
 
     tokio::fs::create_dir_all(&workspace_dir).await?;
 
-    let core_dir = workspace_dir.join("00_Core");
+    let core_dir = workspace_dir.join("00_Invariants");
     tokio::fs::create_dir_all(&core_dir).await?;
 
     for sub in [
-        "10_Episodic",
-        "20_Semantic",
-        "30_Persons",
-        "40_User",
-        "99_USER_UPLOADED",
+        "10_Topology",
+        "20_Discourse",
+        "30_Synthesis",
     ] {
         tokio::fs::create_dir_all(workspace_dir.join(sub)).await?;
     }
@@ -114,12 +112,12 @@ mod tests {
 
         let workspace_dir = vault_root.join(workspace);
 
-        let core_dir = workspace_dir.join("00_Core");
-        assert!(core_dir.exists(), "00_Core directory should exist");
+        let core_dir = workspace_dir.join("00_Invariants");
+        assert!(core_dir.exists(), "00_Invariants directory should exist");
 
         assert!(
-            workspace_dir.join("99_USER_UPLOADED").exists(),
-            "99_USER_UPLOADED directory should exist"
+            workspace_dir.join("30_Synthesis").exists(),
+            "30_Synthesis directory should exist"
         );
 
         let identity_file = core_dir.join("Identity.md");

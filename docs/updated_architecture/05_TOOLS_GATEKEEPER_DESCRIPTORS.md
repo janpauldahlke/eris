@@ -45,7 +45,7 @@ Agenda and alarms persist JSON under `.fcp/tools/` (see `vault_layout`).
 - **Embedded TOML** slices compiled into the binary (`DESCRIPTOR_TOMLS`).
 - Per tool: `when_to_use`, `when_not_to_use`, `routing_hints`, good/bad examples.
 - **`ToolDescriptorRegistry::load_embedded`** at startup; **must cover** every registered tool name or chat fails early.
-- Used by ToolRouter enrichment and orchestrator **JIT guidance** (`build_descriptor_jit_guidance`).
+- Used by ToolRouter enrichment and orchestrator **JIT guidance** (`build_descriptor_jit_guidance` in `orchestrator/core/turn_entry.rs`).
 
 ## Specs (`tools/specs.rs`)
 

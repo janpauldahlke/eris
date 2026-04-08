@@ -5,7 +5,7 @@
 `LlmEngine::generate(stack, available_tools_json, stream_tx)`:
 
 - **`stack`:** `&[Message]` with roles `system` | `user` | `assistant`.
-- **`available_tools_json`:** second argument; **`OllamaClient` currently injects tools from the first system message** and passes `""` from orchestrator (tools live inside the assembled system prompt between FCP markers).
+- **`available_tools_json`:** second argument; **`OllamaClient` currently injects tools from the first system message** and passes `""` from orchestrator (tools live inside the assembled system prompt from `orchestrator::context::ContextAssembler`, between FCP markers in `context/view.rs`).
 - **`stream_tx`:** optional; TUI can stream tokens (not all paths enable it).
 
 ## Ollama client (`engine/ollama.rs`)

@@ -23,7 +23,7 @@ pub struct MemoryQueryArgs {
     /// Drop hits with cosine similarity score below this threshold (0.0–1.0). Omit for no floor.
     #[serde(default)]
     pub min_score: Option<f32>,
-    /// Only include points whose indexed `vault_key` starts with this prefix (e.g. `30_Persons/`).
+    /// Only include points whose indexed `vault_key` starts with this prefix (e.g. `30_Synthesis/`).
     #[serde(default)]
     pub vault_path_prefix: Option<String>,
 }
@@ -47,7 +47,7 @@ impl Tool for MemoryQueryTool {
     }
 
     fn description(&self) -> &'static str {
-        "Search long-term semantic memory. Prefer `query` alone first; omit `filter_tag` unless you know the exact tag from vault frontmatter (e.g. user, about_me). Optional: `top_k`, `max_total_chars`, `min_score`, `vault_path_prefix` (e.g. `30_Persons/`). Defaults and caps come from `.fcp/config.toml` (`memory_query_*`). A wrong `filter_tag` may yield a WARNING and unfiltered fallback. For an exact file path, use vault:read."
+        "Search long-term semantic memory. Prefer `query` alone first; omit `filter_tag` unless you know the exact tag from vault frontmatter. Optional: `top_k`, `max_total_chars`, `min_score`, `vault_path_prefix` (e.g. `30_Synthesis/`). Defaults and caps come from `.fcp/config.toml` (`memory_query_*`). A wrong `filter_tag` may yield a WARNING and unfiltered fallback. For an exact file path, use vault:read."
     }
 
     fn parameters_schema(&self) -> schemars::schema::RootSchema {

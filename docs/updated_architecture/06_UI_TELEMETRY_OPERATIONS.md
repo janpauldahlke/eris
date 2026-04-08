@@ -4,12 +4,14 @@
 
 - **`app.rs` — `TuiApp`:** Owns `mpsc::Receiver<TuiEvent>` from orchestrator, `mpsc::Sender<UserAction>` to orchestrator loop, scroll state, panes (Main, Telemetry, SystemErrors, CommandDeck).
 - **`render.rs`:** ratatui layout and widgets.
-- **`events.rs`:** `TuiEvent` (state update, incoming message, system error, alarm) and `UserAction` (submit, cancel, system inject, agenda alarm).
+- **`events.rs`:** `TuiEvent` (state update, incoming message, system error, alarm) and `UserAction` (submit, cancel, system inject, agenda alarm). `AgentStateUpdate.activity_line` is **status-only** (e.g. `Tools: foo, bar` during tool rounds); user-facing assistant prose from `message_to_user` is carried on the main transcript via `IncomingMessage`, not mixed into that field.
 - **`terminal.rs`:** crossterm setup/restore.
 
-**Alarm path:** `alarm_scheduler` → `TuiEvent::SystemAlarm` → `try_send` `UserAction::SystemInject` or `AgendaAlarmPending` to avoid blocking.
+**Alarm path:** `orchestrator::alarms::spawn_alarm_scheduler` → `TuiEvent::SystemAlarm` → `try_send` `UserAction::SystemInject` or `AgendaAlarmPending` to avoid blocking.
 
 **Input queue:** Router loop holds up to 3 queued submits; drops oldest with a system error when full.
+
+**Tool rounds vs deck:** When the model returns `tool_calls`, the orchestrator sets `activity_line` to a truncated list of tool names and may still emit `message_to_user` to the deck. Duplicate deck lines matching `last_deck_message_body` in the same `step()` are suppressed (see `emit_optional_user_message` in `orchestrator/core/deck.rs`).
 
 ## Telemetry (`telemetry/`)
 
@@ -48,4 +50,4 @@ flowchart LR
 
 ## Filesystem watch (`util/fs_watch/`)
 
-Debounced `notify` watcher: reloads identity snapshot into `watch::channel` for `ContextAssembler`. Filter logic in `filter.rs`, spawn in `spawn.rs`.
+Debounced `notify` watcher: reloads identity snapshot into `watch::channel` for `ContextAssembler` (`orchestrator/context/assembler.rs`). Filter logic in `filter.rs`, spawn in `spawn.rs`.

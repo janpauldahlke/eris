@@ -103,7 +103,7 @@ mod tests {
 
     #[test]
     fn event_paths_match_vault_watch_upload_only() {
-        let id = PathBuf::from("/vault/ws/00_Core/Identity.md");
+        let id = PathBuf::from("/vault/ws/00_Invariants/Identity.md");
         let upload = PathBuf::from("/vault/ws/99_USER_UPLOADED");
         let ev = PathBuf::from("/vault/ws/99_USER_UPLOADED/x.txt");
         assert!(event_paths_match_vault_watch(
