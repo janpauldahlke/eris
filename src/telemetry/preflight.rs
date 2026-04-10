@@ -4,7 +4,7 @@ use crate::executive::error::{FcpError, Result};
 use crate::executive::peripherals::{ollama_reachable, qdrant_reachable};
 
 pub async fn run_preflight_checks(command: &Commands, config: &AppConfig) -> Result<()> {
-    if matches!(command, Commands::Chat) {
+    if matches!(command, Commands::Chat { .. }) {
         return Ok(());
     }
 
@@ -32,7 +32,7 @@ mod tests {
         let mut config = AppConfig::default();
         config.ollama_host = "not a url".into();
         config.qdrant_url = "still-not-a-url".into();
-        let result = run_preflight_checks(&Commands::Chat, &config).await;
+        let result = run_preflight_checks(&Commands::Chat { web: false }, &config).await;
         assert!(result.is_ok());
     }
 

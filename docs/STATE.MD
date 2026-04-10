@@ -119,3 +119,13 @@
 - [x] better telemetry in TUI, shortening
 - [x] undo: remove rolling_summary_condensation write to memory sidefect
 - [x] slimmer context_slider by removing RECOVERY overhead and keeping context slider lean
+
+10/04/2026
+
+- [x] decouple tui by creaging a presentation layer pahse 1 and 2
+- [x] decouple chat session and router
+- [x] web ui 1st iteration / ez and cheap
+- [x] handle shutdown from web ui + browser close
+  - minor tweak FCP json repair
+  - 100vh max, and scrollables
+- [x] fix mail send 3 times issue

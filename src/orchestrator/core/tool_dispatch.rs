@@ -6,6 +6,7 @@ use crate::orchestrator::llm_support::post_tool_guidance::{
 use crate::orchestrator::r#loop::recovery_policy::{classify_tool_failure, ToolFailureAction};
 use crate::orchestrator::r#loop::tool_batch::ToolBatchDecision;
 use crate::orchestrator::state::{AgentState, ToolIntentStatus, ToolIntentTicket};
+use crate::presentation::SessionEvent;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
@@ -71,10 +72,10 @@ impl<E: LlmEngine> Orchestrator<E> {
                     role: "system".to_string(),
                     content: msg.clone(),
                 });
-                if let Some(tx) = &self.tui_tx {
+                if let Some(tx) = &self.presentation_tx {
                     let telemetry = format!("[tool] {} · duplicate suppressed", tool_name);
                     let _ = tx
-                        .send(crate::ui::events::TuiEvent::SystemError(telemetry))
+                        .send(SessionEvent::SystemError(telemetry))
                         .await;
                 }
                 continue;
@@ -140,10 +141,10 @@ impl<E: LlmEngine> Orchestrator<E> {
                         role: "system".to_string(),
                         content: msg.clone(),
                     });
-                    if let Some(tx) = &self.tui_tx {
+                    if let Some(tx) = &self.presentation_tx {
                         let telemetry = format!("[tool] {} · success", tool_name);
                         let _ = tx
-                            .send(crate::ui::events::TuiEvent::SystemError(telemetry))
+                            .send(SessionEvent::SystemError(telemetry))
                             .await;
                     }
                     self.broadcast_state().await;
@@ -256,6 +257,12 @@ impl<E: LlmEngine> Orchestrator<E> {
 
         if executed_success_count > 0 {
             self.force_full_tool_schemas_in_llm_view = false;
+            // Schema-fault recovery arms `targeted_tools` for one retry with full schemas. If we do
+            // not clear it after success, the next loop iteration still uses
+            // `assemble_with_selected_tools` for that tool only — the model keeps calling it
+            // (e.g. repeated `mail:write`) until it finally returns Idle. See orchestrator field
+            // doc on `force_full_tool_schemas_in_llm_view` (same intended lifetime as this set).
+            targeted_tools.clear();
             self.chat_stack.push(crate::engine::Message {
                 role: "system".to_string(),
                 content: POST_TOOL_USER_REPLY_GUIDANCE.to_string(),

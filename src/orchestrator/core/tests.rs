@@ -5,6 +5,7 @@ use crate::executive::error::Result;
 use crate::memory::ephemeral::EphemeralMemory;
 use crate::orchestrator::context::ContextViewSettings;
 use crate::orchestrator::state::{AgentState, LoopDirective};
+use crate::presentation::SessionEvent;
 use crate::tools::Gatekeeper;
 use std::path::Path;
 use async_trait::async_trait;
@@ -780,4 +781,104 @@ fn test_user_text_means_agenda_done_ack() {
     assert!(!Orchestrator::<MockEngine>::user_text_means_agenda_done_ack(
         "tell me a story"
     ));
+}
+
+async fn orchestrator_with_presentation(
+    pres_tx: tokio::sync::mpsc::Sender<SessionEvent>,
+) -> Orchestrator<MockEngine> {
+    let engine = MockEngine::new();
+    let gatekeeper = Gatekeeper::new();
+    let ephemeral = Arc::new(EphemeralMemory::new("deck_emit_test".to_string()));
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault_root = dir.path();
+    let workspace = "deck_emit_test";
+    tokio::fs::create_dir_all(vault_root.join(workspace).join("00_Invariants"))
+        .await
+        .expect("mkdir");
+    let (watch_tx, watch_rx) = tokio::sync::watch::channel(());
+    let _ = watch_tx;
+    let (id_tx, id_rx) = tokio::sync::watch::channel(Arc::from("deck test identity"));
+    Box::leak(Box::new(id_tx));
+    Orchestrator::new(
+        engine,
+        gatekeeper,
+        ephemeral,
+        vault_root,
+        workspace,
+        3,
+        5,
+        0.8,
+        4096,
+        3,
+        6000,
+        false,
+        0,
+        watch_rx,
+        Some(pres_tx),
+        None,
+        None,
+        ContextViewSettings::default(),
+        Arc::new(AppConfig::default()),
+        id_rx,
+        Arc::new(AtomicBool::new(false)),
+    )
+}
+
+#[tokio::test]
+async fn emit_optional_user_message_emits_model_thought_then_incoming_message() {
+    let (pres_tx, mut pres_rx) = mpsc::channel::<SessionEvent>(32);
+    let mut orch = orchestrator_with_presentation(pres_tx).await;
+    let json = r#"{"thought":"internal reasoning here","status":"Idle","message_to_user":"Hello user","tool_calls":[]}"#;
+    orch.emit_optional_user_message(json).await;
+
+    match pres_rx.recv().await.expect("event 1") {
+        SessionEvent::ModelThought(t) => assert_eq!(t, "internal reasoning here"),
+        e => panic!("expected ModelThought first, got {e:?}"),
+    }
+    match pres_rx.recv().await.expect("event 2") {
+        SessionEvent::IncomingMessage(m) => assert!(m.contains("Hello user")),
+        e => panic!("expected IncomingMessage, got {e:?}"),
+    }
+    match pres_rx.recv().await.expect("event 3") {
+        SessionEvent::StateUpdate(_) => {}
+        e => panic!("expected StateUpdate from broadcast_state, got {e:?}"),
+    }
+}
+
+#[tokio::test]
+async fn emit_optional_user_message_skips_whitespace_only_thought() {
+    let (pres_tx, mut pres_rx) = mpsc::channel::<SessionEvent>(32);
+    let mut orch = orchestrator_with_presentation(pres_tx).await;
+    let json = r#"{"thought":"   \n  ","status":"Idle","message_to_user":"Hi","tool_calls":[]}"#;
+    orch.emit_optional_user_message(json).await;
+
+    match pres_rx.recv().await.expect("event 1") {
+        SessionEvent::IncomingMessage(m) => assert!(m.contains("Hi")),
+        e => panic!("expected IncomingMessage only (no ModelThought), got {e:?}"),
+    }
+    match pres_rx.recv().await.expect("event 2") {
+        SessionEvent::StateUpdate(_) => {}
+        e => panic!("expected StateUpdate, got {e:?}"),
+    }
+}
+
+#[tokio::test]
+async fn emit_optional_user_message_tool_round_emits_thought_before_deck() {
+    let (pres_tx, mut pres_rx) = mpsc::channel::<SessionEvent>(32);
+    let mut orch = orchestrator_with_presentation(pres_tx).await;
+    let json = r#"{"thought":"pick clock tool","status":"Reflect","message_to_user":"One moment.","tool_calls":[{"name":"clock:now","args":{}}]}"#;
+    orch.emit_optional_user_message(json).await;
+
+    match pres_rx.recv().await.expect("event 1") {
+        SessionEvent::ModelThought(t) => assert_eq!(t, "pick clock tool"),
+        e => panic!("expected ModelThought, got {e:?}"),
+    }
+    match pres_rx.recv().await.expect("event 2") {
+        SessionEvent::IncomingMessage(m) => assert!(m.contains("One moment.")),
+        e => panic!("expected IncomingMessage, got {e:?}"),
+    }
+    match pres_rx.recv().await.expect("event 3") {
+        SessionEvent::StateUpdate(_) => {}
+        e => panic!("expected StateUpdate, got {e:?}"),
+    }
 }

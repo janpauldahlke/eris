@@ -1,7 +1,7 @@
 use crate::engine::LlmEngine;
 use crate::orchestrator::tool_router::ToolRouter;
 use crate::telemetry::routing_codes;
-use crate::ui::events::SYSTEM_ALARM_PREFIX;
+use crate::presentation::SYSTEM_ALARM_PREFIX;
 use std::time::Instant;
 
 use super::Orchestrator;

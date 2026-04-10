@@ -1,6 +1,7 @@
 use crate::engine::LlmEngine;
 use crate::orchestrator::llm_support::json_envelope::split_leading_json_object;
 use crate::orchestrator::state::LlmResponse;
+use crate::presentation::SessionEvent;
 
 use super::Orchestrator;
 
@@ -9,7 +10,7 @@ impl<E: LlmEngine> Orchestrator<E> {
     /// Tool rounds: only `message_to_user` is shown on the main transcript; tool names go to Status
     /// (and full payloads remain in tracing via existing LLM/tool logs).
     pub(super) async fn emit_optional_user_message(&mut self, response_content: &str) {
-        let Some(tx) = &self.tui_tx else {
+        let Some(tx) = &self.presentation_tx else {
             return;
         };
 
@@ -17,6 +18,29 @@ impl<E: LlmEngine> Orchestrator<E> {
         let Ok(parsed) = serde_json::from_str::<LlmResponse>(json_slice) else {
             return;
         };
+
+        let thought_trimmed = parsed.thought.trim();
+        if !thought_trimmed.is_empty() {
+            let thought_len = thought_trimmed.len();
+            let preview: String = thought_trimmed.chars().take(120).collect();
+            tracing::info!(
+                event = "UI_EMIT_MODEL_THOUGHT",
+                thought_len,
+                preview = %preview,
+                "Emitting JSON protocol `thought` to presentation (thought pane / telemetry)"
+            );
+            if tx
+                .send(SessionEvent::ModelThought(thought_trimmed.to_string()))
+                .await
+                .is_err()
+            {
+                tracing::warn!(
+                    event = "UI_EMIT_MODEL_THOUGHT_DROPPED",
+                    thought_len,
+                    "Presentation channel closed; model thought not delivered"
+                );
+            }
+        }
 
         let has_tools = !parsed.tool_calls.is_empty();
         let msg_opt = parsed
@@ -63,7 +87,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                         "Emitting assistant message to TUI deck (tool round)"
                     );
                     let _ = tx
-                        .send(crate::ui::events::TuiEvent::IncomingMessage(format!(
+                        .send(SessionEvent::IncomingMessage(format!(
                             "[{}]: {}",
                             agent_name, msg
                         )))
@@ -106,7 +130,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             "Emitting assistant message to TUI deck"
         );
         let _ = tx
-            .send(crate::ui::events::TuiEvent::IncomingMessage(format!(
+            .send(SessionEvent::IncomingMessage(format!(
                 "[{}]: {}",
                 agent_name, msg
             )))
@@ -116,12 +140,12 @@ impl<E: LlmEngine> Orchestrator<E> {
 
     /// Deck line for cap-recovery when the normal JSON → deck path did not apply.
     pub(super) async fn emit_assistant_deck_line(&mut self, msg: &str) {
-        let Some(tx) = &self.tui_tx else {
+        let Some(tx) = &self.presentation_tx else {
             return;
         };
         let agent_name = self.agent_name();
         let _ = tx
-            .send(crate::ui::events::TuiEvent::IncomingMessage(format!(
+            .send(SessionEvent::IncomingMessage(format!(
                 "[{}]: {}",
                 agent_name, msg
             )))

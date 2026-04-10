@@ -18,8 +18,6 @@
 - **No `println!` for Logic:** `println!` is strictly forbidden for debugging. It corrupts the `ratatui` terminal buffer.
 - **Use `tracing`:** All internal state changes, tool executions, and warnings must use the `tracing` crate (`debug!`, `info!`, `warn!`, `error!`), which routes safely to the hidden `.fcp/logs/` directory.
 
-4. Agent Behavioral Directives (The Sniper Protocol)
+4. Agent Behavioral Directives
 
-- **Anti-One-Shot:** You are strictly forbidden from writing an entire file or multiple files in a single turn. You must write code one function or one test at a time.
-- **Halt and Catch Fire:** After generating a block of code, you MUST STOP. Do not proceed to the next step. Wait for the user to run `cargo test` and provide the compiler output.
 - **No Git Autonomy:** You are strictly forbidden from executing `git add`, `git commit`, or modifying version control history. The human operator is the sole entity authorized to commit code.

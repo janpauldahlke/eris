@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Eris — web console</title>
+    <style>
+      :root {
+        --bg: #080a12;
+        --panel: #0a0d18;
+        --border: #3f465f;
+        --accent: #5ce5be;
+        --text: #d6dff8;
+        --muted: #b4bacd;
+        --user: #78b4ff;
+        --thought-bg: #0e101c;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        height: 100%;
+      }
+      body {
+        margin: 0;
+        height: 100%;
+        max-height: 100dvh;
+        font-family:
+          ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 14px;
+        background: var(--bg);
+        color: var(--text);
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        overflow: hidden;
+      }
+      header {
+        flex-shrink: 0;
+        padding: 0.6rem 1rem;
+        border-bottom: 1px solid var(--border);
+        color: var(--accent);
+        letter-spacing: 0.04em;
+      }
+      main {
+        flex: 1 1 0;
+        display: grid;
+        grid-template-columns: 1fr minmax(240px, 30vw);
+        grid-template-rows: minmax(0, 1fr) auto;
+        gap: 0;
+        min-height: 0;
+        overflow: hidden;
+      }
+      #transcript {
+        grid-column: 1;
+        grid-row: 1;
+        min-height: 0;
+        overflow: auto;
+        padding: 1rem;
+        background: var(--panel);
+        border-right: 1px solid var(--border);
+        border-bottom: 1px solid var(--border);
+      }
+      .right-stack {
+        grid-column: 2;
+        grid-row: 1;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        overflow: hidden;
+        border-bottom: 1px solid var(--border);
+        background: var(--thought-bg);
+      }
+      .panel-section {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        flex: 1 1 0;
+      }
+      .panel-section h2 {
+        margin: 0;
+        padding: 0.5rem 0.75rem;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        color: var(--accent);
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+      }
+      .panel-section.telemetry-section {
+        border-top: 1px solid var(--border);
+        flex: 1 1 0;
+        min-height: 7rem;
+      }
+      #thought-pane {
+        flex: 1 1 0;
+        min-height: 0;
+        overflow: auto;
+        padding: 0.75rem;
+        white-space: pre-wrap;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.45;
+        overflow-wrap: anywhere;
+      }
+      #tools-activity {
+        flex-shrink: 0;
+        max-height: min(28vh, 7rem);
+        overflow-y: auto;
+        padding: 0.45rem 0.75rem;
+        font-size: 11px;
+        color: #ffd166;
+        border-bottom: 1px solid var(--border);
+        min-height: 1.5em;
+        white-space: pre-wrap;
+        word-break: break-word;
+        overflow-wrap: anywhere;
+      }
+      #tools-activity:empty {
+        display: none;
+      }
+      #telemetry-log {
+        flex: 1 1 0;
+        min-height: 0;
+        overflow: auto;
+        padding: 0.5rem 0.75rem;
+        font-size: 11px;
+        line-height: 1.4;
+        color: #b8c0d4;
+        background: #0c0e16;
+      }
+      .telemetry-line {
+        margin-bottom: 0.4rem;
+        padding-bottom: 0.35rem;
+        border-bottom: 1px solid #1e2438;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .telemetry-line:last-child {
+        border-bottom: none;
+      }
+      .msg {
+        margin-bottom: 0.75rem;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      .msg.user {
+        color: var(--user);
+        font-weight: 600;
+      }
+      .msg.assistant {
+        color: #f5f8ff;
+      }
+      .msg.system {
+        color: #c8b070;
+      }
+      footer {
+        grid-column: 1 / -1;
+        flex-shrink: 0;
+        border-top: 1px solid var(--border);
+        padding: 0.5rem 1rem;
+        background: #0e101a;
+        min-height: 0;
+      }
+      #status-line {
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 0.5rem;
+        max-height: min(22vh, 5.5rem);
+        overflow-x: hidden;
+        overflow-y: auto;
+        overflow-wrap: anywhere;
+        line-height: 1.35;
+      }
+      #chat-form {
+        display: flex;
+        align-items: flex-end;
+        gap: 0.5rem;
+        min-height: 0;
+      }
+      #message-input {
+        flex: 1 1 auto;
+        min-height: 2.5rem;
+        max-height: min(32vh, 14rem);
+        resize: none;
+        overflow-y: auto;
+        background: #12162a;
+        border: 1px solid var(--border);
+        color: var(--text);
+        padding: 0.5rem 0.75rem;
+        border-radius: 4px;
+        font-family: inherit;
+        font-size: inherit;
+        line-height: 1.45;
+      }
+      #message-input:focus {
+        outline: 1px solid var(--accent);
+        border-color: var(--accent);
+      }
+      button[type="submit"] {
+        background: #1a2f28;
+        border: 1px solid var(--accent);
+        color: var(--accent);
+        padding: 0.5rem 1rem;
+        border-radius: 4px;
+        cursor: pointer;
+        font-family: inherit;
+      }
+      button[type="submit"]:hover {
+        background: #243d35;
+      }
+      @media (max-width: 720px) {
+        main {
+          grid-template-columns: 1fr;
+          grid-template-rows: minmax(0, 1fr) minmax(0, 1fr) auto;
+        }
+        #transcript {
+          grid-column: 1;
+          grid-row: 1;
+          border-right: none;
+        }
+        .right-stack {
+          grid-column: 1;
+          grid-row: 2;
+          flex-direction: column;
+          border-right: none;
+        }
+        .panel-section.telemetry-section {
+          min-height: 5rem;
+        }
+        footer {
+          grid-row: 3;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>ERIS — web console</header>
+    <main>
+      <div id="transcript" aria-label="Chat transcript"></div>
+      <aside class="right-stack" aria-label="Side panels">
+        <div class="panel-section" aria-label="Model thought">
+          <h2>Thought</h2>
+          <div id="thought-pane">
+            (the JSON <code>thought</code> field from each assistant reply
+            appears here; user-facing text stays in
+            <code>message_to_user</code> / main transcript)
+          </div>
+        </div>
+        <div
+          class="panel-section telemetry-section"
+          aria-label="Tools and system telemetry"
+        >
+          <h2>Telemetry</h2>
+          <div id="tools-activity" aria-live="polite"></div>
+          <div id="telemetry-log" aria-live="polite"></div>
+        </div>
+      </aside>
+      <footer>
+        <div id="status-line"></div>
+        <form id="chat-form" autocomplete="off">
+          <textarea
+            id="message-input"
+            rows="1"
+            placeholder="Message… Enter = send, Shift+Enter = newline (Esc = cancel turn)"
+          ></textarea>
+          <button type="submit">Send</button>
+        </form>
+      </footer>
+    </main>
+    <script src="/assets/chat.js"></script>
+  </body>
+</html>

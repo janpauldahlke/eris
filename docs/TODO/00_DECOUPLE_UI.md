@@ -1,3 +1,5 @@
+[x] DONE!
+
 # Decouple orchestrator from terminal UI (abstraction + encapsulated terminal only)
 
 ## Scope of this phase

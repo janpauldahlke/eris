@@ -5,10 +5,9 @@ use ratatui::{
     text::{Line, Span, Text},
     Frame,
 };
-use crate::ui::TuiApp;
+use super::app::{ActivePane, TuiApp};
 use crate::engine::token_metrics::LlmTokenSnapshot;
 use crate::orchestrator::state::AgentState;
-use crate::ui::app::ActivePane;
 
 const STATUS_ACTIVITY_MAX_CHARS: usize = 100;
 

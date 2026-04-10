@@ -11,7 +11,7 @@ pub fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
     let mut stdout = stdout();
     execute!(stdout, EnterAlternateScreen)
         .map_err(|e| FcpError::Config(format!("Failed to enter alt screen: {}", e)))?;
-    
+
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic| {
         let _ = restore_terminal();

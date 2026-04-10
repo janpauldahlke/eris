@@ -2,11 +2,16 @@
 
 use crate::orchestrator::state::LlmResponse;
 
+/// First line of the JSON-parse recovery hint; also used to detect this path when shortening UI copy.
+pub const FCP_JSON_REPAIR_MARKER: &str = "[FCP JSON REPAIR]";
+
+/// One-line [`SessionEvent::SystemError`] when the model-facing message includes [`FCP_JSON_REPAIR_MARKER`].
+pub const JSON_REPAIR_UI_SUMMARY: &str = "[SYSTEM OVERRIDE: FUCKUP DETECTED] JSON repair";
+
 /// Human- and model-oriented hints appended after serde’s error when [`LlmResponse`] parsing fails.
 /// Serde’s `expected ',' or '}'` near a `]` is often misread as a comma problem; this steers toward
 /// the real issue (extra/missing `}` around `tool_calls` entries).
-const LLM_JSON_PARSE_RECOVERY_HINT: &str = r##"[FCP JSON REPAIR]
-Your last assistant message was not valid JSON.
+const LLM_JSON_PARSE_RECOVERY_HINT_BODY: &str = r##"Your last assistant message was not valid JSON.
 
 The serde error often means unbalanced { } braces — not “add a comma”. When `tool_calls` has exactly ONE item, a common mistake is: after the `}` that closes `args`, you must emit one more `}` to close the tool object before `]` ends the array.
 
@@ -19,7 +24,10 @@ Reply with one JSON object only (thought, status, message_to_user, tool_calls). 
 
 /// Full recovery payload for [`crate::orchestrator::state::LoopDirective::RecoverFromFuckup`].
 pub fn llm_json_parse_recovery_message(err: &serde_json::Error) -> String {
-    format!("{err}\n\n{LLM_JSON_PARSE_RECOVERY_HINT}")
+    format!(
+        "{err}\n\n{}\n{}",
+        FCP_JSON_REPAIR_MARKER, LLM_JSON_PARSE_RECOVERY_HINT_BODY
+    )
 }
 
 /// Returns `(json_object, remainder)` where `json_object` spans from the first `{` through its
@@ -119,7 +127,7 @@ mod tests {
         let err = serde_json::from_str::<LlmResponse>("not json").expect_err("invalid json");
         let msg = llm_json_parse_recovery_message(&err);
         assert!(msg.contains("tool_calls"));
-        assert!(msg.contains("[FCP JSON REPAIR]"));
+        assert!(msg.contains(FCP_JSON_REPAIR_MARKER));
         assert!(msg.contains("one more"));
     }
 }
