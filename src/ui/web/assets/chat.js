@@ -6,8 +6,27 @@
   const statusLine = document.getElementById("status-line");
   const form = document.getElementById("chat-form");
   const input = document.getElementById("message-input");
+  const btnExit = document.getElementById("btn-exit");
+  const btnSend = form.querySelector('button[type="submit"]');
 
   const TELEMETRY_MAX_LINES = 80;
+  let shuttingDown = false;
+
+  /** Browsers only honor this for script-opened windows; OS-opened tabs usually stay open. */
+  function tryCloseTab() {
+    window.close();
+    window.setTimeout(function () {
+      try {
+        if (document.body) {
+          appendTelemetry(
+            "[ui] Browser blocked auto-close (normal if this tab was opened from the dock or URL bar). Close the tab yourself."
+          );
+        }
+      } catch (e) {
+        /* tab may be tearing down */
+      }
+    }, 500);
+  }
 
   function appendLine(text, className) {
     const div = document.createElement("div");
@@ -42,27 +61,60 @@
     const q = u.queued_inputs || 0;
     setStatus(
       st +
-        " · T:" +
+        " · tool rounds " +
         u.tool_rounds +
         "/" +
         u.max_tool_rounds +
-        " R:" +
+        " · recovery " +
         u.recovery_count +
         "/" +
         u.max_recovery_attempts +
-        " Q:" +
+        " · queued " +
         q +
-        " · " +
+        " · routing " +
         u.router_ms +
-        "/" +
+        " ms · LLM " +
         u.llm_ms +
-        "/" +
+        " ms · tools " +
         u.tool_ms +
-        " ms (Σ " +
+        " ms · total " +
         u.total_ms +
-        ")"
+        " ms"
     );
     setToolsActivity(u.activity_line || "");
+  }
+
+  async function requestShutdown() {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    if (btnExit) btnExit.disabled = true;
+    if (btnSend) btnSend.disabled = true;
+    input.disabled = true;
+    appendTelemetry("[ui] Stopping server (clean shutdown)…");
+    setStatus("Shutting down…");
+    try {
+      const res = await fetch("/api/shutdown", { method: "POST" });
+      if (res.ok) {
+        setStatus("Server stopped. Your shell prompt should return.");
+        appendTelemetry("[ui] Goodbye — closing tab if the browser allows…");
+        es.close();
+        tryCloseTab();
+      } else {
+        shuttingDown = false;
+        if (btnExit) btnExit.disabled = false;
+        if (btnSend) btnSend.disabled = false;
+        input.disabled = false;
+        appendTelemetry(
+          "[ui] Shutdown failed (" + res.status + "). Press Ctrl+C in the terminal."
+        );
+        setStatus("Shutdown failed — use Ctrl+C in the terminal");
+      }
+    } catch (err) {
+      setStatus("Server unreachable (may already have exited).");
+      appendTelemetry("[ui] Connection lost — if the terminal is back at a prompt, you are done.");
+      es.close();
+      tryCloseTab();
+    }
   }
 
   function handleSessionEvent(data) {
@@ -101,12 +153,33 @@
     setStatus("SSE disconnected — refresh the page");
   };
 
+  if (btnExit) {
+    btnExit.addEventListener("click", function () {
+      requestShutdown();
+    });
+  }
+
+  input.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" || e.shiftKey) return;
+    if (e.isComposing) return;
+    e.preventDefault();
+    if (shuttingDown) return;
+    form.requestSubmit();
+  });
+
   form.addEventListener("submit", async function (e) {
     e.preventDefault();
     const text = input.value;
     if (!text.trim()) return;
+    const trimmed = text.trim();
+    const norm = trimmed.toLowerCase();
+    if (norm === "/exit" || norm === "/quit") {
+      input.value = "";
+      requestShutdown();
+      return;
+    }
     input.value = "";
-    appendLine("You: " + text.trim(), "user");
+    appendLine("You: " + trimmed, "user");
     thoughtPane.textContent = "";
     try {
       const res = await fetch("/api/action", {

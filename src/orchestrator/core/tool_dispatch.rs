@@ -257,6 +257,12 @@ impl<E: LlmEngine> Orchestrator<E> {
 
         if executed_success_count > 0 {
             self.force_full_tool_schemas_in_llm_view = false;
+            // Schema-fault recovery arms `targeted_tools` for one retry with full schemas. If we do
+            // not clear it after success, the next loop iteration still uses
+            // `assemble_with_selected_tools` for that tool only — the model keeps calling it
+            // (e.g. repeated `mail:write`) until it finally returns Idle. See orchestrator field
+            // doc on `force_full_tool_schemas_in_llm_view` (same intended lifetime as this set).
+            targeted_tools.clear();
             self.chat_stack.push(crate::engine::Message {
                 role: "system".to_string(),
                 content: POST_TOOL_USER_REPLY_GUIDANCE.to_string(),

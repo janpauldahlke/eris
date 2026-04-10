@@ -253,6 +253,9 @@ pub struct AppConfig {
     /// TCP port for the web chat server.
     #[serde(default = "default_web_port")]
     pub web_port: u16,
+    /// When true, `eris chat --web` opens the listen URL in the system default browser after bind. Set `false` for SSH/headless.
+    #[serde(default = "default_web_open_browser")]
+    pub web_open_browser: bool,
     /// Current working directory when [`AppConfig::load`] ran — this is the physical vault root for chat.
     #[serde(skip)]
     pub config_source_dir: PathBuf,
@@ -552,6 +555,10 @@ fn default_web_port() -> u16 {
     8787
 }
 
+fn default_web_open_browser() -> bool {
+    true
+}
+
 impl Default for AppConfig {
     /// Baseline profile aligned with a typical local Mac setup (Ollama + Qdrant); override per vault in `.fcp/config.toml` or `FCP_*`.
     /// A checked-in full example (including optional Gmail) is `vaults/nemo/.fcp/config.toml` — copy and trim for new vaults.
@@ -621,6 +628,7 @@ impl Default for AppConfig {
             memory_query_oversample_min: default_memory_query_oversample_min(),
             web_bind_addr: default_web_bind_addr(),
             web_port: default_web_port(),
+            web_open_browser: default_web_open_browser(),
             config_source_dir: PathBuf::new(),
         }
     }

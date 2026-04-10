@@ -59,3 +59,12 @@ pub async fn post_action(
         }
     }
 }
+
+pub async fn post_shutdown(State(state): State<WebAppState>) -> impl IntoResponse {
+    tracing::info!(
+        event = "fcp.web.api.shutdown",
+        "POST /api/shutdown — graceful stop (same as Ctrl+C in the terminal)"
+    );
+    state.shutdown_token.cancel();
+    StatusCode::NO_CONTENT
+}

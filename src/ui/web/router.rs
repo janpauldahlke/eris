@@ -13,5 +13,6 @@ pub fn web_chat_router(state: WebAppState) -> Router {
         .route("/assets/chat.js", get(handlers::chat_js))
         .route("/api/events", get(sse::session_events_sse))
         .route("/api/action", post(handlers::post_action))
+        .route("/api/shutdown", post(handlers::post_shutdown))
         .with_state(state)
 }

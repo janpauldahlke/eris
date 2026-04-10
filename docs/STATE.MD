@@ -124,4 +124,6 @@
 
 - [x] decouple tui by creaging a presentation layer pahse 1 and 2
 - [x] decouple chat session and router
-- [] web ui 1st iteration
+- [x] web ui 1st iteration / ez and cheap
+- [x] handle shutdown from web ui + browser close
+- [x] fix mail send 3 times issue

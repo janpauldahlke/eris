@@ -18,11 +18,33 @@ use crate::presentation::{SessionEvent, UserAction};
 
 const EVENT_BACKLOG: usize = 512;
 
+/// Best-effort: launch the system default browser (non-blocking for the parent process).
+fn try_launch_default_browser(url: &str) -> std::io::Result<()> {
+    if cfg!(target_os = "macos") {
+        std::process::Command::new("open").arg(url).spawn()?;
+    } else if cfg!(target_os = "windows") {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .spawn()?;
+    } else if cfg!(unix) {
+        std::process::Command::new("xdg-open").arg(url).spawn()?;
+    } else {
+        tracing::debug!(
+            url = %url,
+            "Automatic browser open is not configured for this OS; open the URL manually"
+        );
+        return Ok(());
+    }
+    Ok(())
+}
+
 /// Shared Axum state for the web chat server.
 #[derive(Clone)]
 pub struct WebAppState {
     pub events_tx: broadcast::Sender<SessionEvent>,
     pub user_action_tx: mpsc::Sender<UserAction>,
+    /// Same token as chat session / SIGINT: cancelling stops Axum and ends `eris chat --web`.
+    pub shutdown_token: CancellationToken,
 }
 
 /// Run the HTTP server until `cancel_token` is cancelled or the listener fails.
@@ -40,6 +62,7 @@ pub async fn run_web_chat(
     let state = WebAppState {
         events_tx: events_tx.clone(),
         user_action_tx,
+        shutdown_token: cancel_token.clone(),
     };
     let app: Router = router::web_chat_router(state);
 
@@ -52,10 +75,38 @@ pub async fn run_web_chat(
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let bound = listener.local_addr().map_err(FcpError::Io)?;
+    let listen_url = format!("http://{bound}");
     tracing::info!(
-        url = %format!("http://{bound}"),
+        url = %listen_url,
         "Web chat UI listening (open in your browser)"
     );
+
+    if config.web_open_browser {
+        let open_url = listen_url.clone();
+        tokio::spawn(async move {
+            let url_for_blocking = open_url.clone();
+            match tokio::task::spawn_blocking(move || try_launch_default_browser(&url_for_blocking)).await
+            {
+                Ok(Ok(())) => tracing::info!(
+                    event = "fcp.web.browser_launched",
+                    url = %open_url,
+                    "Requested default browser for web UI"
+                ),
+                Ok(Err(e)) => tracing::warn!(
+                    event = "fcp.web.browser_launch_failed",
+                    error = %e,
+                    url = %open_url,
+                    "Could not open default browser; open the URL manually"
+                ),
+                Err(join_err) => tracing::warn!(
+                    event = "fcp.web.browser_launch_task_failed",
+                    error = %join_err,
+                    url = %open_url,
+                    "Browser launch task failed"
+                ),
+            }
+        });
+    }
 
     let cancel_serve = cancel_token.clone();
     axum::serve(listener, app)
