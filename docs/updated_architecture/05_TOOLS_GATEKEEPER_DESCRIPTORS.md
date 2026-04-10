@@ -15,7 +15,7 @@ Each tool implements:
 - **Registry:** `HashMap<String, Arc<dyn Tool>>`.
 - **`get_allowed_tools(state)`** — filters tools by **`AgentState`**:
   - **Chat:** most tools except `agenda:complete` (prevents completing before user turn semantics).
-  - **Reflect:** tool-sandbox style set: memory, vault read/list, web artifact query, agenda mutations, clocks, weather, wiki, system health—not `vault:write`.
+  - **Reflect:** tool-sandbox style set: memory, vault read/list, ephemeral buffer query/page, agenda mutations, clocks, weather, wiki, system health—not `vault:write`.
   - **Idle:** includes `vault:write`, `web:fetch`, `agenda:complete`, etc.
   - **Recover:** all registered (recovery pass).
 - **`execute_tool`:** state check → JSON Schema validate (`jsonschema`) → `tool.execute`.
@@ -32,7 +32,8 @@ Shared helpers (e.g. path mutability) used by vault tools.
 | `tools/vault/` | `vault:read`, `vault:write`, `vault:list` |
 | `tools/memory/` | `memory:stage`, `memory:staged_list`, `memory:commit`, `memory:commit_all`, `memory:query` |
 | `tools/agenda/` | `agenda:push`, `agenda:list`, `agenda:remind_at`, `agenda:complete`, `agenda:remove` |
-| `tools/web/` | `web:fetch`, `web:artifact_query` |
+| `tools/web/` | `web:fetch` |
+| `tools/ephemeral/` | `ephemeral:buffer_page`, `ephemeral:buffer_query` |
 | `tools/system/` | `system:health` |
 | `tools/clock/` | `clock:now`, `clock:timer`, `clock:alarm` |
 | `tools/weather/` | `weather:current`, `weather:forecast` (Open-Meteo via `ApiHttpClient`) |

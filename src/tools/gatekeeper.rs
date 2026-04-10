@@ -17,6 +17,22 @@ impl Default for Gatekeeper {
     }
 }
 
+/// Map alternate LLM arg names to what JSON Schema expects (serde aliases do not affect `jsonschema` validation).
+fn normalize_tool_invocation_args(tool_name: &str, args: &mut Value) {
+    if tool_name != "ephemeral:buffer_query" {
+        return;
+    }
+    let Some(obj) = args.as_object_mut() else {
+        return;
+    };
+    if obj.contains_key("buffer_id") {
+        return;
+    }
+    if let Some(aid) = obj.remove("artifact_id") {
+        obj.insert("buffer_id".to_string(), aid);
+    }
+}
+
 impl Gatekeeper {
     pub fn new() -> Self { Self { registry: HashMap::new() } }
     pub fn register(&mut self, tool: Arc<dyn Tool>) {
@@ -30,8 +46,8 @@ impl Gatekeeper {
     fn state_allows_tool(state: &AgentState, tool_name: &str) -> bool {
         match state {
             AgentState::Chat => !matches!(tool_name, "agenda:complete"),
-            AgentState::Reflect => matches!(tool_name, "memory:stage" | "memory:staged_list" | "memory:commit" | "memory:commit_all" | "memory:query" | "vault:read" | "vault:list" | "agenda:push" | "agenda:list" | "agenda:remove" | "agenda:remind_at" | "web:artifact_query" | "system:health" | "clock:now" | "clock:timer" | "clock:alarm" | "weather:current" | "weather:forecast" | "wiki:summary" | "mail:check" | "mail:read" | "mail:digest"),
-            AgentState::Idle => matches!(tool_name, "memory:stage" | "memory:staged_list" | "memory:commit" | "memory:commit_all" | "memory:query" | "vault:read" | "vault:write" | "vault:list" | "agenda:list" | "agenda:complete" | "agenda:remove" | "agenda:remind_at" | "web:fetch" | "web:artifact_query" | "system:health" | "clock:now" | "clock:timer" | "clock:alarm" | "weather:current" | "weather:forecast" | "wiki:summary" | "mail:check" | "mail:read" | "mail:digest" | "mail:write" | "mail:delete" | "mail:move"),
+            AgentState::Reflect => matches!(tool_name, "memory:stage" | "memory:staged_list" | "memory:commit" | "memory:commit_all" | "memory:query" | "vault:read" | "vault:list" | "agenda:push" | "agenda:list" | "agenda:remove" | "agenda:remind_at" | "ephemeral:buffer_query" | "ephemeral:buffer_page" | "system:health" | "clock:now" | "clock:timer" | "clock:alarm" | "weather:current" | "weather:forecast" | "wiki:summary" | "mail:check" | "mail:read" | "mail:digest"),
+            AgentState::Idle => matches!(tool_name, "memory:stage" | "memory:staged_list" | "memory:commit" | "memory:commit_all" | "memory:query" | "vault:read" | "vault:write" | "vault:list" | "agenda:list" | "agenda:complete" | "agenda:remove" | "agenda:remind_at" | "web:fetch" | "ephemeral:buffer_query" | "ephemeral:buffer_page" | "system:health" | "clock:now" | "clock:timer" | "clock:alarm" | "weather:current" | "weather:forecast" | "wiki:summary" | "mail:check" | "mail:read" | "mail:digest" | "mail:write" | "mail:delete" | "mail:move"),
             AgentState::Recover => true,
         }
     }
@@ -98,6 +114,9 @@ impl Gatekeeper {
             FcpError::ToolFault { tool_name: name.to_string(), reason: "Tool not found".to_string() }
         })?;
 
+        let mut args = args;
+        normalize_tool_invocation_args(name, &mut args);
+
         let schema_value = serde_json::to_value(tool.parameters_schema()).map_err(|e| FcpError::Config(e.to_string()))?;
         let compiled_schema = JSONSchema::options().compile(&schema_value)
             .map_err(|e| FcpError::Config(format!("Failed to compile JSON schema: {}", e)))?;
@@ -126,6 +145,7 @@ impl Gatekeeper {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use schemars::JsonSchema;
     use schemars::schema::RootSchema;
     use serde::Deserialize;
@@ -285,6 +305,20 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_ephemeral_buffer_query_artifact_id_alias_to_buffer_id() {
+        let mut v = json!({
+            "artifact_id": "649e2368-e80a-40bf-bc32-454ee9674980",
+            "query": "chapter"
+        });
+        normalize_tool_invocation_args("ephemeral:buffer_query", &mut v);
+        assert_eq!(
+            v["buffer_id"].as_str().expect("buffer_id"),
+            "649e2368-e80a-40bf-bc32-454ee9674980"
+        );
+        assert!(v.get("artifact_id").is_none());
+    }
+
+    #[test]
     fn test_policy_covers_all_current_tools() {
         let known_tools = [
             "vault:read",
@@ -296,7 +330,8 @@ mod tests {
             "agenda:remove",
             "agenda:remind_at",
             "web:fetch",
-            "web:artifact_query",
+            "ephemeral:buffer_query",
+            "ephemeral:buffer_page",
             "memory:stage",
             "memory:staged_list",
             "memory:commit",

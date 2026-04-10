@@ -15,6 +15,7 @@ use crate::engine::token_metrics::LlmTokenSnapshot;
 use crate::executive::cli::Cli;
 use crate::executive::error::{FcpError, Result};
 use crate::executive::peripherals::PeripheralLifecycle;
+use crate::memory::buffer_handles::BufferHandleRegistry;
 use crate::memory::ephemeral::EphemeralMemory;
 use crate::orchestrator::core::Orchestrator;
 use crate::presentation::{SessionEvent, UserAction, SYSTEM_ALARM_PREFIX};
@@ -152,6 +153,7 @@ pub async fn start_chat_session(
     let engine = OllamaClient::with_token_metrics(client.clone(), config.clone(), token_metrics_tx);
     let ollama_arc = Arc::new(client);
     let ephemeral = Arc::new(EphemeralMemory::new(config.workspace.clone()));
+    let buffer_handles = Arc::new(BufferHandleRegistry::new());
     let connect_attempts = config.semantic_brain_connect_attempts;
     let connect_retry_ms = config.semantic_brain_connect_retry_delay_ms;
     let semantic_arc: Option<Arc<crate::memory::semantic::SemanticBrain>> =
@@ -201,15 +203,15 @@ pub async fn start_chat_session(
     let (alarm_reschedule_tx, alarm_reschedule_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
     let read_limit = (config.num_ctx as f32 * config.vault_read_ratio) as usize;
     let web_chunk_chars = read_limit.max(512);
-    let web_preview_chars = (web_chunk_chars / 2).max(256);
-    let effective_web_fetch_max_bytes = config
-        .web_fetch_max_bytes
-        .min(web_chunk_chars.saturating_mul(6))
-        .max(web_chunk_chars);
+    let buffer_caps = crate::memory::buffer::BufferCaps::from_app_config(&config);
 
     gatekeeper.register(Arc::new(crate::tools::vault::VaultReadTool {
         workspace_root: workspace_root.clone(),
         read_limit,
+        ephemeral: ephemeral.clone(),
+        buffer_handles: buffer_handles.clone(),
+        buffer_caps: buffer_caps.clone(),
+        buffer_ttl_secs: config.ephemeral_buffer_ttl_secs,
     }));
     gatekeeper.register(Arc::new(crate::tools::vault::VaultWriteTool {
         workspace_root: workspace_root.clone(),
@@ -241,19 +243,24 @@ pub async fn start_chat_session(
     } else {
         gatekeeper.register(Arc::new(crate::tools::web::WebFetchTool::new(
             config.web_fetch_timeout_secs,
-            effective_web_fetch_max_bytes,
-            web_chunk_chars,
-            web_preview_chars,
-            config.ephemeral_ttl_session_secs,
+            buffer_caps.clone(),
+            config.ephemeral_buffer_ttl_secs,
             ephemeral.clone(),
+            buffer_handles.clone(),
             semantic_arc.clone(),
         )));
     }
-    gatekeeper.register(Arc::new(crate::tools::web::WebArtifactQueryTool {
+    gatekeeper.register(Arc::new(crate::tools::ephemeral::EphemeralBufferQueryTool {
         ephemeral: ephemeral.clone(),
+        buffer_handles: buffer_handles.clone(),
         semantic: semantic_arc.clone(),
         max_snippet_chars: (web_chunk_chars / 3).clamp(300, 900),
         max_total_chars: (web_chunk_chars / 2).clamp(1000, 2500),
+    }));
+    gatekeeper.register(Arc::new(crate::tools::ephemeral::EphemeralBufferPageTool {
+        ephemeral: ephemeral.clone(),
+        buffer_handles,
+        caps: buffer_caps,
     }));
     gatekeeper.register(Arc::new(crate::tools::system::SystemHealthTool {
         config: config.clone(),

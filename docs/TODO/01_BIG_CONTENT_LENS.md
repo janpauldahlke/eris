@@ -8,7 +8,7 @@ That is the **goal**. Optional **`ephemeral:buffer_*` tools** are only one possi
 
 ## Do we “need” this?
 
-We could keep **separate** implementations forever ([`vault:read`](src/tools/vault/read.rs) truncation + header map, [`web:fetch`](src/tools/web/fetch.rs) + [`web:artifact_query`](src/tools/web/artifact_query.rs), future upload handling). That works until caps, chunk shapes, TTL, and error semantics **drift**.
+We could keep **separate** implementations forever ([`vault:read`](src/tools/vault/read.rs) truncation + header map, [`web:fetch`](src/tools/web/fetch.rs) + [`ephemeral:buffer_query`](src/tools/ephemeral/buffer_query.rs), future upload handling). That works until caps, chunk shapes, TTL, and error semantics **drift**.
 
 This plan says: **extract a shared core** once **multiple consumers** care about the same problem (“text too big for `num_ctx`, must stage and read in bounded windows”). If only one consumer ever existed, a shared layer would be optional—but **vault and web already solved overlapping problems differently**; uploads and orchestrator-driven file open will add a **third** unless we unify.
 
@@ -86,7 +86,7 @@ These apply **whether** the caller is a tool, `vault:read`, or the orchestrator.
 ## Relationship to existing code (intent, not prescription)
 
 - **Vault:** Today [`vault:read`](src/tools/vault/read.rs) truncates + header map. Long term, **large file** path should **call the core** (same chunks/caps as web) and optionally run **Rust-orchestrated** summarization before/in addition to what the model sees.
-- **Web:** [`web:fetch`](src/tools/web/fetch.rs) / [`web:artifact_query`](src/tools/web/artifact_query.rs) are the **reference behavior** to **factor into the core**; web tools become **consumers** of the shared module, reducing drift with vault/upload.
+- **Web:** [`web:fetch`](src/tools/web/fetch.rs) and [`ephemeral:buffer_query`](src/tools/ephemeral/buffer_query.rs) (in-buffer search over the same `BufferedBlob`) are the **reference behavior** to **factor into the core**; web tools become **consumers** of the shared module, reducing drift with vault/upload.
 - **Shared type:** e.g. `BufferedArtifact { source_label: Option<String>, chunks: Vec<String> }` (or evolved `WebArtifact` in a **shared** module under [`src/tools/buffer/`](src/tools/buffer/) or [`src/ingest/`](src/ingest/)).
 
 ---

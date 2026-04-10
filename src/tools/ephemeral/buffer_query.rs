@@ -1,45 +1,48 @@
-use crate::executive::error::{FcpError, Result};
-use crate::ingest::{trim_chars, trim_snippets_to_budget};
-use crate::memory::ephemeral::EphemeralMemory;
-use crate::memory::semantic::SemanticBrain;
-use crate::tools::context_view_hint::{ToolContextViewHint, API_TOOL_SNIPPET_CHARS};
-use crate::tools::traits::Tool;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use schemars::schema::RootSchema;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::Arc;
+
+use crate::executive::error::{FcpError, Result};
+use crate::ingest::{trim_chars, trim_snippets_to_budget};
+use crate::memory::buffer::BufferedBlob;
+use crate::memory::buffer_handles::{BufferHandleRegistry, BufferHandleResolveError};
+use crate::memory::ephemeral::EphemeralMemory;
+use crate::memory::semantic::SemanticBrain;
+use crate::tools::context_view_hint::{ToolContextViewHint, API_TOOL_SNIPPET_CHARS};
+use crate::tools::traits::Tool;
 
 #[derive(Deserialize, JsonSchema)]
-pub struct WebArtifactQueryArgs {
-    pub artifact_id: String,
+pub struct EphemeralBufferQueryArgs {
+    /// Short handle from the receipt (e.g. `buf_1`), legacy raw UUID, or `artifact_id` alias from web:fetch JSON.
+    #[serde(alias = "artifact_id")]
+    pub buffer_id: String,
     pub query: String,
     pub top_k: Option<usize>,
 }
 
-#[derive(Serialize, Deserialize)]
-struct WebArtifact {
-    url: String,
-    chunks: Vec<String>,
-}
-
 #[derive(Serialize)]
-struct ArtifactMatch {
+struct BufferMatch {
     chunk_index: usize,
     score: f32,
     snippet: String,
 }
 
 #[derive(Serialize)]
-struct ArtifactQueryResponse {
-    artifact_id: String,
-    url: String,
-    matches: Vec<ArtifactMatch>,
+struct BufferQueryResponse {
+    buffer_id: String,
+    /// Source path or URL from the staged blob (same field as `BufferedBlob` JSON `url`).
+    #[serde(rename = "url")]
+    source: String,
+    matches: Vec<BufferMatch>,
 }
 
-pub struct WebArtifactQueryTool {
+pub struct EphemeralBufferQueryTool {
     pub ephemeral: Arc<EphemeralMemory>,
+    pub buffer_handles: Arc<BufferHandleRegistry>,
     pub semantic: Option<Arc<SemanticBrain>>,
     pub max_snippet_chars: usize,
     pub max_total_chars: usize,
@@ -63,7 +66,7 @@ fn lexical_matches(
     query: &str,
     top_k: usize,
     max_snippet_chars: usize,
-) -> Vec<ArtifactMatch> {
+) -> Vec<BufferMatch> {
     let tokens = tokenize(query);
     let mut scored: Vec<(usize, usize)> = chunks
         .iter()
@@ -76,7 +79,7 @@ fn lexical_matches(
         .into_iter()
         .take(top_k)
         .filter_map(|(idx, score)| {
-            chunks.get(idx).map(|chunk| ArtifactMatch {
+            chunks.get(idx).map(|chunk| BufferMatch {
                 chunk_index: idx,
                 score: score as f32,
                 snippet: trim_chars(chunk, max_snippet_chars),
@@ -86,13 +89,13 @@ fn lexical_matches(
 }
 
 #[async_trait]
-impl Tool for WebArtifactQueryTool {
+impl Tool for EphemeralBufferQueryTool {
     fn name(&self) -> &'static str {
-        "web:artifact_query"
+        "ephemeral:buffer_query"
     }
 
     fn description(&self) -> &'static str {
-        "Query sanitized buffered web artifact and return top-k snippets."
+        "Search inside a staged chunked buffer (large vault:read or web:fetch) by buffer_id. Use with ephemeral:buffer_page when you need keyword or semantic hits instead of linear paging; do not invent body text from headings alone."
     }
 
     fn context_view_hint(&self) -> ToolContextViewHint {
@@ -102,46 +105,69 @@ impl Tool for WebArtifactQueryTool {
     }
 
     fn parameters_schema(&self) -> RootSchema {
-        schemars::schema_for!(WebArtifactQueryArgs)
+        schemars::schema_for!(EphemeralBufferQueryArgs)
     }
 
     async fn execute(&self, args: Value) -> Result<String> {
-        let args: WebArtifactQueryArgs = serde_json::from_value(args).map_err(FcpError::ParseFault)?;
-        if args.artifact_id.trim().is_empty() {
-            return Err(FcpError::SchemaViolation("artifact_id cannot be empty".to_string()));
+        let args: EphemeralBufferQueryArgs = serde_json::from_value(args).map_err(FcpError::ParseFault)?;
+        if args.buffer_id.trim().is_empty() {
+            return Err(FcpError::SchemaViolation(
+                "buffer_id cannot be empty".to_string(),
+            ));
         }
+
+        let staged_key = match self
+            .buffer_handles
+            .resolve_for_lookup(&args.buffer_id)
+            .await
+        {
+            Ok(k) => k,
+            Err(BufferHandleResolveError::Empty) => {
+                return Err(FcpError::SchemaViolation(
+                    "buffer_id cannot be empty".to_string(),
+                ));
+            }
+            Err(BufferHandleResolveError::UnknownHandle) => {
+                return Err(FcpError::ToolFault {
+                    tool_name: self.name().to_string(),
+                    reason: "Unknown buffer_id; use the buf_N token from your latest vault:read or web:fetch receipt or the [FCP BUFFER SESSION] block.".to_string(),
+                });
+            }
+        };
 
         let entry = self
             .ephemeral
-            .get_by_id(&args.artifact_id)
+            .get_by_id(&staged_key)
             .await
             .ok_or_else(|| FcpError::ToolFault {
                 tool_name: self.name().to_string(),
-                reason: "Artifact not found or expired".to_string(),
+                reason: "Buffer not found or expired; re-stage with vault:read or web:fetch.".to_string(),
             })?;
-        let artifact: WebArtifact = serde_json::from_str(&entry.data).map_err(FcpError::ParseFault)?;
+        let blob: BufferedBlob = serde_json::from_str(&entry.data).map_err(FcpError::ParseFault)?;
         let top_k = args.top_k.unwrap_or(3).clamp(1, 3);
+        let display_id = args.buffer_id.trim().to_string();
+
         let mut matches = if let Some(semantic) = &self.semantic {
             match semantic
-                .search_web_artifact(&args.query, &args.artifact_id, top_k)
+                .search_web_artifact(&args.query, &staged_key, top_k)
                 .await
             {
                 Ok(semantic_hits) if !semantic_hits.is_empty() => semantic_hits
                     .into_iter()
-                    .map(|hit| ArtifactMatch {
+                    .map(|hit| BufferMatch {
                         chunk_index: hit.chunk_index,
                         score: hit.score,
                         snippet: trim_chars(&hit.snippet, self.max_snippet_chars),
                     })
                     .collect::<Vec<_>>(),
-                Ok(_) => lexical_matches(&artifact.chunks, &args.query, top_k, self.max_snippet_chars),
+                Ok(_) => lexical_matches(&blob.chunks, &args.query, top_k, self.max_snippet_chars),
                 Err(e) => {
-                    tracing::warn!(error = %e, "Semantic artifact query failed; using lexical fallback");
-                    lexical_matches(&artifact.chunks, &args.query, top_k, self.max_snippet_chars)
+                    tracing::warn!(error = %e, "Semantic buffer query failed; using lexical fallback");
+                    lexical_matches(&blob.chunks, &args.query, top_k, self.max_snippet_chars)
                 }
             }
         } else {
-            lexical_matches(&artifact.chunks, &args.query, top_k, self.max_snippet_chars)
+            lexical_matches(&blob.chunks, &args.query, top_k, self.max_snippet_chars)
         };
         let mut snippets = matches
             .iter()
@@ -152,9 +178,9 @@ impl Tool for WebArtifactQueryTool {
             m.snippet = snippet;
         }
 
-        let response = ArtifactQueryResponse {
-            artifact_id: args.artifact_id,
-            url: artifact.url,
+        let response = BufferQueryResponse {
+            buffer_id: display_id,
+            source: blob.source,
             matches,
         };
         serde_json::to_string(&response).map_err(FcpError::ParseFault)
@@ -166,31 +192,32 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_artifact_query_returns_ranked_snippets() {
+    async fn buffer_query_returns_ranked_snippets() {
         let mem = Arc::new(EphemeralMemory::new("test_ws".to_string()));
-        let artifact = WebArtifact {
-            url: "https://example.com".to_string(),
+        let blob = BufferedBlob {
+            source: "https://example.com".to_string(),
             chunks: vec![
                 "sports and weather".to_string(),
                 "economy and markets update".to_string(),
                 "international politics".to_string(),
             ],
         };
-        let payload = serde_json::to_string(&artifact).expect("serialize");
+        let payload = serde_json::to_string(&blob).expect("serialize");
         let stored = mem
             .insert("web_artifact:test", &payload, vec!["web_artifact".into()], 60)
             .await
             .expect("insert");
 
-        let tool = WebArtifactQueryTool {
+        let tool = EphemeralBufferQueryTool {
             ephemeral: mem,
+            buffer_handles: Arc::new(crate::memory::buffer_handles::BufferHandleRegistry::new()),
             semantic: None,
             max_snippet_chars: 64,
             max_total_chars: 256,
         };
         let res = tool
             .execute(serde_json::json!({
-                "artifact_id": stored.staged_id,
+                "buffer_id": stored.staged_id,
                 "query": "economy markets",
                 "top_k": 1
             }))

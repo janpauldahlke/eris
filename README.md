@@ -177,7 +177,8 @@ Representative `**routing_hints**` (say things *like* this—the model still dec
 | **agenda:remind_at**       | remind me at/in/about, remember to, nudge/ping me at, snooze, on my agenda or todo list, task reminder   |
 | **agenda:complete**        | task done, complete task, mark done, finished the …                                                      |
 | **(deprecared) web:fetch** | open website, read web page, fetch URL, news from — plus URLs and the lexical phrases above              |
-| **web:artifact_query**     | search fetched page, query artifact, find in web artifact                                                |
+| **ephemeral:buffer_query** | search inside staged large buffer (vault or web), keyword/snippet over chunks, buffer_id               |
+| **ephemeral:buffer_page**  | paginate staged blob, next chunk window, sequential read after vault:read / web:fetch                  |
 | **system:health**          | health check, system status, CPU/memory usage, Ollama status, diagnostics                                |
 | **clock:now**              | what time is it, current time, timezone, date and time                                                   |
 | **clock:timer**            | in 30 minutes, countdown, generic timer, label-only reminder (not agenda)                                |

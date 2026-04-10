@@ -1,5 +1,6 @@
 use crate::executive::error::{FcpError, Result};
-use crate::ingest::bound_chunks_and_preview;
+use crate::memory::buffer::{parse_buffered_blob, stage_text, BufferCaps};
+use crate::memory::buffer_handles::BufferHandleRegistry;
 use crate::memory::ephemeral::EphemeralMemory;
 use crate::memory::semantic::SemanticBrain;
 use crate::tools::context_view_hint::{ToolContextViewHint, API_TOOL_SNIPPET_CHARS};
@@ -23,22 +24,20 @@ pub struct WebFetchArgs {
 
 pub struct WebFetchTool {
     client: Client,
-    max_bytes: usize,
-    chunk_chars: usize,
-    preview_chars: usize,
-    artifact_ttl_secs: u64,
+    caps: BufferCaps,
+    buffer_ttl_secs: u64,
     ephemeral: Arc<EphemeralMemory>,
+    buffer_handles: Arc<BufferHandleRegistry>,
     semantic: Option<Arc<SemanticBrain>>,
 }
 
 impl WebFetchTool {
     pub fn new(
         timeout_secs: u64,
-        max_bytes: usize,
-        chunk_chars: usize,
-        preview_chars: usize,
-        artifact_ttl_secs: u64,
+        caps: BufferCaps,
+        buffer_ttl_secs: u64,
         ephemeral: Arc<EphemeralMemory>,
+        buffer_handles: Arc<BufferHandleRegistry>,
         semantic: Option<Arc<SemanticBrain>>,
     ) -> Self {
         let client = Client::builder()
@@ -49,20 +48,13 @@ impl WebFetchTool {
 
         Self {
             client,
-            max_bytes,
-            chunk_chars,
-            preview_chars,
-            artifact_ttl_secs,
+            caps,
+            buffer_ttl_secs,
             ephemeral,
+            buffer_handles,
             semantic,
         }
     }
-}
-
-#[derive(Serialize, Deserialize)]
-struct WebArtifact {
-    url: String,
-    chunks: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -143,35 +135,33 @@ impl Tool for WebFetchTool {
             .build();
         let markdown = converter.convert(&html).unwrap_or_else(|_| "Failed to parse HTML".into());
         let sanitized = sanitize_markdown_noise(&markdown);
-        let (chunks, preview_head) = bound_chunks_and_preview(
+        let (stored, staged_meta) = match stage_text(
+            self.ephemeral.as_ref(),
+            self.name(),
+            &parsed.url,
             &sanitized,
-            self.max_bytes,
-            self.chunk_chars,
-            self.preview_chars,
-        );
-
-        if chunks.is_empty() {
-            return Ok("No meaningful content extracted from URL.".to_string());
-        }
-
-        let artifact = WebArtifact {
-            url: parsed.url.clone(),
-            chunks: chunks.clone(),
+            vec!["web_artifact".to_string(), "external".to_string()],
+            self.buffer_ttl_secs,
+            &self.caps,
+        )
+        .await
+        {
+            Ok(v) => v,
+            Err(FcpError::ToolFault { reason, .. }) if reason.contains("No chunkable content") => {
+                return Ok("No meaningful content extracted from URL.".to_string());
+            }
+            Err(e) => return Err(e),
         };
-        let serialized = serde_json::to_string(&artifact).map_err(FcpError::ParseFault)?;
-        let title = format!("web_artifact:{}", uuid::Uuid::new_v4());
-        let stored = self
-            .ephemeral
-            .insert(
-                &title,
-                &serialized,
-                vec!["web_artifact".to_string(), "external".to_string()],
-                self.artifact_ttl_secs,
-            )
-            .await?;
+
+        let blob = parse_buffered_blob(&stored.data)?;
+
+        let handle = self
+            .buffer_handles
+            .register(stored.staged_id.clone())
+            .await;
 
         if let Some(semantic) = &self.semantic {
-            for (chunk_index, chunk) in chunks.iter().enumerate() {
+            for (chunk_index, chunk) in blob.chunks.iter().enumerate() {
                 if let Err(e) = semantic
                     .upsert_web_chunk(&stored.staged_id, &parsed.url, chunk_index, chunk)
                     .await
@@ -187,11 +177,11 @@ impl Tool for WebFetchTool {
         }
 
         let receipt = WebFetchReceipt {
-            artifact_id: stored.staged_id,
+            artifact_id: handle,
             url: parsed.url,
-            chunk_count: chunks.len(),
-            preview_head,
-            next_step_hint: "Use web:artifact_query with artifact_id and query for targeted retrieval.".to_string(),
+            chunk_count: staged_meta.chunk_count,
+            preview_head: staged_meta.preview_head,
+            next_step_hint: staged_meta.next_step_hint,
         };
         serde_json::to_string(&receipt).map_err(FcpError::ParseFault)
     }
@@ -200,11 +190,33 @@ impl Tool for WebFetchTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::memory::buffer::BufferCaps;
+    use crate::memory::buffer_handles::BufferHandleRegistry;
     use crate::memory::ephemeral::EphemeralMemory;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
     use serde_json::json;
     use std::sync::Arc;
+
+    fn caps_small() -> BufferCaps {
+        BufferCaps {
+            max_staged_bytes: 50,
+            chunk_target_chars: 32,
+            preview_chars: 32,
+            max_chunks: 4096,
+            page_response_max_chars: 10_000,
+        }
+    }
+
+    fn caps_large() -> BufferCaps {
+        BufferCaps {
+            max_staged_bytes: 20480,
+            chunk_target_chars: 1024,
+            preview_chars: 256,
+            max_chunks: 4096,
+            page_response_max_chars: 10_000,
+        }
+    }
 
     #[tokio::test]
     async fn test_web_fetch_truncation() {
@@ -218,12 +230,20 @@ mod tests {
             .await;
 
         let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
-        let tool = WebFetchTool::new(5, 50, 32, 32, 60, ephemeral, None);
+        let tool = WebFetchTool::new(
+            5,
+            caps_small(),
+            60,
+            ephemeral,
+            Arc::new(BufferHandleRegistry::new()),
+            None,
+        );
         let args = json!({ "url": format!("{}/large", server.uri()) });
 
         let result = tool.execute(args).await.expect("Execution failed");
         let parsed: serde_json::Value = serde_json::from_str(&result).expect("receipt json");
-        assert!(parsed.get("artifact_id").is_some());
+        let aid = parsed["artifact_id"].as_str().expect("artifact_id");
+        assert!(aid.starts_with("buf_"), "expected short handle, got {aid}");
         assert!(parsed.get("preview_head").is_some());
     }
 
@@ -237,7 +257,14 @@ mod tests {
             .await;
 
         let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
-        let tool = WebFetchTool::new(5, 20480, 1024, 256, 60, ephemeral, None);
+        let tool = WebFetchTool::new(
+            5,
+            caps_large(),
+            60,
+            ephemeral,
+            Arc::new(BufferHandleRegistry::new()),
+            None,
+        );
         let args = json!({ "url": format!("{}/missing", server.uri()) });
 
         let result = tool.execute(args).await.expect("Execution failed");
@@ -247,7 +274,14 @@ mod tests {
     #[tokio::test]
     async fn test_schema_violation_malformed_url() {
         let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
-        let tool = WebFetchTool::new(5, 20480, 1024, 256, 60, ephemeral, None);
+        let tool = WebFetchTool::new(
+            5,
+            caps_large(),
+            60,
+            ephemeral,
+            Arc::new(BufferHandleRegistry::new()),
+            None,
+        );
         let args = json!({ "url": "not-a-link" });
 
         let result = tool.execute(args).await;

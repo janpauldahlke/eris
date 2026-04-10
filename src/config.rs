@@ -170,6 +170,12 @@ pub struct AppConfig {
     pub web_fetch_max_bytes: usize,
     /// Fraction of [`Self::num_ctx`] used to cap vault read and web chunk sizes in tools (not the condensation trigger).
     pub vault_read_ratio: f32,
+    /// TTL for ephemeral **buffer** rows (`vault:read` large files, `web:fetch` artifacts, `ephemeral:buffer_page`).
+    #[serde(default = "default_ephemeral_buffer_ttl_secs")]
+    pub ephemeral_buffer_ttl_secs: u64,
+    /// Max chunk count for a single staged buffer (stage fails if exceeded).
+    #[serde(default = "default_ephemeral_buffer_max_chunks")]
+    pub ephemeral_buffer_max_chunks: usize,
     /// Cosine similarity floor for ToolRouter pre-LLM semantic matches (0.0–1.0).
     pub tool_match_threshold: f32,
     /// Number of semantic-router hits that receive extra “when to use” descriptor text in tool mode.
@@ -319,6 +325,16 @@ fn default_semantic_brain_connect_attempts() -> u32 {
 /// Backoff between failed Qdrant connect attempts (ms).
 fn default_semantic_brain_connect_retry_delay_ms() -> u64 {
     500
+}
+
+/// TTL for staged big buffers (vault large read, web artifact); default ~10 minutes.
+fn default_ephemeral_buffer_ttl_secs() -> u64 {
+    600
+}
+
+/// Upper bound on chunk count per buffer to bound memory and snapshot size.
+fn default_ephemeral_buffer_max_chunks() -> usize {
+    4096
 }
 
 /// TTL for `EphemeralTier::Session` (~15 minutes). Idle expiry; turn-end mention can refresh TTL.
@@ -598,6 +614,8 @@ impl Default for AppConfig {
             web_fetch_timeout_secs: 10,
             web_fetch_max_bytes: 20480,
             vault_read_ratio: 0.5,
+            ephemeral_buffer_ttl_secs: default_ephemeral_buffer_ttl_secs(),
+            ephemeral_buffer_max_chunks: default_ephemeral_buffer_max_chunks(),
             tool_match_threshold: 0.50,
             tool_descriptor_jit_top_k: default_tool_descriptor_jit_top_k(),
             tool_descriptor_jit_max_chars: default_tool_descriptor_jit_max_chars(),

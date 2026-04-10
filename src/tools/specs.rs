@@ -336,21 +336,21 @@ args = { relative_path = "20_Discourse/new_note.md", content = "Hello" }
 rationale = "mode is required."
 "#,
     r#"descriptor_version = 1
-tool_name = "web:artifact_query"
-short_description = "Query a previously fetched web artifact by artifact_id."
-when_to_use = "Use after web:fetch to extract targeted snippets."
-when_not_to_use = "Do not use without a valid artifact_id from web:fetch."
-routing_hints = ["search fetched page", "query artifact", "find in web artifact"]
+tool_name = "ephemeral:buffer_query"
+short_description = "Search inside a staged chunked buffer by buffer_id (lexical or semantic over chunks)."
+when_to_use = "Use after vault:read or web:fetch returned a buffer receipt when you need keyword or semantic hits instead of paging the whole blob."
+when_not_to_use = "Do not use without a valid buffer_id from a recent staging receipt; do not use for vault paths directly."
+routing_hints = ["search staged buffer", "find in large file buffer", "query buffered chunks", "keyword in fetched page", "HITL section in book buffer", "snippet search buffer_id"]
 
 [[examples_good]]
-name = "query_artifact"
-args = { artifact_id = "artifact-uuid", query = "latest updates", top_k = 3 }
-rationale = "Queries cached web chunks."
+name = "query_buffer"
+args = { buffer_id = "buf_1", query = "Human-in-the-Loop", top_k = 3 }
+rationale = "Queries staged chunks by buffer_id."
 
 [[examples_bad]]
-name = "missing_artifact_id"
+name = "missing_buffer_id"
 args = { query = "updates" }
-rationale = "artifact_id is required."
+rationale = "buffer_id is required."
 "#,
     r#"descriptor_version = 1
 tool_name = "web:fetch"
@@ -644,5 +644,22 @@ rationale = "Creates label ebay if missing and moves the message."
 name = "empty_target"
 args = { message_id = "x", target = "" }
 rationale = "target must name a folder or spam."
+"#,
+    r#"descriptor_version = 1
+tool_name = "ephemeral:buffer_page"
+short_description = "Fetch the next window of chunks from a staged large buffer by buffer_id."
+when_to_use = "Use after vault:read returned a buffer receipt for an oversized file, or after web:fetch, to read sequential chunk pages without loading the whole blob into context."
+when_not_to_use = "Do not use without a valid buffer_id from a recent vault:read or web:fetch receipt."
+routing_hints = ["next page of large file", "read buffer chunks", "paginate staged vault file", "buffer_id page", "continue reading the file", "next section of the note", "read more of the document", "rest of the file", "sequential chunks", "keep going through the note", "following pages of the artifact"]
+
+[[examples_good]]
+name = "page_zero"
+args = { buffer_id = "buf_1", page = 0, page_size = 2 }
+rationale = "Reads first two chunks."
+
+[[examples_bad]]
+name = "missing_id"
+args = { page = 0 }
+rationale = "buffer_id is required."
 "#,
 ];

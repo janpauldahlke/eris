@@ -11,6 +11,7 @@ pub mod web;
 pub mod weather;
 pub mod wiki;
 pub mod mail;
+pub mod ephemeral;
 pub mod descriptors;
 pub mod specs;
 pub mod routing_phrases;

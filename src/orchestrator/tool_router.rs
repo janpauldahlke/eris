@@ -1,6 +1,9 @@
 use std::sync::Arc;
-use ollama_rs::Ollama;
+
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
+use ollama_rs::Ollama;
+
+use crate::engine::Message;
 use crate::executive::error::{FcpError, Result};
 use crate::tools::ToolDescriptorRegistry;
 
@@ -13,7 +16,14 @@ pub struct ToolRouter {
 
 impl ToolRouter {
     /// Short greetings and tiny utterances: conversational only (evaluated in orchestrator **before** embedding).
-    pub fn short_input_guard_conversational_only(text: &str) -> bool {
+    /// When the stack holds a staged large buffer and the user is clearly continuing that read, keep tools enabled.
+    pub fn short_input_guard_conversational_only(text: &str, chat_stack: &[Message]) -> bool {
+        if crate::orchestrator::buffer_continuation::stack_has_buffer_routing_context(chat_stack)
+            && (Self::has_buffer_continuation_lexical_intent(text)
+                || Self::is_short_buffer_followup_ack(text))
+        {
+            return false;
+        }
         Self::is_short_input_without_explicit_tool_intent(text)
     }
 
@@ -34,6 +44,74 @@ impl ToolRouter {
             || lower.contains("search the web")
             || lower.contains("look up online");
         !explicit
+    }
+
+    /// One-line follow-ups after a staged buffer (`ok`, `next`, …) so short-input guard does not drop tool mode.
+    pub fn is_short_buffer_followup_ack(text: &str) -> bool {
+        let lower = text.trim().to_lowercase();
+        matches!(
+            lower.as_str(),
+            "ok"
+                | "okay"
+                | "k"
+                | "yes"
+                | "yep"
+                | "yeah"
+                | "sure"
+                | "next"
+                | "more"
+                | "mhm"
+                | "uh-huh"
+                | "uh huh"
+        ) || matches!(
+            lower.as_str(),
+            "go on"
+                | "go ahead"
+                | "read more"
+                | "next page"
+                | "keep going"
+                | "please continue"
+                | "continue"
+                | "rescan"
+                | "re-scan"
+                | "re scan"
+        )
+    }
+
+    /// User language that suggests paging or continuing a large in-context read (for lexical guard + routing embed tail).
+    pub fn has_buffer_continuation_lexical_intent(text: &str) -> bool {
+        let lower = text.to_lowercase();
+        let phrases = [
+            "continue reading",
+            "keep reading",
+            "read more",
+            "next page",
+            "next section",
+            "following page",
+            "rest of the file",
+            "rest of the document",
+            "more of the file",
+            "more of that file",
+            "more of the note",
+            "more of that note",
+            "next chunk",
+            "next part",
+            "show more",
+            "paginate",
+            "buffer page",
+            "buffer_id",
+            "artifact_id",
+            "sequential chunks",
+            "remaining pages",
+            "later section",
+            "further down",
+        ];
+        phrases.iter().any(|p| lower.contains(p))
+    }
+
+    fn embed_input_implies_staged_buffer(embed_input: &str) -> bool {
+        embed_input.contains("\"buffer_id\"")
+            || (embed_input.contains("\"artifact_id\"") && embed_input.contains("chunk_count"))
     }
 
     fn has_domain_like_token(text: &str) -> bool {
@@ -156,12 +234,18 @@ impl ToolRouter {
     /// Embed the LLM's thought and compare against all tool embeddings.
     /// Returns tool names whose similarity exceeds the threshold, sorted by
     /// descending similarity.
-    pub async fn match_tools(&self, thought: &str) -> Result<Vec<(String, f32)>> {
-        if thought.trim().is_empty() {
+    /// `embed_input` may include a tail from recent tool output for better similarity to pager tools.
+    /// `user_line_for_lexical_guards` is the raw last user message (short-input and buffer guards).
+    pub async fn match_tools(
+        &self,
+        embed_input: &str,
+        user_line_for_lexical_guards: &str,
+    ) -> Result<Vec<(String, f32)>> {
+        if embed_input.trim().is_empty() {
             return Ok(Vec::new());
         }
 
-        let thought_vec = Self::embed(&self.ollama, &self.embed_model, thought).await?;
+        let thought_vec = Self::embed(&self.ollama, &self.embed_model, embed_input).await?;
 
         let mut hits: Vec<(String, f32)> = self
             .tool_embeddings
@@ -180,21 +264,40 @@ impl ToolRouter {
         hits.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         if hits.is_empty() {
-            tracing::debug!(thought_preview = &thought[..thought.len().min(80)], "No tool match");
+            tracing::debug!(
+                thought_preview = &embed_input[..embed_input.len().min(80)],
+                "No tool match"
+            );
         } else {
             tracing::info!(
                 matches = ?hits.iter().map(|(n, s)| format!("{}({:.3})", n, s)).collect::<Vec<_>>(),
                 "Semantic tool matches"
             );
         }
-        if Self::has_web_lexical_intent(thought) && !hits.iter().any(|(t, _)| t == "web:fetch") {
+        if Self::has_web_lexical_intent(user_line_for_lexical_guards)
+            && !hits.iter().any(|(t, _)| t == "web:fetch")
+        {
             tracing::info!(
                 event = "LEXICAL_TOOL_GUARD",
                 forced_tool = "web:fetch",
-                thought_preview = %thought.chars().take(120).collect::<String>(),
+                thought_preview = %user_line_for_lexical_guards.chars().take(120).collect::<String>(),
                 "Forcing web:fetch due to lexical web intent"
             );
             hits.push(("web:fetch".to_string(), 1.0));
+        }
+        let buffer_user = Self::has_buffer_continuation_lexical_intent(user_line_for_lexical_guards)
+            || Self::is_short_buffer_followup_ack(user_line_for_lexical_guards);
+        if buffer_user
+            && Self::embed_input_implies_staged_buffer(embed_input)
+            && !hits.iter().any(|(t, _)| t == "ephemeral:buffer_page")
+        {
+            tracing::info!(
+                event = "LEXICAL_TOOL_GUARD",
+                forced_tool = "ephemeral:buffer_page",
+                user_preview = %user_line_for_lexical_guards.chars().take(120).collect::<String>(),
+                "Forcing ephemeral:buffer_page after staged buffer + continuation phrasing"
+            );
+            hits.push(("ephemeral:buffer_page".to_string(), 1.0));
         }
         Ok(hits)
     }
@@ -270,8 +373,46 @@ mod tests {
 
     #[test]
     fn test_short_input_guard_without_explicit_intent() {
-        assert!(ToolRouter::short_input_guard_conversational_only("test"));
-        assert!(!ToolRouter::short_input_guard_conversational_only("https://example.com"));
-        assert!(!ToolRouter::short_input_guard_conversational_only("/health"));
+        assert!(ToolRouter::short_input_guard_conversational_only("test", &[]));
+        assert!(!ToolRouter::short_input_guard_conversational_only("https://example.com", &[]));
+        assert!(!ToolRouter::short_input_guard_conversational_only("/health", &[]));
+    }
+
+    #[test]
+    fn short_input_bypass_when_staged_buffer_and_next() {
+        use crate::engine::Message;
+        use crate::orchestrator::context::format_tool_success_line;
+
+        let stack = vec![Message {
+            role: "system".into(),
+            content: format_tool_success_line(
+                "vault:read",
+                "[Large vault file staged as ephemeral buffer]\n\n{\"buffer_id\":\"abc\"}\n",
+            ),
+        }];
+        assert!(!ToolRouter::short_input_guard_conversational_only("next", &stack));
+        assert!(!ToolRouter::short_input_guard_conversational_only("ok", &stack));
+    }
+
+    #[test]
+    fn short_input_bypass_continue_after_buffer_page() {
+        use crate::engine::Message;
+        use crate::orchestrator::context::format_tool_success_line;
+
+        let body = r#"{"buffer_id":"buf_1","source":"f.md","page":0,"page_size":1,"page_count":2,"total_chunks":2,"next_page":1,"chunks":[]}"#;
+        let stack = vec![Message {
+            role: "system".into(),
+            content: format_tool_success_line("ephemeral:buffer_page", body),
+        }];
+        assert!(!ToolRouter::short_input_guard_conversational_only("continue", &stack));
+        assert!(!ToolRouter::short_input_guard_conversational_only("rescan", &stack));
+    }
+
+    #[test]
+    fn buffer_continuation_lexical_phrases() {
+        assert!(ToolRouter::has_buffer_continuation_lexical_intent(
+            "please read more of the file"
+        ));
+        assert!(ToolRouter::has_buffer_continuation_lexical_intent("next section please"));
     }
 }

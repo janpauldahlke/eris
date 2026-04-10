@@ -1,7 +1,8 @@
 use crate::engine::LlmEngine;
 use crate::executive::error::{FcpError, Result};
 use crate::orchestrator::llm_support::post_tool_guidance::{
-    recover_override_message_for_tool_failure, POST_TOOL_USER_REPLY_GUIDANCE,
+    recover_override_message_for_tool_failure, POST_TOOL_STAGED_BUFFER_GUIDANCE,
+    POST_TOOL_USER_REPLY_GUIDANCE,
 };
 use crate::orchestrator::r#loop::recovery_policy::{classify_tool_failure, ToolFailureAction};
 use crate::orchestrator::r#loop::tool_batch::ToolBatchDecision;
@@ -43,6 +44,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         let mut recoverable_msg: Option<String> = None;
         let mut fatal_error = None;
         let mut targeted_recovery_requested = false;
+        let mut inject_staged_buffer_followup_hint = false;
         let mut executed_success_count = 0usize;
         let mut suppressed_duplicate_count = 0usize;
         let mut recoverable_fail_count = 0usize;
@@ -132,6 +134,21 @@ impl<E: LlmEngine> Orchestrator<E> {
                         round = self.tool_rounds,
                         "Tool succeeded"
                     );
+                    if tool_name == "vault:read"
+                        && result.contains("Large vault file staged as ephemeral buffer")
+                    {
+                        inject_staged_buffer_followup_hint = true;
+                    }
+                    if tool_name == "web:fetch" {
+                        let t = result.trim();
+                        if t.starts_with('{')
+                            && let Ok(v) = serde_json::from_str::<serde_json::Value>(t)
+                            && v.get("artifact_id").and_then(|a| a.as_str()).is_some()
+                            && v.get("chunk_count").and_then(|c| c.as_u64()).unwrap_or(0) > 1
+                        {
+                            inject_staged_buffer_followup_hint = true;
+                        }
+                    }
                     let bounded_result = Self::trim_chars(&result, Self::MAX_TOOL_RESULT_CHARS);
                     let msg = crate::orchestrator::context::format_tool_success_line(
                         &tool_name,
@@ -263,13 +280,19 @@ impl<E: LlmEngine> Orchestrator<E> {
             // (e.g. repeated `mail:write`) until it finally returns Idle. See orchestrator field
             // doc on `force_full_tool_schemas_in_llm_view` (same intended lifetime as this set).
             targeted_tools.clear();
+            let mut post_tool_block = POST_TOOL_USER_REPLY_GUIDANCE.to_string();
+            if inject_staged_buffer_followup_hint {
+                post_tool_block.push_str("\n\n");
+                post_tool_block.push_str(POST_TOOL_STAGED_BUFFER_GUIDANCE);
+            }
             self.chat_stack.push(crate::engine::Message {
                 role: "system".to_string(),
-                content: POST_TOOL_USER_REPLY_GUIDANCE.to_string(),
+                content: post_tool_block,
             });
             tracing::debug!(
                 target: "fcp.context_view",
                 event = "post_tool_user_reply_guidance_injected",
+                staged_buffer_hint = inject_staged_buffer_followup_hint,
                 "Post-tool guidance appended after successful tool batch"
             );
         }
