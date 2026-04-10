@@ -126,4 +126,6 @@
 - [x] decouple chat session and router
 - [x] web ui 1st iteration / ez and cheap
 - [x] handle shutdown from web ui + browser close
+  - minor tweak FCP json repair
+  - 100vh max, and scrollables
 - [x] fix mail send 3 times issue
