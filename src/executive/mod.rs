@@ -1,3 +1,4 @@
+pub mod chat_session;
 pub mod cli;
 pub mod error;
 pub mod router;
