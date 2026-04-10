@@ -6,6 +6,7 @@ use crate::orchestrator::r#loop::directive_policy::decide_transition_from_direct
 use crate::orchestrator::r#loop::tool_batch::ToolBatchDecision;
 use crate::orchestrator::r#loop::transition::{StateTransition, TransitionControl};
 use crate::orchestrator::state::{AgentState, LoopDirective, ToolIntentTicket};
+use crate::presentation::SessionEvent;
 use crate::telemetry::routing_codes;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
@@ -91,12 +92,12 @@ impl<E: LlmEngine> Orchestrator<E> {
                 self.recovery_count = 0;
                 self.tool_rounds = 0;
                 self.activity_line = None;
-                if let Some(tx) = &self.tui_tx {
+                if let Some(tx) = &self.presentation_tx {
                     let _ = tx
-                        .send(crate::ui::events::TuiEvent::SystemError(notice))
+                        .send(SessionEvent::SystemError(notice))
                         .await;
                 }
-                if self.tui_tx.is_some() {
+                if self.presentation_tx.is_some() {
                     self.emit_assistant_deck_line(RECOVERY_BUDGET_EXHAUSTED_DECK_LINE)
                         .await;
                 } else {
@@ -119,9 +120,9 @@ impl<E: LlmEngine> Orchestrator<E> {
                         self.tool_rounds,
                         self.max_tool_rounds
                     );
-                    if let Some(tx) = &self.tui_tx {
+                    if let Some(tx) = &self.presentation_tx {
                         let _ = tx
-                            .send(crate::ui::events::TuiEvent::SystemError(notice))
+                            .send(SessionEvent::SystemError(notice))
                             .await;
                     }
                     let guidance = format!(

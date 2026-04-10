@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::tools::clock::load_alarms;
 
-/// If any agenda-linked alarm is already due, return a short banner for `TuiEvent::SystemError`.
+/// If any agenda-linked alarm is already due, return a short banner for `SessionEvent::SystemError`.
 pub async fn startup_overdue_agenda_hint(workspace_root: &Path) -> Option<String> {
     let path = crate::vault_layout::alarms_json(workspace_root);
     let alarms = load_alarms(&path).await.ok()?;

@@ -1,5 +1,5 @@
-//! Background alarm scheduler: fires due rows from `.fcp/tools/alarms.json` and notifies the TUI via
-//! `try_send` only (never blocks the runtime).
+//! Background alarm scheduler: fires due rows from `.fcp/tools/alarms.json` and notifies the active
+//! presentation channel via `try_send` only (never blocks the runtime).
 
 use std::path::PathBuf;
 use std::time::{Duration, UNIX_EPOCH};
@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::executive::error::Result;
 use crate::tools::clock::{load_alarms, save_alarms, AlarmRecord};
-use crate::ui::events::{AlarmPayload, TuiEvent};
+use crate::presentation::{AlarmPayload, SessionEvent};
 
 fn unix_now_secs() -> u64 {
     std::time::SystemTime::now()
@@ -40,7 +40,7 @@ fn sleep_until_next(alarms: &[AlarmRecord]) -> Duration {
 
 async fn fire_due_and_persist(
     path: &std::path::Path,
-    tui_tx: &mpsc::Sender<TuiEvent>,
+    presentation_tx: &mpsc::Sender<SessionEvent>,
 ) -> Result<()> {
     let mut alarms = load_alarms(path).await?;
     let now = unix_now_secs();
@@ -65,8 +65,11 @@ async fn fire_due_and_persist(
         } else {
             AlarmPayload::Plain(a.label)
         };
-        if tui_tx.try_send(TuiEvent::SystemAlarm(payload)).is_err() {
-            tracing::error!("Dropped alarm due to TUI backpressure");
+        if presentation_tx
+            .try_send(SessionEvent::SystemAlarm(payload))
+            .is_err()
+        {
+            tracing::error!("Dropped alarm due to presentation channel backpressure");
         }
     }
     Ok(())
@@ -74,7 +77,7 @@ async fn fire_due_and_persist(
 
 pub fn spawn_alarm_scheduler(
     workspace_root: PathBuf,
-    tui_tx: mpsc::Sender<TuiEvent>,
+    presentation_tx: mpsc::Sender<SessionEvent>,
     mut reschedule_rx: mpsc::UnboundedReceiver<()>,
     cancel_token: CancellationToken,
 ) {
@@ -92,7 +95,7 @@ pub fn spawn_alarm_scheduler(
             tokio::select! {
                 biased;
                 _ = tokio::time::sleep(sleep_for) => {
-                    if let Err(e) = fire_due_and_persist(&path, &tui_tx).await {
+                    if let Err(e) = fire_due_and_persist(&path, &presentation_tx).await {
                         tracing::warn!(error = %e, "alarm scheduler: fire/persist failed");
                     }
                 }

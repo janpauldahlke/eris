@@ -21,6 +21,7 @@ pub mod tools;
 pub mod ingest;
 pub mod util;
 pub mod orchestrator;
+pub mod presentation;
 pub mod ui;
 pub mod generated;
 

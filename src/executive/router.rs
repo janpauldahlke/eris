@@ -7,8 +7,8 @@ use std::sync::Arc;
 pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: CancellationToken) -> Result<()> {
     match cli.command {
         Commands::Chat => {
-            use crate::ui::terminal::{setup_terminal, restore_terminal};
-            use crate::ui::TuiApp;
+            use crate::presentation::{SessionEvent, UserAction, SYSTEM_ALARM_PREFIX};
+            use crate::ui::terminal::{restore_terminal, setup_terminal, TuiApp};
             use tokio::sync::mpsc;
             use std::collections::VecDeque;
             use crate::orchestrator::core::Orchestrator;
@@ -25,11 +25,11 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                 "chat vault root (launch cwd)"
             );
             // 1. Setup channels + terminal early so startup status is visible in TUI telemetry.
-            let (tui_tx, tui_rx) = mpsc::channel(100);
-            let (action_tx, mut action_rx) = mpsc::channel::<crate::ui::events::UserAction>(100);
+            let (presentation_tx, presentation_rx) = mpsc::channel(100);
+            let (action_tx, mut action_rx) = mpsc::channel::<UserAction>(100);
             let terminal = setup_terminal()?;
-            let _ = tui_tx
-                .send(crate::ui::events::TuiEvent::SystemError(
+            let _ = presentation_tx
+                .send(SessionEvent::SystemError(
                     "[startup] Checking peripheral daemons (Ollama, Qdrant)...".into(),
                 ))
                 .await;
@@ -105,8 +105,8 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
             } else {
                 "already running"
             };
-            let _ = tui_tx
-                .send(crate::ui::events::TuiEvent::SystemError(format!(
+            let _ = presentation_tx
+                .send(SessionEvent::SystemError(format!(
                     "[startup] Peripheral readiness: ollama={ollama_status}, qdrant={qdrant_status}"
                 )))
                 .await;
@@ -354,19 +354,19 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
 
             crate::orchestrator::alarms::spawn_alarm_scheduler(
                 workspace_root.clone(),
-                tui_tx.clone(),
+                presentation_tx.clone(),
                 alarm_reschedule_rx,
                 cancel_token.clone(),
             );
 
             let startup_wp = workspace_root.clone();
-            let startup_tui = tui_tx.clone();
+            let startup_presentation = presentation_tx.clone();
             tokio::spawn(async move {
                 if let Some(msg) =
                     crate::orchestrator::alarms::startup_overdue_agenda_hint(&startup_wp).await
                 {
-                    let _ = startup_tui
-                        .send(crate::ui::events::TuiEvent::SystemError(msg))
+                    let _ = startup_presentation
+                        .send(SessionEvent::SystemError(msg))
                         .await;
                 }
             });
@@ -412,7 +412,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                 config.slim_tool_prompt,
                 config.tool_map_offer_cap,
                 interrupt_rx,
-                Some(tui_tx.clone()),
+                Some(presentation_tx.clone()),
                 tool_router,
                 descriptor_registry,
                 context_view,
@@ -430,7 +430,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
             );
 
             // 9. Spawn orchestrator loop
-            let tui_tx_err = tui_tx.clone();
+            let presentation_tx_err = presentation_tx.clone();
             let cancel_token_loop = cancel_token.clone();
             let interrupt_tx_user = interrupt_tx.clone();
             tokio::spawn(async move {
@@ -439,19 +439,19 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                     tokio::select! {
                         Some(action) = action_rx.recv() => {
                             match action {
-                                crate::ui::events::UserAction::CancelCurrentTurn => {
+                                UserAction::CancelCurrentTurn => {
                                     tracing::info!("User requested cancel current turn");
                                     let _ = interrupt_tx_user.send(());
-                                    let _ = tui_tx_err.send(crate::ui::events::TuiEvent::SystemError("[ui] Cancel requested".into())).await;
+                                    let _ = presentation_tx_err.send(SessionEvent::SystemError("[ui] Cancel requested".into())).await;
                                 }
-                                crate::ui::events::UserAction::SystemInject(label) => {
+                                UserAction::SystemInject(label) => {
                                     let trimmed = label.trim().to_string();
                                     if trimmed.is_empty() {
                                         continue;
                                     }
                                     let content = format!(
                                         "{}{}",
-                                        crate::ui::events::SYSTEM_ALARM_PREFIX,
+                                        SYSTEM_ALARM_PREFIX,
                                         trimmed
                                     );
                                     orchestrator.chat_stack.push(crate::engine::Message {
@@ -475,12 +475,12 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                                         }
                                         let err_msg = format!("[FATAL ERROR] Orchestrator halted: {}", e);
                                         tracing::error!(error = %e, "Orchestrator fatal error");
-                                        let _ = tui_tx_err.send(crate::ui::events::TuiEvent::SystemError(err_msg)).await;
+                                        let _ = presentation_tx_err.send(SessionEvent::SystemError(err_msg)).await;
                                         break;
                                     }
                                     orchestrator.broadcast_state().await;
                                 }
-                                crate::ui::events::UserAction::AgendaAlarmPending {
+                                UserAction::AgendaAlarmPending {
                                     agenda_task_id,
                                     label,
                                     alarm_record_id,
@@ -501,7 +501,7 @@ This is a linked agenda reminder — please answer explicitly:\n\
 • Done — you finished this task now. Say clearly (e.g. \"done\" or \"finished\") so the assistant can mark it complete with agenda:complete.\n\
 • Snooze — you still need a later nudge. Say when (e.g. \"in 10 minutes\" or \"at 15:00\") so the assistant can reschedule with agenda:remind_at using task_id below.\n\n\
 [AGENDA_CONFIRM task_id={} alarm_id={} late_sec={}]",
-                                        crate::ui::events::SYSTEM_ALARM_PREFIX,
+                                        SYSTEM_ALARM_PREFIX,
                                         trimmed,
                                         late_note,
                                         agenda_task_id,
@@ -529,23 +529,23 @@ This is a linked agenda reminder — please answer explicitly:\n\
                                         }
                                         let err_msg = format!("[FATAL ERROR] Orchestrator halted: {}", e);
                                         tracing::error!(error = %e, "Orchestrator fatal error");
-                                        let _ = tui_tx_err.send(crate::ui::events::TuiEvent::SystemError(err_msg)).await;
+                                        let _ = presentation_tx_err.send(SessionEvent::SystemError(err_msg)).await;
                                         break;
                                     }
                                     orchestrator.broadcast_state().await;
                                 }
-                                crate::ui::events::UserAction::Submit(msg) => {
+                                UserAction::Submit(msg) => {
                                     let trimmed = msg.trim().to_string();
                                     if trimmed.is_empty() {
                                         continue;
                                     }
                                     if pending_inputs.len() >= 3 {
                                         let _ = pending_inputs.pop_front();
-                                        let _ = tui_tx_err.send(crate::ui::events::TuiEvent::SystemError("[ui] Queue full; dropped oldest queued input".into())).await;
+                                        let _ = presentation_tx_err.send(SessionEvent::SystemError("[ui] Queue full; dropped oldest queued input".into())).await;
                                     }
                                     pending_inputs.push_back(trimmed);
                                     if pending_inputs.len() > 1 {
-                                        let _ = tui_tx_err.send(crate::ui::events::TuiEvent::SystemError(format!(
+                                        let _ = presentation_tx_err.send(SessionEvent::SystemError(format!(
                                             "[ui] Processing older request ({} newer queued)",
                                             pending_inputs.len() - 1
                                         ))).await;
@@ -582,7 +582,7 @@ This is a linked agenda reminder — please answer explicitly:\n\
                             }
                             let err_msg = format!("[FATAL ERROR] Orchestrator halted: {}", e);
                             tracing::error!(error = %e, "Orchestrator fatal error");
-                            let _ = tui_tx_err.send(crate::ui::events::TuiEvent::SystemError(err_msg)).await;
+                            let _ = presentation_tx_err.send(SessionEvent::SystemError(err_msg)).await;
                             break;
                         }
                         orchestrator.queued_inputs = pending_inputs.len();
@@ -592,7 +592,7 @@ This is a linked agenda reminder — please answer explicitly:\n\
             });
 
             // 10. Run TUI App
-            let mut app = TuiApp::new(tui_rx, action_tx);
+            let mut app = TuiApp::new(presentation_rx, action_tx);
             let result = app.run(terminal, Some(token_metrics_rx)).await;
 
             // 11. Teardown
@@ -698,7 +698,7 @@ mod tests {
         use crate::orchestrator::state::AgentState;
         use crate::tools::gatekeeper::Gatekeeper;
         use crate::tools::system::SystemHealthTool;
-        use crate::ui::events::{UserAction, SYSTEM_ALARM_PREFIX};
+        use crate::presentation::{UserAction, SYSTEM_ALARM_PREFIX};
 
         #[derive(Clone)]
         struct SeqEngine {

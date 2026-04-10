@@ -1,7 +1,7 @@
 use tokio::sync::{mpsc, watch};
 use crate::engine::token_metrics::LlmTokenSnapshot;
 use crate::executive::error::{Result, FcpError};
-use crate::ui::events::{AlarmPayload, TuiEvent, AgentStateUpdate, UserAction};
+use crate::presentation::{AlarmPayload, AgentStateUpdate, SessionEvent, UserAction};
 use crossterm::event::{Event as CrosstermEvent, EventStream, KeyCode};
 use tokio_stream::StreamExt;
 use std::time::Duration;
@@ -19,7 +19,7 @@ pub enum ActivePane {
 }
 
 pub struct TuiApp {
-    pub rx: mpsc::Receiver<TuiEvent>,
+    pub rx: mpsc::Receiver<SessionEvent>,
     pub action_tx: mpsc::Sender<UserAction>,
     pub input: String,
     pub chat_stack: Vec<String>,
@@ -39,7 +39,7 @@ pub struct TuiApp {
 }
 
 impl TuiApp {
-    pub fn new(rx: mpsc::Receiver<TuiEvent>, action_tx: mpsc::Sender<UserAction>) -> Self {
+    pub fn new(rx: mpsc::Receiver<SessionEvent>, action_tx: mpsc::Sender<UserAction>) -> Self {
         Self {
             rx,
             action_tx,
@@ -93,7 +93,7 @@ impl TuiApp {
                         .as_ref()
                         .map(|rx| rx.borrow().clone())
                         .unwrap_or_default();
-                    terminal.draw(|f| crate::ui::render::draw(f, self, &llm_tokens))
+                    terminal.draw(|f| super::render::draw(f, self, &llm_tokens))
                         .map_err(|e| FcpError::Config(format!("Draw failed: {}", e)))?;
                 }
                 Some(Ok(evt)) = reader.next() => {
@@ -110,11 +110,11 @@ impl TuiApp {
                 Some(evt) = self.rx.recv() => {
                     let mut redraw_now = false;
                     match evt {
-                        TuiEvent::StateUpdate(update) => {
+                        SessionEvent::StateUpdate(update) => {
                             self.state = update;
                             redraw_now = true;
                         }
-                        TuiEvent::IncomingMessage(msg) => {
+                        SessionEvent::IncomingMessage(msg) => {
                             let before_len = self.chat_stack.len();
                             self.chat_stack.push(msg);
                             // Only follow when the user was already following (at bottom); do not
@@ -130,11 +130,11 @@ impl TuiApp {
                             self.pending_inputs = self.pending_inputs.saturating_sub(1);
                             redraw_now = true;
                         }
-                        TuiEvent::SystemError(err) => {
+                        SessionEvent::SystemError(err) => {
                             self.system_messages.push(err);
                             redraw_now = true;
                         }
-                        TuiEvent::SystemAlarm(payload) => {
+                        SessionEvent::SystemAlarm(payload) => {
                             let action = match payload {
                                 AlarmPayload::Plain(label) => UserAction::SystemInject(label),
                                 AlarmPayload::AgendaLinked {
@@ -150,10 +150,9 @@ impl TuiApp {
                                 },
                             };
                             if self.action_tx.try_send(action).is_err() {
-                                tracing::error!("Dropped alarm due to TUI→Orchestrator action channel backpressure");
+                                tracing::error!("Dropped alarm due to presentation→orchestrator action channel backpressure");
                             }
                         }
-                        _ => {}
                     }
                     if redraw_now {
                         let llm_tokens = token_metrics_rx
@@ -161,7 +160,7 @@ impl TuiApp {
                             .map(|rx| rx.borrow().clone())
                             .unwrap_or_default();
                         terminal
-                            .draw(|f| crate::ui::render::draw(f, self, &llm_tokens))
+                            .draw(|f| super::render::draw(f, self, &llm_tokens))
                             .map_err(|e| FcpError::Config(format!("Draw failed: {}", e)))?;
                     }
                 }
@@ -180,7 +179,7 @@ impl TuiApp {
                     self.input.clear();
                     self.command_deck_scroll = 0;
                     self.command_deck_follow_latest = true;
-                    
+
                     let trimmed = msg.trim();
                     if trimmed == "/exit" || trimmed == "/quit" {
                         self.running = false;

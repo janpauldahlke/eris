@@ -6,6 +6,7 @@ use crate::orchestrator::llm_support::post_tool_guidance::{
 use crate::orchestrator::r#loop::recovery_policy::{classify_tool_failure, ToolFailureAction};
 use crate::orchestrator::r#loop::tool_batch::ToolBatchDecision;
 use crate::orchestrator::state::{AgentState, ToolIntentStatus, ToolIntentTicket};
+use crate::presentation::SessionEvent;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
@@ -71,10 +72,10 @@ impl<E: LlmEngine> Orchestrator<E> {
                     role: "system".to_string(),
                     content: msg.clone(),
                 });
-                if let Some(tx) = &self.tui_tx {
+                if let Some(tx) = &self.presentation_tx {
                     let telemetry = format!("[tool] {} · duplicate suppressed", tool_name);
                     let _ = tx
-                        .send(crate::ui::events::TuiEvent::SystemError(telemetry))
+                        .send(SessionEvent::SystemError(telemetry))
                         .await;
                 }
                 continue;
@@ -140,10 +141,10 @@ impl<E: LlmEngine> Orchestrator<E> {
                         role: "system".to_string(),
                         content: msg.clone(),
                     });
-                    if let Some(tx) = &self.tui_tx {
+                    if let Some(tx) = &self.presentation_tx {
                         let telemetry = format!("[tool] {} · success", tool_name);
                         let _ = tx
-                            .send(crate::ui::events::TuiEvent::SystemError(telemetry))
+                            .send(SessionEvent::SystemError(telemetry))
                             .await;
                     }
                     self.broadcast_state().await;

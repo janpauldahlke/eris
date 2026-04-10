@@ -1,11 +1,15 @@
-use crossterm::event::KeyEvent;
+//! Presentation-neutral types shared by CLI (Ratatui) and future web UI.
+//! Interactive chat requires a live `presentation_tx`; `None` is for headless tests and batch runners.
+
+use serde::Serialize;
+
 use crate::orchestrator::state::AgentState;
 
 /// Prefix applied by the orchestrator when turning [`UserAction::SystemInject`] into a `user` line.
 pub const SYSTEM_ALARM_PREFIX: &str = "[SYSTEM OVERRIDE - ALARM TRIGGERED]: ";
 
 /// Alarm notification from the scheduler: plain timer/wall, or agenda-linked (needs confirmation flow).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum AlarmPayload {
     Plain(String),
     AgendaLinked {
@@ -17,11 +21,11 @@ pub enum AlarmPayload {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum UserAction {
     Submit(String),
     CancelCurrentTurn,
-    /// Asynchronous clock/alarm injected via TUI relay; raw label only (prefix added in orchestrator).
+    /// Asynchronous clock/alarm injected via the active view; raw label only (prefix added in orchestrator).
     SystemInject(String),
     /// Agenda-linked alarm: orchestrator injects confirmation framing (same turn as live alarm).
     AgendaAlarmPending {
@@ -32,17 +36,17 @@ pub enum UserAction {
     },
 }
 
-pub enum TuiEvent {
-    Tick,
-    Input(KeyEvent),
+/// Outbound updates from core to the active presentation (terminal or web).
+#[derive(Debug, Clone, Serialize)]
+pub enum SessionEvent {
     StateUpdate(AgentStateUpdate),
     IncomingMessage(String),
-    SystemError(String),     // System Errors / Telemetry
-    /// Fired by the alarm scheduler; TUI forwards to [`UserAction`] (plain inject or agenda confirmation).
+    SystemError(String),
+    /// Fired by the alarm scheduler; the active view forwards to [`UserAction`] (plain inject or agenda confirmation).
     SystemAlarm(AlarmPayload),
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct AgentStateUpdate {
     pub state: AgentState,
     pub tool_rounds: u8,

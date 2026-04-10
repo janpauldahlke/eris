@@ -119,3 +119,8 @@
 - [x] better telemetry in TUI, shortening
 - [x] undo: remove rolling_summary_condensation write to memory sidefect
 - [x] slimmer context_slider by removing RECOVERY overhead and keeping context slider lean
+
+10/04/2026
+
+- [x] decouple tui by creaging a presentation layer pahse 1 and 2
+- []

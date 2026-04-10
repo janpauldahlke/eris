@@ -4,6 +4,7 @@ use crate::memory::ephemeral::EphemeralMemory;
 use crate::orchestrator::context::ContextAssembler;
 use crate::orchestrator::context::ContextViewSettings;
 use crate::orchestrator::state::AgentState;
+use crate::presentation::{AgentStateUpdate, SessionEvent};
 use crate::orchestrator::tool_router::ToolRouter;
 use crate::tools::Gatekeeper;
 use crate::tools::ToolDescriptorRegistry;
@@ -68,7 +69,8 @@ pub struct Orchestrator<E: LlmEngine> {
     pub chat_stack: Vec<crate::engine::Message>,
     pub saved_chat_state: Option<Vec<crate::engine::Message>>,
     pub interrupt_rx: tokio::sync::watch::Receiver<()>,
-    pub tui_tx: Option<tokio::sync::mpsc::Sender<crate::ui::events::TuiEvent>>,
+    /// Interactive chat must use `Some`; `None` drops outbound deck/state/telemetry (headless tests, batch).
+    pub presentation_tx: Option<tokio::sync::mpsc::Sender<SessionEvent>>,
     pub queued_inputs: usize,
     pub last_router_ms: u64,
     pub last_llm_ms: u64,
@@ -104,8 +106,8 @@ pub struct Orchestrator<E: LlmEngine> {
 
 impl<E: LlmEngine> Orchestrator<E> {
     pub async fn broadcast_state(&self) {
-        if let Some(tx) = &self.tui_tx {
-            let update = crate::ui::events::AgentStateUpdate {
+        if let Some(tx) = &self.presentation_tx {
+            let update = AgentStateUpdate {
                 state: self.state,
                 tool_rounds: self.tool_rounds,
                 max_tool_rounds: self.max_tool_rounds,
@@ -121,7 +123,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                 top_tool_match: self.last_top_tool_match.clone(),
             };
             let _ = tx
-                .send(crate::ui::events::TuiEvent::StateUpdate(update))
+                .send(SessionEvent::StateUpdate(update))
                 .await;
         }
     }
@@ -142,7 +144,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         slim_tool_prompt: bool,
         tool_map_offer_cap: usize,
         interrupt_rx: tokio::sync::watch::Receiver<()>,
-        tui_tx: Option<tokio::sync::mpsc::Sender<crate::ui::events::TuiEvent>>,
+        presentation_tx: Option<tokio::sync::mpsc::Sender<SessionEvent>>,
         tool_router: Option<ToolRouter>,
         descriptor_registry: Option<Arc<ToolDescriptorRegistry>>,
         context_view: ContextViewSettings,
@@ -171,7 +173,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             chat_stack: Vec::new(),
             saved_chat_state: None,
             interrupt_rx,
-            tui_tx,
+            presentation_tx,
             queued_inputs: 0,
             last_router_ms: 0,
             last_llm_ms: 0,

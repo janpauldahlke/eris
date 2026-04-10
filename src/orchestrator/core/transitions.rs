@@ -3,6 +3,7 @@ use crate::executive::error::Result;
 use crate::orchestrator::llm_support::json_envelope::split_leading_json_object;
 use crate::orchestrator::r#loop::transition::{StateTransition, TransitionControl};
 use crate::orchestrator::state::{AgentState, LlmResponse};
+use crate::presentation::SessionEvent;
 
 use super::{Orchestrator, TOOL_ROUND_CAP_USER_FOOTNOTE};
 
@@ -46,9 +47,9 @@ impl<E: LlmEngine> Orchestrator<E> {
                     role: "system".to_string(),
                     content: message.clone(),
                 });
-                if let Some(tx) = &self.tui_tx {
+                if let Some(tx) = &self.presentation_tx {
                     let _ = tx
-                        .send(crate::ui::events::TuiEvent::SystemError(message))
+                        .send(SessionEvent::SystemError(message))
                         .await;
                 }
                 self.broadcast_state().await;
