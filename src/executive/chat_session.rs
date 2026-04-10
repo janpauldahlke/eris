@@ -25,15 +25,17 @@ use ollama_rs::Ollama;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChatViewMode {
     Terminal,
-    /// Reserved for a future Axum/WebSocket path; not implemented yet.
+    /// Axum + SSE browser UI (`eris chat --web`).
     Web,
 }
 
 impl ChatViewMode {
     /// Resolve from CLI until config-driven flags exist.
     pub fn from_cli(cli: &Cli) -> Self {
-        let _ = cli;
-        ChatViewMode::Terminal
+        match &cli.command {
+            crate::executive::cli::Commands::Chat { web: true } => ChatViewMode::Web,
+            _ => ChatViewMode::Terminal,
+        }
     }
 }
 

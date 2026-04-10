@@ -114,6 +114,21 @@ impl TuiApp {
                             self.state = update;
                             redraw_now = true;
                         }
+                        SessionEvent::ModelThought(t) => {
+                            let n = t.chars().count();
+                            let cap = 4000;
+                            let body: String = t.chars().take(cap).collect();
+                            let suffix = if n > cap { "…" } else { "" };
+                            tracing::debug!(
+                                event = "UI_RECV_MODEL_THOUGHT",
+                                thought_len = n,
+                                preview = %t.chars().take(100).collect::<String>(),
+                                "Terminal: routing JSON `thought` to Telemetry pane"
+                            );
+                            self.system_messages
+                                .push(format!("[model thought]{suffix}\n{body}"));
+                            redraw_now = true;
+                        }
                         SessionEvent::IncomingMessage(msg) => {
                             let before_len = self.chat_stack.len();
                             self.chat_stack.push(msg);

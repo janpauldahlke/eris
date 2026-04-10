@@ -19,6 +19,29 @@ impl<E: LlmEngine> Orchestrator<E> {
             return;
         };
 
+        let thought_trimmed = parsed.thought.trim();
+        if !thought_trimmed.is_empty() {
+            let thought_len = thought_trimmed.len();
+            let preview: String = thought_trimmed.chars().take(120).collect();
+            tracing::info!(
+                event = "UI_EMIT_MODEL_THOUGHT",
+                thought_len,
+                preview = %preview,
+                "Emitting JSON protocol `thought` to presentation (thought pane / telemetry)"
+            );
+            if tx
+                .send(SessionEvent::ModelThought(thought_trimmed.to_string()))
+                .await
+                .is_err()
+            {
+                tracing::warn!(
+                    event = "UI_EMIT_MODEL_THOUGHT_DROPPED",
+                    thought_len,
+                    "Presentation channel closed; model thought not delivered"
+                );
+            }
+        }
+
         let has_tools = !parsed.tool_calls.is_empty();
         let msg_opt = parsed
             .message_to_user

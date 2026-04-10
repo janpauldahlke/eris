@@ -247,6 +247,12 @@ pub struct AppConfig {
     /// Minimum Qdrant limit when oversampling for path prefix.
     #[serde(default = "default_memory_query_oversample_min")]
     pub memory_query_oversample_min: u64,
+    /// Bind address for [`crate::ui::web::run_web_chat`] (`eris chat --web`). Prefer loopback until bind/auth are hardened.
+    #[serde(default = "default_web_bind_addr")]
+    pub web_bind_addr: String,
+    /// TCP port for the web chat server.
+    #[serde(default = "default_web_port")]
+    pub web_port: u16,
     /// Current working directory when [`AppConfig::load`] ran — this is the physical vault root for chat.
     #[serde(skip)]
     pub config_source_dir: PathBuf,
@@ -538,6 +544,14 @@ fn default_builtin_apis() -> HashMap<String, ApiProfile> {
     apis
 }
 
+fn default_web_bind_addr() -> String {
+    "127.0.0.1".into()
+}
+
+fn default_web_port() -> u16 {
+    8787
+}
+
 impl Default for AppConfig {
     /// Baseline profile aligned with a typical local Mac setup (Ollama + Qdrant); override per vault in `.fcp/config.toml` or `FCP_*`.
     /// A checked-in full example (including optional Gmail) is `vaults/nemo/.fcp/config.toml` — copy and trim for new vaults.
@@ -605,6 +619,8 @@ impl Default for AppConfig {
             memory_query_oversample_cap: default_memory_query_oversample_cap(),
             memory_query_oversample_multiplier: default_memory_query_oversample_multiplier(),
             memory_query_oversample_min: default_memory_query_oversample_min(),
+            web_bind_addr: default_web_bind_addr(),
+            web_port: default_web_port(),
             config_source_dir: PathBuf::new(),
         }
     }
@@ -705,7 +721,7 @@ mod tests {
                 workspace: "cli_workspace".to_string(),
                 vault: Some(PathBuf::from("/cli/vaults")),
                 verbose: 0,
-                command: Commands::Chat,
+                command: Commands::Chat { web: false },
             };
 
             let config = AppConfig::load(cli).expect("Failed to load config");
@@ -720,7 +736,7 @@ mod tests {
                 workspace: "default".to_string(),
                 vault: None,
                 verbose: 0,
-                command: Commands::Chat,
+                command: Commands::Chat { web: false },
             };
 
             let config2 = AppConfig::load(cli2).expect("Failed to load config");
@@ -852,7 +868,7 @@ mod tests {
                 workspace: "default".to_string(),
                 vault: None,
                 verbose: 0,
-                command: Commands::Chat,
+                command: Commands::Chat { web: false },
             };
 
             let config = AppConfig::load(cli).expect("load");

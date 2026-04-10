@@ -1,0 +1,3 @@
+# Askama resolves `#[template(path = "...")]` under these dirs at compile time (paths relative to this crate root).
+[general]
+dirs = ["src/ui/web/templates"]

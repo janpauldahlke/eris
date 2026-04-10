@@ -26,7 +26,11 @@ pub struct Cli {
 #[derive(Subcommand, Debug, PartialEq, Clone)]
 pub enum Commands {
     /// Boot the Layer 2 Subconscious and enter the interactive loop
-    Chat,
+    Chat {
+        /// Browser UI: localhost HTTP server with SSE (see `web_bind_addr` / `web_port` in `.fcp/config.toml`).
+        #[arg(long)]
+        web: bool,
+    },
 
     /// Execute a single-shot prompt and exit (useful for bash piping)
     Run { prompt: String },
@@ -57,7 +61,14 @@ mod tests {
         let cli = parse_from(args).unwrap();
         assert_eq!(cli.vault, None);
         assert_eq!(cli.workspace, "default");
-        assert_eq!(cli.command, Commands::Chat);
+        assert_eq!(cli.command, Commands::Chat { web: false });
+    }
+
+    #[test]
+    fn test_cli_chat_web_flag() {
+        let args = vec!["eris", "-w", "default", "chat", "--web"];
+        let cli = parse_from(args).unwrap();
+        assert_eq!(cli.command, Commands::Chat { web: true });
     }
 
     #[test]

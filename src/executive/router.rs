@@ -1,12 +1,23 @@
+use crate::executive::chat_session::StartedChatSession;
 use crate::executive::cli::{Cli, Commands};
 use crate::executive::error::{FcpError, Result};
 use crate::config::AppConfig;
 use tokio_util::sync::CancellationToken;
 use std::sync::Arc;
 
+fn log_peripheral_shutdown(session: &mut StartedChatSession) {
+    tracing::info!("Tearing down peripheral daemons started by this session…");
+    let stopped = session.peripheral_lifecycle.shutdown_started_peripherals();
+    if stopped.is_empty() {
+        tracing::info!("No peripheral daemons were started by this session.");
+    } else {
+        tracing::info!(stopped = %stopped.join(", "), "Stopped peripheral daemons");
+    }
+}
+
 pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: CancellationToken) -> Result<()> {
     match cli.command {
-        Commands::Chat => {
+        Commands::Chat { web: _ } => {
             use crate::executive::chat_session::{start_chat_session, ChatViewMode};
             use crate::ui::terminal::{restore_terminal, setup_terminal, TuiApp};
             use tokio::sync::mpsc;
@@ -18,49 +29,63 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                 "chat vault root (launch cwd)"
             );
 
-            match ChatViewMode::from_cli(&cli) {
-                ChatViewMode::Web => {
-                    return Err(FcpError::Config(
-                        "Web chat view is not implemented yet.".into(),
-                    ));
-                }
-                ChatViewMode::Terminal => {}
-            }
-
+            let view = ChatViewMode::from_cli(&cli);
             let (presentation_tx, presentation_rx) = mpsc::channel(100);
-            let terminal = setup_terminal()?;
 
-            let session_result = start_chat_session(
-                cli,
-                config,
-                workspace_root,
-                cancel_token.clone(),
-                presentation_tx,
-            )
-            .await;
+            match view {
+                ChatViewMode::Web => {
+                    let session_result = start_chat_session(
+                        cli,
+                        config.clone(),
+                        workspace_root,
+                        cancel_token.clone(),
+                        presentation_tx,
+                    )
+                    .await;
 
-            let mut session = match session_result {
-                Ok(s) => s,
-                Err(e) => {
-                    let _ = restore_terminal();
-                    return Err(e);
+                    let mut session = session_result?;
+                    let web_result = crate::ui::web::run_web_chat(
+                        presentation_rx,
+                        session.user_action_tx.clone(),
+                        config,
+                        cancel_token.clone(),
+                    )
+                    .await;
+
+                    cancel_token.cancel();
+                    log_peripheral_shutdown(&mut session);
+                    web_result
                 }
-            };
+                ChatViewMode::Terminal => {
+                    let terminal = setup_terminal()?;
 
-            let mut app = TuiApp::new(presentation_rx, session.user_action_tx.clone());
-            let token_metrics_rx = session.token_metrics_rx.clone();
-            let result = app.run(terminal, Some(token_metrics_rx)).await;
+                    let session_result = start_chat_session(
+                        cli,
+                        config,
+                        workspace_root,
+                        cancel_token.clone(),
+                        presentation_tx,
+                    )
+                    .await;
 
-            cancel_token.cancel();
-            restore_terminal()?;
-            eprintln!("[shutdown] Tearing down owned peripheral daemons...");
-            let stopped = session.peripheral_lifecycle.shutdown_started_peripherals();
-            if stopped.is_empty() {
-                eprintln!("[shutdown] No peripheral daemons were started by this session.");
-            } else {
-                eprintln!("[shutdown] Stopped daemons: {}", stopped.join(", "));
+                    let mut session = match session_result {
+                        Ok(s) => s,
+                        Err(e) => {
+                            let _ = restore_terminal();
+                            return Err(e);
+                        }
+                    };
+
+                    let mut app = TuiApp::new(presentation_rx, session.user_action_tx.clone());
+                    let token_metrics_rx = session.token_metrics_rx.clone();
+                    let result = app.run(terminal, Some(token_metrics_rx)).await;
+
+                    cancel_token.cancel();
+                    restore_terminal()?;
+                    log_peripheral_shutdown(&mut session);
+                    result
+                }
             }
-            result
         }
         Commands::Run { prompt } => {
             let _ = prompt;

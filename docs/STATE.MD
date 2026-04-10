@@ -124,3 +124,4 @@
 
 - [x] decouple tui by creaging a presentation layer pahse 1 and 2
 - [x] decouple chat session and router
+- [] web ui 1st iteration
