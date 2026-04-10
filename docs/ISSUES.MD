@@ -1,10 +1,5 @@
-check on te usage of config
+- we sometimes leak thought into the command deck
+  this cause multiple eris answers, it confuses them, how about we introduce a new small pane in the TUI, there we will display thinking
+  be this we shoudl decouple user_facing_out and thought
 
-enable_reasoning_fsm flag
-we use it for ollama, but later also for
-Tag-stripping lives in ReasoningRouter in `src/engine/router.rs `
-both serve different purposes, so we need to distinct this
-
----
-
-65536 num ctx for gemma4
+* all memories get into syntheis, but synthesis is the highest of the vault places. recent memories should wander into discourse, the moving to vault and categorizing needs to be revisisted!
