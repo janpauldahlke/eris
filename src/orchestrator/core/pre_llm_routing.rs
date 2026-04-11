@@ -132,7 +132,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         }
         if let Some(snippet) = buffer_followup_routing_appendix(&self.chat_stack) {
             out.push_str(
-                "\n\n[FCP routing context: large content is in an ephemeral buffer. Prefer the `[FCP BUFFER SESSION]` block below for `buffer_id`, `last_page`, and `next_page`. Otherwise use `buffer_id` from vault:read / web:fetch receipts (short handle such as buf_1). Call `ephemeral:buffer_page` with the same `buffer_id` and `next_page` (or increment `page`); use `ephemeral:buffer_query` for keyword search. Copy the token exactly—do not invent or paraphrase it.]\n",
+                "\n\n[FCP routing context: large content is in an ephemeral buffer. Prefer the `[FCP BUFFER SESSION]` block below for `buffer_id`, `last_page`, `next_page`, `navigation_hint`, and chunk index lists. Otherwise use `buffer_id` from vault:read / web:fetch receipts (short handle such as buf_1); receipts list `chunk_navigation` for quick orientation. Default `page_size` is 1. Call `ephemeral:buffer_page` with the same `buffer_id` and `next_page` (or increment `page`); use `ephemeral:buffer_query` for keyword search with match-centered snippets. Copy the token exactly—do not invent or paraphrase it.]\n",
             );
             out.push_str(&snippet);
         }

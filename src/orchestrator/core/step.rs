@@ -43,6 +43,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         self.activity_line = None;
         self.last_deck_message_body = None;
         let mut web_tool_activity = false;
+        let mut buffer_tool_activity = false;
         tracing::info!(
             turn_seq,
             state = ?self.state,
@@ -311,6 +312,8 @@ impl<E: LlmEngine> Orchestrator<E> {
             let total_tokens = response.generated_tokens + response.prompt_tokens;
             let active_threshold_ratio = if web_tool_activity {
                 Self::WEB_CONDENSATION_THRESHOLD
+            } else if buffer_tool_activity {
+                Self::BUFFER_CONDENSATION_THRESHOLD
             } else {
                 self.condensation_threshold
             };
@@ -321,6 +324,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                     threshold,
                     active_threshold_ratio,
                     web_tool_activity,
+                    buffer_tool_activity,
                     "Token usage exceeds condensation threshold, running condenser"
                 );
                 self.execute_condensation().await?;
@@ -348,6 +352,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                             &mut schema_recovery_attempted,
                             &mut targeted_tools,
                             &mut web_tool_activity,
+                            &mut buffer_tool_activity,
                             &mut tool_ms_acc,
                         )
                         .await?;

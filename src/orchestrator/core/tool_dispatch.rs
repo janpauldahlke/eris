@@ -14,6 +14,15 @@ use std::time::Instant;
 use super::Orchestrator;
 
 impl<E: LlmEngine> Orchestrator<E> {
+    /// Read-only buffer tools may repeat with identical args in one user turn (e.g. after condensation
+    /// or when the model re-checks the same search).
+    fn idempotent_read_tool_allows_repeat(tool_name: &str) -> bool {
+        matches!(
+            tool_name,
+            "ephemeral:buffer_query" | "ephemeral:buffer_page"
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     /// Executes one tool batch and returns a decision for the coordinator.
     ///
@@ -27,6 +36,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         schema_recovery_attempted: &mut HashSet<String>,
         targeted_tools: &mut HashSet<String>,
         web_tool_activity: &mut bool,
+        buffer_tool_activity: &mut bool,
         tool_ms_acc: &mut u64,
     ) -> Result<ToolBatchDecision> {
         if !tools_needed {
@@ -54,12 +64,17 @@ impl<E: LlmEngine> Orchestrator<E> {
             let tool_name = tool_call.name;
             let args = tool_call.args;
             let intent_id = Self::tool_fingerprint(&tool_name, &args);
-            if let Some(existing) = execution_ledger.get(&intent_id)
-                && matches!(
-                    existing.status,
-                    ToolIntentStatus::Pending | ToolIntentStatus::Success
-                )
-            {
+            let suppress_duplicate = execution_ledger
+                .get(&intent_id)
+                .map(|existing| match existing.status {
+                    ToolIntentStatus::Pending => true,
+                    ToolIntentStatus::Success => {
+                        !Self::idempotent_read_tool_allows_repeat(&tool_name)
+                    }
+                    ToolIntentStatus::FailedRecoverable | ToolIntentStatus::FailedFatal => false,
+                })
+                .unwrap_or(false);
+            if suppress_duplicate {
                 tracing::warn!(
                     tool = %tool_name,
                     intent_id = %intent_id,
@@ -125,6 +140,15 @@ impl<E: LlmEngine> Orchestrator<E> {
                     if tool_name.starts_with("web:") {
                         *web_tool_activity = true;
                     }
+                    if matches!(
+                        tool_name.as_str(),
+                        "ephemeral:buffer_query" | "ephemeral:buffer_page"
+                    ) || (tool_name == "vault:read"
+                        && (result.contains("lens applied")
+                            || result.contains("Large vault file staged as ephemeral buffer")))
+                    {
+                        *buffer_tool_activity = true;
+                    }
                     self.tool_rounds += 1;
                     self.recovery_count = 0;
                     tracing::info!(
@@ -135,7 +159,8 @@ impl<E: LlmEngine> Orchestrator<E> {
                         "Tool succeeded"
                     );
                     if tool_name == "vault:read"
-                        && result.contains("Large vault file staged as ephemeral buffer")
+                        && (result.contains("lens applied")
+                            || result.contains("Large vault file staged as ephemeral buffer"))
                     {
                         inject_staged_buffer_followup_hint = true;
                     }

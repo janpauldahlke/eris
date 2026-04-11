@@ -387,7 +387,7 @@ mod tests {
             role: "system".into(),
             content: format_tool_success_line(
                 "vault:read",
-                "[Large vault file staged as ephemeral buffer]\n\n{\"buffer_id\":\"abc\"}\n",
+                "[Large vault file — lens applied to a byte window]\n\n{\"buffer_id\":\"abc\"}\n",
             ),
         }];
         assert!(!ToolRouter::short_input_guard_conversational_only("next", &stack));

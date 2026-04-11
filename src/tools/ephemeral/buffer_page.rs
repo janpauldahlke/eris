@@ -43,7 +43,7 @@ impl Tool for EphemeralBufferPageTool {
     }
 
     fn description(&self) -> &'static str {
-        "Read sequential chunks from a staged large vault file or web artifact. If the user asks for detail on a specific chapter or section, page through (or combine with ephemeral:buffer_query) until you have seen the relevant chunks—do not fabricate long-form content from titles alone."
+        "Read sequential chunks from a staged large vault file or web artifact. JSON includes chunk_indices_in_page, remaining_chunk_indices, and navigation_hint (read it when page_count is 1 or paging is ambiguous). If the user asks for detail on a specific chapter or section, page through (default page_size 1) or combine with ephemeral:buffer_query until you have seen the relevant chunks—do not fabricate long-form content from titles alone."
     }
 
     fn parameters_schema(&self) -> RootSchema {

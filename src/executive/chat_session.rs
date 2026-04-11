@@ -254,8 +254,8 @@ pub async fn start_chat_session(
         ephemeral: ephemeral.clone(),
         buffer_handles: buffer_handles.clone(),
         semantic: semantic_arc.clone(),
-        max_snippet_chars: (web_chunk_chars / 3).clamp(300, 900),
-        max_total_chars: (web_chunk_chars / 2).clamp(1000, 2500),
+        max_snippet_chars: (web_chunk_chars / 4).clamp(256, 650),
+        max_total_chars: (web_chunk_chars / 3).clamp(800, 2000),
     }));
     gatekeeper.register(Arc::new(crate::tools::ephemeral::EphemeralBufferPageTool {
         ephemeral: ephemeral.clone(),

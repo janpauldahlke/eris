@@ -131,6 +131,33 @@ impl EphemeralMemory {
         Some(val)
     }
 
+    /// Replace `data` and extend TTL while preserving `staged_id`, `node_id`, and tags (in-place buffer lens).
+    pub async fn replace_entry_payload(
+        &self,
+        tool_name: &str,
+        staged_id: &str,
+        new_data: &str,
+        ttl_secs: u64,
+    ) -> Result<CacheValue> {
+        let mut val = self.get_by_id(staged_id).await.ok_or_else(|| {
+            crate::executive::error::FcpError::ToolFault {
+                tool_name: tool_name.to_string(),
+                reason: format!(
+                    "Unknown or expired buffer entry for in-place lens move (staged_id={staged_id}). Re-read the vault path without buffer_id, or use a fresh buffer_id from the latest receipt."
+                ),
+            }
+        })?;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
+        let now_secs = now.as_secs();
+        val.data = new_data.to_string();
+        val.expires_at = now_secs.saturating_add(ttl_secs);
+        val.last_seen_at = now_secs;
+        self.cache.insert(staged_id.to_string(), val.clone()).await;
+        Ok(val)
+    }
+
     pub async fn get_by_title(&self, title: &str) -> Option<CacheValue> {
         for (id, entry) in self.cache.iter() {
             if entry.title == title {

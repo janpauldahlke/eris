@@ -125,8 +125,7 @@ pub fn retain_budget_tokens(num_ctx: usize) -> usize {
     ((n as f32) * 0.55).floor() as usize
 }
 
-/// Split `tail` into (older messages to fold, recent messages to keep).
-pub fn split_tail_fold_and_keep(tail: &[Message], budget: usize) -> (Vec<Message>, Vec<Message>) {
+fn split_tail_fold_and_keep_budget_only(tail: &[Message], budget: usize) -> (Vec<Message>, Vec<Message>) {
     if tail.is_empty() {
         return (Vec::new(), Vec::new());
     }
@@ -152,6 +151,44 @@ pub fn split_tail_fold_and_keep(tail: &[Message], budget: usize) -> (Vec<Message
     }
 
     (old_part, kept_tail)
+}
+
+/// Tool success lines that carry staged buffer payloads must not be folded away before the model
+/// can cite `buffer_id`, chunk hits, or paging cursors.
+fn should_pin_tool_success_for_condensation(m: &Message) -> bool {
+    if m.role != "system" {
+        return false;
+    }
+    let Some(ts) = super::try_parse_tool_success_line(&m.content) else {
+        return false;
+    };
+    match ts.tool_name {
+        "ephemeral:buffer_query" | "ephemeral:buffer_page" => true,
+        "vault:read" => {
+            ts.body.contains("lens applied")
+                || ts.body.contains("staged as ephemeral buffer")
+                || ts.body.contains("FCP_BUFFER_REF")
+        }
+        _ => false,
+    }
+}
+
+/// Split `tail` into (older messages to fold, recent messages to keep).
+pub fn split_tail_fold_and_keep(tail: &[Message], budget: usize) -> (Vec<Message>, Vec<Message>) {
+    let (old_part, kept_tail) = split_tail_fold_and_keep_budget_only(tail, budget);
+    const MAX_PINNED_TOOL_SUCCESS: usize = 16;
+    let mut pinned: Vec<Message> = Vec::new();
+    let mut fold: Vec<Message> = Vec::new();
+    for m in old_part {
+        if pinned.len() < MAX_PINNED_TOOL_SUCCESS && should_pin_tool_success_for_condensation(&m) {
+            pinned.push(m);
+        } else {
+            fold.push(m);
+        }
+    }
+    let mut kept_combined = pinned;
+    kept_combined.extend(kept_tail);
+    (fold, kept_combined)
 }
 
 /// Plan for one condensation pass: one LLM call folds `messages_to_fold` into new rolling JSON.
@@ -207,7 +244,9 @@ pub fn condensation_system_instruction() -> String {
            \"open_threads\": [\"unresolved items\"],\n\
            \"last_updated\": \"RFC3339 timestamp\"\n\
          }}\n\
-         Merge prior rolling summary (if provided) with the new messages; do not drop critical constraints.",
+         Merge prior rolling summary (if provided) with the new messages; do not drop critical constraints.\n\
+         Preserve in key_facts any ephemeral buffer handles (e.g. buf_1), vault paths for staged large reads, \
+         chunk_index values from buffer_query / buffer_page JSON, and last next_page when present.",
         kind = ROLLING_SUMMARY_KIND
     )
 }
@@ -261,6 +300,7 @@ pub fn rolling_summary_system_message(json: &str) -> Message {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::orchestrator::context::format_tool_success_line;
 
     #[test]
     fn split_head_orders_jit_then_rolling() {
@@ -303,5 +343,37 @@ mod tests {
         assert!(!old.is_empty());
         assert!(!kept.is_empty());
         assert_eq!(old.len() + kept.len(), tail.len());
+    }
+
+    #[test]
+    fn condensation_pins_buffer_tool_success_out_of_fold_region() {
+        let buf_line = format_tool_success_line(
+            "ephemeral:buffer_query",
+            r#"{"buffer_id":"buf_1","matches":[]}"#,
+        );
+        let tail = vec![
+            Message {
+                role: "user".to_string(),
+                content: "x".repeat(200),
+            },
+            Message {
+                role: "system".to_string(),
+                content: buf_line,
+            },
+            Message {
+                role: "assistant".to_string(),
+                content: "y".repeat(200),
+            },
+        ];
+        let budget = 80usize;
+        let (fold, kept) = split_tail_fold_and_keep(&tail, budget);
+        assert!(
+            kept.iter().any(|m| m.content.contains("ephemeral:buffer_query")),
+            "buffer_query tool success should be pinned into kept tail"
+        );
+        assert!(
+            !fold.iter().any(|m| m.content.contains("Tool 'ephemeral:buffer_query'")),
+            "pinned tool line must not be folded"
+        );
     }
 }

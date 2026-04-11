@@ -12,6 +12,9 @@ use super::Orchestrator;
 impl<E: LlmEngine> Orchestrator<E> {
     pub(super) const MAX_TOOL_RESULT_CHARS: usize = 2500;
     pub(super) const WEB_CONDENSATION_THRESHOLD: f32 = 0.85;
+    /// Lenient condensation during vault/buffer paging so ~8k-token Reflect prompts are not
+    /// re-summarized after every model call (see `step` token gate).
+    pub(super) const BUFFER_CONDENSATION_THRESHOLD: f32 = 0.78;
 
     pub(super) fn normalize_json(value: &serde_json::Value) -> serde_json::Value {
         match value {

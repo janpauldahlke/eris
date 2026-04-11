@@ -10,6 +10,7 @@ use crate::tools::traits::Tool;
 
 #[derive(Deserialize, JsonSchema)]
 pub struct VaultListArgs {
+    #[serde(alias = "path")]
     pub directory: String,
 }
 

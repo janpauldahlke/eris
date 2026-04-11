@@ -80,6 +80,12 @@ fn format_buffer_page_session_block(stack: &[Message]) -> Option<String> {
         let next_hint = next_page
             .map(|n| format!("{}", n))
             .unwrap_or_else(|| "(none — last page for this page_size)".to_string());
+        let navigation_hint = v
+            .get("navigation_hint")
+            .and_then(|x| x.as_str())
+            .unwrap_or("");
+        let chunks_this_page = format_index_list(v.get("chunk_indices_in_page"));
+        let chunks_remaining = format_index_list(v.get("remaining_chunk_indices"));
         return Some(format!(
             "[FCP BUFFER SESSION — copy `buffer_id` exactly (e.g. buf_1); use `next_page` for ephemeral:buffer_page]\n\
 buffer_id: {buffer_id}\n\
@@ -89,6 +95,9 @@ page_size: {page_size}\n\
 page_count: {page_count}\n\
 total_chunks: {total_chunks}\n\
 next_page: {next_hint}\n\
+navigation_hint: {navigation_hint}\n\
+chunk_indices_this_page: {chunks_this_page}\n\
+remaining_chunk_indices: {chunks_remaining}\n\
 [/FCP BUFFER SESSION]"
         ));
     }
@@ -103,7 +112,10 @@ fn staged_vault_or_web_snippet(stack: &[Message]) -> Option<String> {
         let ParsedSystemLine::ToolSuccess(ts) = parse_system_line(&m.content) else {
             continue;
         };
-        if ts.tool_name == "vault:read" && ts.body.contains("Large vault file staged as ephemeral buffer") {
+        if ts.tool_name == "vault:read"
+            && (ts.body.contains("lens applied")
+                || ts.body.contains("Large vault file staged as ephemeral buffer"))
+        {
             return Some(truncate_chars(&ts.body, SNIPPET_MAX_CHARS));
         }
         if ts.tool_name == "web:fetch" {
@@ -124,6 +136,17 @@ fn staged_vault_or_web_snippet(stack: &[Message]) -> Option<String> {
         }
     }
     None
+}
+
+fn format_index_list(v: Option<&Value>) -> String {
+    let Some(Value::Array(items)) = v else {
+        return String::new();
+    };
+    items
+        .iter()
+        .filter_map(|x| x.as_u64().map(|n| n.to_string()))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn truncate_chars(s: &str, max: usize) -> String {
@@ -148,7 +171,7 @@ mod tests {
             role: "system".into(),
             content: format_tool_success_line(
                 "vault:read",
-                "[Large vault file staged as ephemeral buffer]\n\n{\"buffer_id\":\"abc\"}\n",
+                "[Large vault file — lens applied to a byte window]\n\n{\"buffer_id\":\"abc\"}\n",
             ),
         }];
         assert!(stack_has_buffer_routing_context(&stack));
@@ -158,7 +181,7 @@ mod tests {
 
     #[test]
     fn buffer_page_alone_provides_routing_context() {
-        let body = r#"{"buffer_id":"buf_1","source":"x.md","page":1,"page_size":2,"page_count":3,"total_chunks":5,"next_page":2,"chunks":[]}"#;
+        let body = r#"{"buffer_id":"buf_1","source":"x.md","page":1,"page_size":2,"page_count":3,"total_chunks":5,"next_page":2,"chunk_indices_in_page":[2,3],"remaining_chunk_indices":[4],"navigation_hint":"hint","chunks":[]}"#;
         let stack = vec![Message {
             role: "system".into(),
             content: format_tool_success_line("ephemeral:buffer_page", body),
@@ -168,6 +191,9 @@ mod tests {
         assert!(s.contains("buf_1"));
         assert!(s.contains("last_page: 1"));
         assert!(s.contains("next_page: 2"));
+        assert!(s.contains("navigation_hint: hint"));
+        assert!(s.contains("chunk_indices_this_page: 2,3"));
+        assert!(s.contains("remaining_chunk_indices: 4"));
     }
 
     #[test]

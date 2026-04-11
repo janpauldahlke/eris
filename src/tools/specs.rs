@@ -303,15 +303,20 @@ rationale = "directory is required."
 "#,
     r#"descriptor_version = 1
 tool_name = "vault:read"
-short_description = "Read a vault file by relative_path."
-when_to_use = "Use when you need exact file contents from the workspace vault."
+short_description = "Read a vault file by relative_path; large files use a sliding byte lens with optional buffer_id to move without losing the handle."
+when_to_use = "Use when you need exact file contents from the workspace vault. For oversized files, receipts include vault_lens with suggested_next_byte_offset / suggested_prev_byte_offset — call again with the same relative_path, the same buffer_id, and byte_offset to slide the lens; then use ephemeral:buffer_query / buffer_page inside that window."
 when_not_to_use = "Do not use for listing directories or writing files."
-routing_hints = ["read file", "open note", "show file", "inspect markdown"]
+routing_hints = ["read file", "open note", "show file", "inspect markdown", "slide lens", "large file offset"]
 
 [[examples_good]]
 name = "read_project_note"
 args = { relative_path = "20_Discourse/today.md" }
 rationale = "Reads a concrete file by relative path."
+
+[[examples_good]]
+name = "slide_lens_keep_buf"
+args = { relative_path = "00_Invariants/BOOK.md", buffer_id = "buf_1", byte_offset = 50000 }
+rationale = "Moves the read lens along a huge file while keeping buf_1 valid for buffer_query."
 
 [[examples_bad]]
 name = "wrong_field_name"

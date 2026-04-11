@@ -1,5 +1,5 @@
 use crate::executive::error::{FcpError, Result};
-use crate::memory::buffer::{parse_buffered_blob, stage_text, BufferCaps};
+use crate::memory::buffer::{parse_buffered_blob, stage_text, BufferCaps, ChunkNavEntry};
 use crate::memory::buffer_handles::BufferHandleRegistry;
 use crate::memory::ephemeral::EphemeralMemory;
 use crate::memory::semantic::SemanticBrain;
@@ -62,7 +62,13 @@ struct WebFetchReceipt {
     artifact_id: String,
     url: String,
     chunk_count: usize,
+    char_estimate: usize,
     preview_head: String,
+    ttl_secs: u64,
+    default_page_size: usize,
+    page_count: usize,
+    paging_note: String,
+    chunk_navigation: Vec<ChunkNavEntry>,
     next_step_hint: String,
 }
 
@@ -143,6 +149,7 @@ impl Tool for WebFetchTool {
             vec!["web_artifact".to_string(), "external".to_string()],
             self.buffer_ttl_secs,
             &self.caps,
+            None,
         )
         .await
         {
@@ -180,8 +187,14 @@ impl Tool for WebFetchTool {
             artifact_id: handle,
             url: parsed.url,
             chunk_count: staged_meta.chunk_count,
+            char_estimate: staged_meta.char_estimate,
             preview_head: staged_meta.preview_head,
-            next_step_hint: staged_meta.next_step_hint,
+            ttl_secs: staged_meta.ttl_secs,
+            default_page_size: staged_meta.default_page_size,
+            page_count: staged_meta.page_count,
+            paging_note: staged_meta.paging_note.clone(),
+            chunk_navigation: staged_meta.chunk_navigation.clone(),
+            next_step_hint: staged_meta.next_step_hint.clone(),
         };
         serde_json::to_string(&receipt).map_err(FcpError::ParseFault)
     }
@@ -245,6 +258,8 @@ mod tests {
         let aid = parsed["artifact_id"].as_str().expect("artifact_id");
         assert!(aid.starts_with("buf_"), "expected short handle, got {aid}");
         assert!(parsed.get("preview_head").is_some());
+        assert!(parsed.get("chunk_navigation").is_some());
+        assert!(parsed["chunk_navigation"].is_array());
     }
 
     #[tokio::test]

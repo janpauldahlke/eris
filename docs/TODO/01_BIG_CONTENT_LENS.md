@@ -147,6 +147,64 @@ These apply **whether** the caller is a tool, `vault:read`, or the orchestrator.
 
 ---
 
+## Field notebook: 2026-04-11 — `BOOK.md` / HITL (nemo vault, web UI, `gemma4:26b`)
+
+This section records **one real session** (telemetry: `fcp_core.log.2026-04-11`, roughly lines 1942–2507) after **sliding-byte lens** work landed: `vault:read` with `byte_offset`, optional `buffer_id` in-place relocate, receipt field `vault_lens` (`suggested_next_byte_offset` / `suggested_prev_byte_offset`), `ephemeral:buffer_query` / `buffer_page`, and a **higher condensation threshold** when buffer tools are active.
+
+### What worked (mechanism + tools)
+
+- **Pre-LLM routing** on a ~250-character user message: semantic tool hit; `vault:read` with `relative_path: 00_Invariants/BOOK.md` ran and staged **`buf_1`** (large-file path; receipt length on the order of **~7k** chars in this run — smaller than earlier pre-lens logs that showed ~29k, consistent with a tighter receipt / lens framing).
+- **`ephemeral:buffer_query`** ran with `buffer_id: buf_1` and returned structured hits (tool success ~900B JSON).
+- **`vault:read` lens relocate** with `{ relative_path, buffer_id: buf_1, byte_offset: 100000 }` **executed successfully** at least once (`result_len` ~9.1k).
+- Additional relocates with **different** `byte_offset` values (e.g. **10000**, **20480**) also **succeeded** — the in-place replace path and handle stability were not the blocking bug.
+
+### What failed (outcome)
+
+The agent **did not** reliably reach Chapter 13 body text or produce a grounded summary of HITL from retrieved prose. The session **degraded** into:
+
+- repeated **duplicate tool suppression**,
+- **condensation** cycles (token gate with `buffer_tool_activity` and ratio ~0.78 → threshold ~12779),
+- a **JSON protocol violation** (plain prose + `Invoked tools: …` instead of a single JSON object),
+- **recovery passes** and eventually **Idle** with `tool_calls: []` while the user’s information goal was still open,
+- user closing with a short message; **short-input guard** + **no semantic tool match** on a trivial follow-up is expected and not a lens bug.
+
+### Failure modes observed in the log (ordered)
+
+1. **Duplicate `vault:read` suppression**  
+   After a successful `vault:read` at `byte_offset: 100000`, the model issued the **same** call again (identical `relative_path`, `buffer_id`, `byte_offset`). The orchestrator **suppressed** it as a duplicate intent for the turn (`Duplicate tool call suppressed`, `executed_success_count: 0`), then forced **recover** (“All tool intents in batch were duplicate-suppressed”).  
+   **Effect:** wasted recovery budget and **no forward progress** on the file.
+
+2. **Non-serial lens navigation**  
+   The model **guessed** large jumps (e.g. 100000) and smaller ones (10000, 20480) instead of consistently chaining **`vault_lens.suggested_next_byte_offset`** from the latest receipt. In the raw “thought” text it even claimed **`suggested_next_byte_offset` was missing** from what it saw — plausible if **context view / condensation** trimmed or buried the JSON receipt, or if the field was simply not salient among many messages.
+
+3. **JSON envelope break under stress**  
+   One assistant reply was **plain English** plus a line like `Invoked tools: vault:read` — not valid protocol JSON → `Failed to parse LLM response as JSON` → another recover path.
+
+4. **Invalid JSON shape on recover**  
+   A following response used **`message`** instead of **`message_to_user`** and omitted a proper **`status`**, triggering another recover (`Missing required status…`).
+
+5. **Premature Idle**  
+   The model eventually returned **`status: Idle`** with **empty `tool_calls`** and a conversational apology, **without** having established chapter body text in the buffer — task abandoned from the user’s perspective.
+
+### Why it failed (meta — not only “the model is dumb”)
+
+| Layer | Issue |
+| ----- | ----- |
+| **Orchestration** | **Per-turn duplicate suppression** keys on normalized tool args. Re-emitting the **same** `vault:read` lens call (same path + buffer + offset) is treated as a no-op even when the model **intends** a retry after confusion, condensation, or recover — and identical re-requests are **common** under stress. |
+| **Information design** | The **`vault_lens`** hints may be **too easy to lose** in the stack after condensation, slim tool views, or long Reflect chains; the model then invents offsets. |
+| **Protocol** | The stack does not **hard-stop** non-JSON assistant output in tool-heavy turns; one slip causes **multi-step recovery** and stacks more garbage. |
+| **Task / model** | Multi-step “find this chapter in a 400+ page book” via **manual byte sliding** is **high cognitive load** for an LLM even when the mechanism is correct. |
+
+### Lessons for the next iteration
+
+1. **Revisit duplicate policy for `vault:read` with `buffer_id` + `byte_offset`:** e.g. do not suppress duplicates across **recover**-originated batches; or include a **monotonic `lens_seq` / `client_nonce`** in args; or treat “same args” as idempotent **execute anyway** for vault lens (re-read window from disk). Any of these breaks the “stuck on 100000” loop.  
+2. **Make the next step impossible to miss:** e.g. a single-line system injection after each lens success: `NEXT_LENS_BYTE_OFFSET=<n>` (and `null` if EOF).  
+3. **Prefer server-led progression** for v2: a dedicated tool **`vault:read_next_window`** (same `buffer_id`, no offset — server uses stored `vault_lens_raw_end_byte`) or **binary search / grep** on disk so the model does not copy integers.  
+4. **Harden protocol:** reject or auto-wrap assistant prose in tool rounds; or structured output mode if the engine supports it.  
+5. **Product:** for “find chapter by title,” a **heading-index or ripgrep** tool over the vault file beats pure byte lenses.
+
+---
+
 name: Big-content mechanism
 overview: Unified Rust core for ephemeral chunked staging (num_ctx-aligned caps, TTL, recoverable errors, coverage metadata) shared by vault, web, uploads, and orchestrator; optional ephemeral:buffer_* tools are a façade, not the feature definition.
 todos:
@@ -171,6 +229,12 @@ todos:
   status: pending
 - id: config-caps-ttl
   content: AppConfig: buffer TTL, num_ctx-aligned caps; wire into core/consumers
+  status: pending
+- id: lens-dedupe-policy-2026-04
+  content: "Orchestration: duplicate tool suppression vs vault:read(buffer_id,byte_offset) — same-args repeat after recover/condensation stalls HITL-style runs (see Field notebook 2026-04-11)"
+  status: pending
+- id: lens-navigation-ux-2026-04
+  content: "Server-led next window (no copied offsets) or mandatory NEXT_LENS hint after each vault:read lens — model ignored suggested_next_byte_offset under long Reflect"
   status: pending
   isProject: false
 
