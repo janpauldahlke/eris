@@ -3,6 +3,7 @@ pub mod cli;
 pub mod error;
 pub mod router;
 pub mod ignition;
+pub mod setup_welder;
 pub mod identity_md;
 pub mod peripherals;
 pub mod vault_identity;

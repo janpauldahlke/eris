@@ -134,4 +134,4 @@
 
 - [x] feature: db:connection tool
 - [x] improve db:connections tool
-- []
+- [x] prepare installer on inital workspace ignations, pulling 3rd party, ollama qdrant and so on

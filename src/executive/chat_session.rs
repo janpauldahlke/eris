@@ -14,7 +14,9 @@ use crate::engine::ollama::OllamaClient;
 use crate::engine::token_metrics::LlmTokenSnapshot;
 use crate::executive::cli::Cli;
 use crate::executive::error::{FcpError, Result};
+use crate::executive::ignition::IgnitionOptions;
 use crate::executive::peripherals::PeripheralLifecycle;
+use crate::executive::setup_welder::IgnitionWorkspaceHint;
 use crate::memory::ephemeral::EphemeralMemory;
 use crate::orchestrator::core::Orchestrator;
 use crate::presentation::{SessionEvent, UserAction, SYSTEM_ALARM_PREFIX};
@@ -55,16 +57,17 @@ pub async fn start_chat_session(
     workspace_root: PathBuf,
     cancel_token: CancellationToken,
     presentation_tx: mpsc::Sender<SessionEvent>,
+    ignition_workspace: IgnitionWorkspaceHint,
 ) -> Result<StartedChatSession> {
-    let _ = presentation_tx
-        .send(SessionEvent::SystemError(
-            "[startup] Checking peripheral daemons (Ollama, Qdrant)...".into(),
-        ))
-        .await;
-
     let seal_path = crate::vault_layout::seal(&workspace_root);
     if !seal_path.exists() {
-        crate::executive::ignition::run_ignition_sequence(&workspace_root).await?;
+        crate::executive::ignition::run_ignition_sequence(
+            &workspace_root,
+            IgnitionOptions {
+                workspace: ignition_workspace.workspace,
+            },
+        )
+        .await?;
         config = Arc::new(AppConfig::load(cli.clone())?);
     }
     crate::executive::identity_md::sync_identity_user_line(&workspace_root, &config.user_name)
@@ -119,6 +122,12 @@ pub async fn start_chat_session(
     } else {
         drop(identity_tx);
     }
+
+    let _ = presentation_tx
+        .send(SessionEvent::SystemError(
+            "[startup] Checking peripheral daemons (Ollama, Qdrant)...".into(),
+        ))
+        .await;
 
     let peripheral_lifecycle =
         crate::executive::peripherals::ensure_peripherals_for_chat(&config).await?;
