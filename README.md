@@ -4,7 +4,7 @@
 
 ## Scope
 
-- **In scope:** Interactive `chat` from a vault directory, tool use (vault, memory, web, agenda, clocks, etc.), structured logging under `.fcp/telemetry/logs/`.
+- **In scope:** Interactive `chat` from a vault directory, tool use (vault, memory, web, agenda, clocks, German public-transit connections via `db:find_connections`, etc.), structured logging under `.fcp/telemetry/logs/`.
 - **Out of scope today:** `eris run` and `eris tool` are present in the CLI but **not implemented** for production use; use `chat`.
 
 Architecture detail: [docs/updated_architecture/README.md](docs/updated_architecture/README.md).
@@ -176,7 +176,7 @@ Representative `**routing_hints**` (say things *like* this—the model still dec
 | **agenda:remove**          | remove task, cancel agenda, delete from list, drop task, never mind                                      |
 | **agenda:remind_at**       | remind me at/in/about, remember to, nudge/ping me at, snooze, on my agenda or todo list, task reminder   |
 | **agenda:complete**        | task done, complete task, mark done, finished the …                                                      |
-| **(deprecared) web:fetch** | open website, read web page, fetch URL, news from — plus URLs and the lexical phrases above              |
+| **(deprecated) web:fetch** | open website, read web page, fetch URL, news from — plus URLs and the lexical phrases above              |
 | **web:artifact_query**     | search fetched page, query artifact, find in web artifact                                                |
 | **system:health**          | health check, system status, CPU/memory usage, Ollama status, diagnostics                                |
 | **clock:now**              | what time is it, current time, timezone, date and time                                                   |
@@ -185,6 +185,7 @@ Representative `**routing_hints**` (say things *like* this—the model still dec
 | **weather:current**        | weather now, temperature outside, is it raining, current conditions                                      |
 | **weather:forecast**       | forecast, hourly, next days, will it rain tomorrow                                                       |
 | **wiki:summary**           | Wikipedia, encyclopedia, what is X, who was, define (topic—not a URL)                                    |
+| **db:find_connections**  | train from/to, Zugverbindung, ICE/IC/RE, Deutsche Bahn, next connection, platforms, delays, city-to-city transit |
 | **mail:check**             | check email, inbox, unread, new mail, who emailed me                                                     |
 | **mail:read**              | read email, open message, full email, message content                                                    |
 | **mail:write**             | send email, compose mail, reply, email to                                                                |

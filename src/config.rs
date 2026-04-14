@@ -518,6 +518,64 @@ pub fn default_open_meteo_apis() -> HashMap<String, ApiProfile> {
     m
 }
 
+/// v6.db.transport.rest profiles for [`crate::tools::db_rest::DbFindConnectionsTool`] (`/locations`, `/journeys`).
+pub fn default_db_transport_rest_apis() -> HashMap<String, ApiProfile> {
+    let mut m = HashMap::new();
+    m.insert(
+        "db_rest_locations".into(),
+        ApiProfile {
+            enabled: true,
+            base_url: "https://v6.db.transport.rest/locations".into(),
+            query: [
+                ("query".into(), "{query}".into()),
+                ("results".into(), "1".into()),
+            ]
+            .into_iter()
+            .collect(),
+            headers: HashMap::new(),
+            max_response_bytes: Some(65_536),
+            stale_after_secs: None,
+        },
+    );
+    m.insert(
+        "db_rest_journeys_departure".into(),
+        ApiProfile {
+            enabled: true,
+            base_url: "https://v6.db.transport.rest/journeys".into(),
+            query: [
+                ("from".into(), "{from}".into()),
+                ("to".into(), "{to}".into()),
+                ("departure".into(), "{when}".into()),
+                ("results".into(), "3".into()),
+            ]
+            .into_iter()
+            .collect(),
+            headers: HashMap::new(),
+            max_response_bytes: Some(786_432),
+            stale_after_secs: None,
+        },
+    );
+    m.insert(
+        "db_rest_journeys_arrival".into(),
+        ApiProfile {
+            enabled: true,
+            base_url: "https://v6.db.transport.rest/journeys".into(),
+            query: [
+                ("from".into(), "{from}".into()),
+                ("to".into(), "{to}".into()),
+                ("arrival".into(), "{when}".into()),
+                ("results".into(), "3".into()),
+            ]
+            .into_iter()
+            .collect(),
+            headers: HashMap::new(),
+            max_response_bytes: Some(786_432),
+            stale_after_secs: None,
+        },
+    );
+    m
+}
+
 /// English Wikipedia REST summary profile for [`crate::tools::wiki::WikiSummaryTool`]. Wikimedia requires a descriptive User-Agent.
 pub fn default_wikipedia_page_summary_api() -> HashMap<String, ApiProfile> {
     let mut headers = HashMap::new();
@@ -540,10 +598,11 @@ pub fn default_wikipedia_page_summary_api() -> HashMap<String, ApiProfile> {
     m
 }
 
-/// Weather + Wikipedia profiles merged into [`AppConfig::default`]; TOML `[apis]` entries override by id.
+/// Weather + Wikipedia + DB timetable profiles merged into [`AppConfig::default`]; TOML `[apis]` entries override by id.
 fn default_builtin_apis() -> HashMap<String, ApiProfile> {
     let mut apis = default_open_meteo_apis();
     apis.extend(default_wikipedia_page_summary_api());
+    apis.extend(default_db_transport_rest_apis());
     apis
 }
 
@@ -828,12 +887,15 @@ mod tests {
     #[test]
     fn default_config_includes_open_meteo_api_profiles() {
         let c = AppConfig::default();
-        assert_eq!(c.apis.len(), 5);
+        assert_eq!(c.apis.len(), 8);
         assert!(c.apis.contains_key("open_meteo_geocode"));
         assert!(c.apis.contains_key("open_meteo_geocode_cc"));
         assert!(c.apis.contains_key("open_meteo_forecast_current"));
         assert!(c.apis.contains_key("open_meteo_forecast_hourly"));
         assert!(c.apis.contains_key("wikipedia_page_summary"));
+        assert!(c.apis.contains_key("db_rest_locations"));
+        assert!(c.apis.contains_key("db_rest_journeys_departure"));
+        assert!(c.apis.contains_key("db_rest_journeys_arrival"));
         let wiki = c.apis.get("wikipedia_page_summary").expect("wiki profile");
         assert!(wiki.headers.contains_key("User-Agent"));
     }

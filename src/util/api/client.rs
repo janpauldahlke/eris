@@ -87,15 +87,30 @@ impl ApiHttpClient {
             .send()
             .await
             .map_err(|e| {
-                tracing::error!(error = %e, profile_id, "API HTTP request failed");
+                tracing::error!(
+                    error = %e,
+                    profile_id,
+                    is_timeout = e.is_timeout(),
+                    is_connect = e.is_connect(),
+                    "API HTTP request failed"
+                );
                 FcpError::NetworkFault("upstream service unreachable".into())
             })?;
 
         let status = response.status();
         if !status.is_success() {
+            let body_preview = match response.bytes().await {
+                Ok(b) => {
+                    let slice = truncate_utf8_prefix(&b, 384);
+                    let s = String::from_utf8_lossy(slice);
+                    s.chars().take(280).collect::<String>()
+                }
+                Err(e) => format!("(failed to read error body: {e})"),
+            };
             tracing::warn!(
                 status = %status.as_u16(),
                 profile_id,
+                body_preview = %body_preview,
                 "Upstream API non-success"
             );
             return Err(FcpError::ToolFault {

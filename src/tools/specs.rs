@@ -487,6 +487,54 @@ args = { title = "https://en.wikipedia.org/wiki/Foo" }
 rationale = "User pasted a URL; use web:fetch instead."
 "#,
     r#"descriptor_version = 1
+tool_name = "db:find_connections"
+short_description = "Up to three train/transit connections in Germany between two named places, with delays and platforms when available."
+when_to_use = "Use when the user asks for train or transit connections, departure times, ICE/IC/RE options, next trains between two cities or stations, or arrival by a given time. Requires explicit timezone on `when`. If the user does not state a calendar year or full date, call `clock:now` in the same turn before this tool (or rely on a clock result already in context) so `when` uses the correct session date. Prefer clearer station names (e.g. Hamburg Hbf) if a city is ambiguous."
+when_not_to_use = "Do not use for arbitrary URLs or web pages (use web:fetch). Do not use for current weather (use weather:current). Do not invent station ids; pass human-readable from/to strings only."
+routing_hints = [
+    "train from",
+    "train to",
+    "Zugverbindung",
+    "ICE",
+    "IC ",
+    "RE ",
+    "RB ",
+    "nächste Verbindung",
+    "connection to",
+    "departure Hamburg",
+    "Berlin nach",
+    "abfahrt",
+    "ankunft",
+    "Gleis",
+    "Verspätung",
+    "Fahrplan",
+    "Deutsche Bahn",
+    "DB Navigator",
+    "how do I get from",
+    "transit between",
+]
+
+[[examples_good]]
+name = "major_route"
+args = { from = "Hamburg Hbf", to = "Berlin Hbf", when = "2026-04-15T08:00:00+02:00", time_constraint = "departure" }
+rationale = "RFC3339 `when` with offset; departure search."
+
+[[examples_good]]
+name = "arrival_constraint"
+args = { from = "München Hbf", to = "Frankfurt(Main)Hbf", when = "2026-04-16T18:30:00+02:00", time_constraint = "arrival" }
+rationale = "Latest arrival interpretation when user says arrive by."
+
+[[examples_bad]]
+name = "no_timezone"
+args = { from = "Hamburg", to = "Berlin", when = "2026-04-15T08:00:00" }
+rationale = "`when` must include offset (+02:00 or Z)."
+
+[[examples_bad]]
+name = "empty_from"
+args = { from = "", to = "Berlin", when = "2026-04-15T08:00:00+02:00" }
+rationale = "`from` must be non-empty."
+"#,
+    r#"descriptor_version = 1
 tool_name = "mail:check"
 short_description = "List recent or filtered Gmail messages with subject, from, date, and preview per row."
 when_to_use = "Use when the user wants to see recent or filtered messages. Supports Gmail search query syntax (e.g. is:unread, from:boss@co.com). Each row includes id, thread, subject, from, date, and a short preview; use mail:read for full body."

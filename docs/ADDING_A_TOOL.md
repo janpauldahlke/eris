@@ -1,7 +1,7 @@
 # Adding a tool (contributor checklist)
 
 1. **Implement `Tool`** in `src/tools/<area>/` (`name`, `description`, `parameters_schema`, `execute`). Use `serde` + `JsonSchema` for args; route errors through `FcpError`.
-2. **Register** the tool in `src/executive/router.rs` (`gatekeeper.register`).
+2. **Register** the tool in `src/executive/chat_session.rs` (`gatekeeper.register` during chat bootstrap).
 3. **Descriptors:** add a TOML block to `DESCRIPTOR_TOMLS` in `src/tools/specs.rs` (`tool_name`, `short_description`, `when_to_use`, `routing_hints`, examples). Boot fails if registered tools are not covered.
 4. **Gatekeeper:** extend `state_allows_tool` in `src/tools/gatekeeper.rs` for each `AgentState` that may call the tool; update `test_policy_covers_all_current_tools`.
 5. **Tool router:** add fallback hints in `ToolRouter::enrich_for_routing` in `src/orchestrator/tool_router.rs` when useful (descriptors already supply hints for embeddings).
