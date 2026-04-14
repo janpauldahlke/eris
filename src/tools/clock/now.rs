@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chrono::Local;
+use chrono::{Local, SecondsFormat};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
@@ -9,6 +9,22 @@ use crate::tools::traits::Tool;
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ClockNowArgs {}
+
+/// Same wall-clock source as [`ClockNowTool::execute`], formatted for the system prompt when
+/// `db:find_connections` is offered so the model can anchor bare dates without a separate `clock:now` call.
+pub fn session_reference_time_block_for_prompt() -> String {
+    let now = Local::now();
+    let rfc = now.to_rfc3339_opts(SecondsFormat::Secs, true);
+    let ymd = now.format("%Y-%m-%d").to_string();
+    let yyyy = now.format("%Y").to_string();
+    format!(
+        "[SESSION_REFERENCE_TIME]\n\
+         Wall clock when this prompt was built: {rfc} (machine local timezone).\n\
+         Default calendar year if the user omits the year: {yyyy} (session date {ymd}).\n\
+         Use this for db:find_connections `when` (RFC3339 with explicit offset); you do not need clock:now for the year anchor.\n\
+         [/SESSION_REFERENCE_TIME]"
+    )
+}
 
 pub struct ClockNowTool;
 
@@ -37,5 +53,18 @@ impl Tool for ClockNowTool {
             tz,
             now.format("%:z")
         ))
+    }
+}
+
+#[cfg(test)]
+mod session_ref_tests {
+    use super::session_reference_time_block_for_prompt;
+
+    #[test]
+    fn session_reference_block_has_markers_and_clock_line() {
+        let s = session_reference_time_block_for_prompt();
+        assert!(s.contains("[SESSION_REFERENCE_TIME]"));
+        assert!(s.contains("[/SESSION_REFERENCE_TIME]"));
+        assert!(s.contains("Wall clock when this prompt was built:"));
     }
 }

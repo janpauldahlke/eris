@@ -1,6 +1,7 @@
 use crate::executive::chat_session::StartedChatSession;
 use crate::executive::cli::{Cli, Commands};
 use crate::executive::error::{FcpError, Result};
+use crate::executive::setup_welder::IgnitionWorkspaceHint;
 use crate::config::AppConfig;
 use tokio_util::sync::CancellationToken;
 use std::sync::Arc;
@@ -29,6 +30,13 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                 "chat vault root (launch cwd)"
             );
 
+            let seal_path = crate::vault_layout::seal(&workspace_root);
+            let ignition_hint: IgnitionWorkspaceHint = if !seal_path.exists() {
+                crate::executive::setup_welder::run_welder_before_chat(&cli, config.as_ref(), &workspace_root).await?
+            } else {
+                IgnitionWorkspaceHint::from_cli(&cli, &workspace_root)
+            };
+
             let view = ChatViewMode::from_cli(&cli);
             let (presentation_tx, presentation_rx) = mpsc::channel(100);
 
@@ -40,6 +48,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                         workspace_root,
                         cancel_token.clone(),
                         presentation_tx,
+                        ignition_hint.clone(),
                     )
                     .await;
 
@@ -65,6 +74,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                         workspace_root,
                         cancel_token.clone(),
                         presentation_tx,
+                        ignition_hint,
                     )
                     .await;
 

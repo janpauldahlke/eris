@@ -5,7 +5,21 @@ use tokio::fs;
 use inquire::{Select, Text};
 use ollama_rs::Ollama;
 
-pub async fn run_ignition_sequence(workspace_root: &Path) -> Result<AppConfig> {
+/// Values fixed before interactive ignition (e.g. first-run welder).
+#[derive(Debug, Clone)]
+pub struct IgnitionOptions {
+    pub workspace: String,
+}
+
+impl Default for IgnitionOptions {
+    fn default() -> Self {
+        Self {
+            workspace: AppConfig::default().workspace,
+        }
+    }
+}
+
+pub async fn run_ignition_sequence(workspace_root: &Path, options: IgnitionOptions) -> Result<AppConfig> {
     // 1. Fetch available models first to keep async cleanly separated
     let host = "http://localhost".to_string();
     let port = 11434;
@@ -107,11 +121,13 @@ pub async fn run_ignition_sequence(workspace_root: &Path) -> Result<AppConfig> {
     })?;
 
     // 5. The Seal
-    let config = AppConfig {
+    let mut config = AppConfig {
         model_name,
         user_name,
+        workspace: options.workspace,
         ..Default::default()
     };
+    config.qdrant_collection_v2 = format!("fcp_vault_v2_{}", config.workspace);
     
     let config_toml = toml::to_string(&config).map_err(|e| FcpError::Config(format!("Failed to serialize config: {}", e)))?;
     let config_path = crate::vault_layout::config_toml(workspace_root);

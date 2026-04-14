@@ -126,5 +126,7 @@ mod integration_tests {
         assert!(out.contains("8002549"));
         assert!(out.contains("8011160"));
         assert!(out.contains("ICE 703"));
+        assert!(out.contains("\"rides\""));
+        assert!(out.contains("\"summary\""));
     }
 }

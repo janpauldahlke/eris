@@ -5,6 +5,7 @@ use std::sync::Arc;
 use crate::executive::error::Result;
 use crate::memory::ephemeral::EphemeralMemory;
 use crate::orchestrator::state::AgentState;
+use crate::tools::clock::session_reference_time_block_for_prompt;
 use crate::tools::descriptors::ToolDescriptorRegistry;
 use crate::tools::gatekeeper::Gatekeeper;
 
@@ -247,7 +248,7 @@ impl ContextAssembler {
             tools = tools_block
         );
 
-        Ok(system_prompt)
+        Ok(append_db_session_clock_if_needed(system_prompt, &allowed_tools))
     }
 
     /// Builds a tool-free conversational prompt.
@@ -287,6 +288,18 @@ impl ContextAssembler {
 
         Ok(system_prompt)
     }
+}
+
+fn tools_include_db_find_connections(tools: &[serde_json::Value]) -> bool {
+    tools.iter().filter_map(tool_name_from_entry).any(|n| n == "db:find_connections")
+}
+
+fn append_db_session_clock_if_needed(mut system_prompt: String, allowed_tools: &[serde_json::Value]) -> String {
+    if tools_include_db_find_connections(allowed_tools) {
+        system_prompt.push_str("\n\n");
+        system_prompt.push_str(&session_reference_time_block_for_prompt());
+    }
+    system_prompt
 }
 
 fn tool_name_from_entry(v: &serde_json::Value) -> Option<String> {
