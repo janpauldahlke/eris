@@ -489,7 +489,7 @@ rationale = "User pasted a URL; use web:fetch instead."
     r#"descriptor_version = 1
 tool_name = "db:find_connections"
 short_description = "Up to three train/transit connections in Germany between two named places, with delays and platforms when available."
-when_to_use = "Use when the user asks for train or transit connections, departure times, ICE/IC/RE options, next trains between two cities or stations, or arrival by a given time. Requires explicit timezone on `when`. If the user does not state a calendar year or full date, call `clock:now` in the same turn before this tool (or rely on a clock result already in context) so `when` uses the correct session date. Prefer clearer station names (e.g. Hamburg Hbf) if a city is ambiguous."
+when_to_use = "Use when the user asks for train or transit connections, departure times, ICE/IC/RE options, next trains between two cities or stations, or arrival by a given time. Requires explicit timezone on `when`. When this tool is offered, the system prompt includes `[SESSION_REFERENCE_TIME]` with the session wall clock—use its calendar year for bare dates (no year given). Prefer clearer station names (e.g. Hamburg Hbf) if a city is ambiguous."
 when_not_to_use = "Do not use for arbitrary URLs or web pages (use web:fetch). Do not use for current weather (use weather:current). Do not invent station ids; pass human-readable from/to strings only."
 routing_hints = [
     "train from",

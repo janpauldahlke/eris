@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::executive::error::{FcpError, Result};
-use crate::tools::context_view_hint::{ToolContextViewHint, API_TOOL_SNIPPET_CHARS};
+use crate::tools::context_view_hint::ToolContextViewHint;
 use crate::tools::traits::Tool;
 use crate::tools::db_rest::open_transport::{self, validate_when_iso};
 use crate::util::ApiHttpClient;
@@ -45,7 +45,7 @@ impl Tool for DbFindConnectionsTool {
     }
 
     fn description(&self) -> &'static str {
-        "German public transport connections between two named places: resolves each name to a stop, then returns up to three journeys (legs, lines, times, delays, platforms when available). Pass `when` with an explicit timezone offset. If the user is vague about calendar date or year, call `clock:now` in the same turn before this tool so `when` matches the real session date. Data is a third-party mirror of DB-style timetables; results may differ slightly from the official app."
+        "German public transport connections between two named places: resolves each name to a stop, then returns up to three journeys as compact `summary` + `rides` + `transfers` (walking legs folded into transfers). Pass `when` with an explicit timezone offset. When the tool is offered, the system prompt includes `[SESSION_REFERENCE_TIME]`—use it as the calendar year anchor if the user omits the year. Data is a third-party mirror of DB-style timetables; results may differ slightly from the official app."
     }
 
     fn parameters_schema(&self) -> schemars::schema::RootSchema {
@@ -53,9 +53,8 @@ impl Tool for DbFindConnectionsTool {
     }
 
     fn context_view_hint(&self) -> ToolContextViewHint {
-        ToolContextViewHint::Snippet {
-            max_chars: API_TOOL_SNIPPET_CHARS,
-        }
+        // Use global `optimize_context_max_tool_snippet_chars` (not 320): folded payload must stay visible in LLM view.
+        ToolContextViewHint::Default
     }
 
     async fn execute(&self, args: Value) -> Result<String> {

@@ -12,6 +12,19 @@
   const TELEMETRY_MAX_LINES = 80;
   let shuttingDown = false;
 
+  /**
+   * Some models emit LaTeX math for arrows (e.g. `$\rightarrow$`), which is not rendered in plain text.
+   * Normalize common patterns to Unicode for the transcript and thought pane.
+   */
+  function normalizeLatexArrowsForDisplay(s) {
+    if (s == null || typeof s !== "string") return s;
+    return s
+      .replace(/\$\s*\\+rightarrow\s*\$/gi, "\u2192")
+      .replace(/\$\s*\\+Rightarrow\s*\$/gi, "\u21D2")
+      .replace(/\$\s*\\+leftarrow\s*\$/gi, "\u2190")
+      .replace(/\$\s*\\+to\s*\$/gi, "\u2192");
+  }
+
   /** Browsers only honor this for script-opened windows; OS-opened tabs usually stay open. */
   function tryCloseTab() {
     window.close();
@@ -31,7 +44,7 @@
   function appendLine(text, className) {
     const div = document.createElement("div");
     div.className = "msg " + (className || "");
-    div.textContent = text;
+    div.textContent = normalizeLatexArrowsForDisplay(String(text));
     transcript.appendChild(div);
     transcript.scrollTop = transcript.scrollHeight;
   }
@@ -127,7 +140,7 @@
       return;
     }
     if (data.ModelThought) {
-      thoughtPane.textContent = data.ModelThought;
+      thoughtPane.textContent = normalizeLatexArrowsForDisplay(data.ModelThought);
       return;
     }
     if (data.SystemError) {

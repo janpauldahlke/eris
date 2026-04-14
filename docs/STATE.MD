@@ -129,3 +129,9 @@
   - minor tweak FCP json repair
   - 100vh max, and scrollables
 - [x] fix mail send 3 times issue
+
+14/04/2026
+
+- [x] feature: db:connection tool
+- [x] improve db:connections tool
+- []

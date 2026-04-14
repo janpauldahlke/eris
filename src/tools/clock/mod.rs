@@ -4,7 +4,7 @@ mod now;
 mod timer;
 mod wall;
 
-pub use now::ClockNowTool;
+pub use now::{session_reference_time_block_for_prompt, ClockNowTool};
 pub use timer::ClockTimerTool;
 pub use wall::ClockWallAlarmTool;
 
