@@ -10,6 +10,7 @@ pub mod clock;
 pub mod web;
 pub mod weather;
 pub mod wiki;
+pub mod db_rest;
 pub mod mail;
 pub mod descriptors;
 pub mod specs;

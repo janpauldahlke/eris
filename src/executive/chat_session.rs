@@ -275,6 +275,9 @@ pub async fn start_chat_session(
     gatekeeper.register(Arc::new(crate::tools::weather::WeatherForecastTool {
         api: api_http.clone(),
     }));
+    gatekeeper.register(Arc::new(crate::tools::db_rest::DbFindConnectionsTool {
+        api: api_http.clone(),
+    }));
     gatekeeper.register(Arc::new(crate::tools::wiki::WikiSummaryTool {
         api: api_http,
     }));

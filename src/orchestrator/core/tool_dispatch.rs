@@ -5,12 +5,39 @@ use crate::orchestrator::llm_support::post_tool_guidance::{
 };
 use crate::orchestrator::r#loop::recovery_policy::{classify_tool_failure, ToolFailureAction};
 use crate::orchestrator::r#loop::tool_batch::ToolBatchDecision;
-use crate::orchestrator::state::{AgentState, ToolIntentStatus, ToolIntentTicket};
+use crate::orchestrator::state::{AgentState, ToolCall, ToolIntentStatus, ToolIntentTicket};
 use crate::presentation::SessionEvent;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use super::Orchestrator;
+
+/// Dispatch priority within a single tool batch: `clock:now` must run before
+/// `db:find_connections` so the model can anchor RFC3339 `when` on the session clock.
+fn tool_dispatch_order_priority(name: &str) -> u8 {
+    match name {
+        "clock:now" => 0,
+        "db:find_connections" => 2,
+        _ => 1,
+    }
+}
+
+fn stable_prioritize_clock_now_before_db(tools: Vec<ToolCall>) -> Vec<ToolCall> {
+    let mut indexed: Vec<(usize, ToolCall)> = tools.into_iter().enumerate().collect();
+    let before: Vec<String> = indexed.iter().map(|(_, tc)| tc.name.clone()).collect();
+    indexed.sort_by_key(|(orig_idx, tc)| (tool_dispatch_order_priority(&tc.name), *orig_idx));
+    let out: Vec<ToolCall> = indexed.into_iter().map(|(_, tc)| tc).collect();
+    let after: Vec<String> = out.iter().map(|t| t.name.clone()).collect();
+    if before != after {
+        tracing::info!(
+            event = "orchestrator.tools.batch.reordered",
+            before = ?before,
+            after = ?after,
+            "Stable reorder so clock:now runs before db:find_connections"
+        );
+    }
+    out
+}
 
 impl<E: LlmEngine> Orchestrator<E> {
     #[allow(clippy::too_many_arguments)]
@@ -20,7 +47,7 @@ impl<E: LlmEngine> Orchestrator<E> {
     /// transitions via `apply_transition`.
     pub(super) async fn execute_tool_batch(
         &mut self,
-        tools: Vec<crate::orchestrator::state::ToolCall>,
+        tools: Vec<ToolCall>,
         tools_needed: bool,
         execution_ledger: &mut HashMap<String, ToolIntentTicket>,
         schema_recovery_attempted: &mut HashSet<String>,
@@ -34,6 +61,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                 "Latent tool intent detected in conversational path"
             );
         }
+        let tools = stable_prioritize_clock_now_before_db(tools);
         tracing::info!(
             event = "orchestrator.tools.batch",
             tool_count = tools.len(),
@@ -275,5 +303,53 @@ impl<E: LlmEngine> Orchestrator<E> {
         }
 
         Ok(ToolBatchDecision::Continue)
+    }
+}
+
+#[cfg(test)]
+mod clock_before_db_tests {
+    use super::stable_prioritize_clock_now_before_db;
+    use crate::orchestrator::state::ToolCall;
+    use serde_json::json;
+
+    fn tc(name: &str) -> ToolCall {
+        ToolCall {
+            name: name.to_string(),
+            args: json!({}),
+            id: None,
+        }
+    }
+
+    #[test]
+    fn reorders_db_before_clock_to_clock_first_stable() {
+        let tools = vec![tc("db:find_connections"), tc("clock:now")];
+        let out = stable_prioritize_clock_now_before_db(tools);
+        assert_eq!(out[0].name, "clock:now");
+        assert_eq!(out[1].name, "db:find_connections");
+    }
+
+    #[test]
+    fn preserves_relative_order_among_middle_priority_tools() {
+        let tools = vec![
+            tc("memory:query"),
+            tc("db:find_connections"),
+            tc("vault:read"),
+            tc("clock:now"),
+        ];
+        let out = stable_prioritize_clock_now_before_db(tools);
+        assert_eq!(
+            out.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+            vec!["clock:now", "memory:query", "vault:read", "db:find_connections"]
+        );
+    }
+
+    #[test]
+    fn unchanged_when_clock_already_first() {
+        let tools = vec![tc("clock:now"), tc("memory:query"), tc("db:find_connections")];
+        let out = stable_prioritize_clock_now_before_db(tools);
+        assert_eq!(
+            out.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+            vec!["clock:now", "memory:query", "db:find_connections"]
+        );
     }
 }
