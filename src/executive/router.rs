@@ -40,6 +40,23 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
             let view = ChatViewMode::from_cli(&cli);
             let (presentation_tx, presentation_rx) = mpsc::channel(100);
 
+            config.validate_discord_sidecar()?;
+            if config.discord.enabled && !config.discord_sidecar_should_run() {
+                tracing::warn!(
+                    event = "fcp.discord.sidecar_skipped",
+                    "Discord is enabled and application/channel are set, but discord.bot_token is missing or empty — chat runs without the Discord sidecar until you add a bot token (Developer Portal → Bot). The public key is for HTTP interactions later, not the gateway."
+                );
+            }
+            let mut discord_mux = if config.discord_sidecar_should_run() {
+                let (out_tx, out_rx) = mpsc::channel(
+                    config.discord.outbound_queue_capacity.max(1),
+                );
+                let (typing_tx, typing_rx) = mpsc::channel(8);
+                Some((out_tx, out_rx, typing_tx, typing_rx))
+            } else {
+                None
+            };
+
             match view {
                 ChatViewMode::Web => {
                     let session_result = start_chat_session(
@@ -49,24 +66,84 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                         cancel_token.clone(),
                         presentation_tx,
                         ignition_hint.clone(),
+                        discord_mux.as_ref().map(|(_, _, t, _)| t.clone()),
                     )
                     .await;
 
                     let mut session = session_result?;
-                    let web_result = crate::ui::web::run_web_chat(
-                        presentation_rx,
-                        session.user_action_tx.clone(),
-                        config,
-                        cancel_token.clone(),
-                    )
-                    .await;
+                    let web_result = if let Some((dtx, drx, _typing_tx, typing_rx)) = discord_mux.take()
+                    {
+                        use crate::presentation::multiplex::{
+                            spawn_presentation_multiplex, PresentationMultiplexTargets,
+                        };
+                        use tokio::sync::broadcast;
+
+                        const EVENT_BACKLOG: usize = 512;
+                        let (events_tx, _) =
+                            broadcast::channel::<crate::presentation::SessionEvent>(EVENT_BACKLOG);
+                        let mux_jh = spawn_presentation_multiplex(
+                            presentation_rx,
+                            PresentationMultiplexTargets {
+                                web_broadcast: Some(events_tx.clone()),
+                                terminal: None,
+                                terminal_omit_system_alarm: false,
+                                user_action_tx: session.user_action_tx.clone(),
+                                discord_outbound: Some(dtx),
+                            },
+                        );
+                        let disc_jh = tokio::spawn(crate::ui::discord::run_discord_sidecar(
+                            config.clone(),
+                            session.user_action_tx.clone(),
+                            drx,
+                            typing_rx,
+                            cancel_token.clone(),
+                        ));
+                        let r = crate::ui::web::run_web_chat_with_broadcast(
+                            events_tx,
+                            session.user_action_tx.clone(),
+                            config.clone(),
+                            cancel_token.clone(),
+                        )
+                        .await;
+                        log_peripheral_shutdown(&mut session);
+                        drop(session);
+                        let _ = mux_jh.await;
+                        match disc_jh.await {
+                            Ok(Ok(())) => {}
+                            Ok(Err(e)) => {
+                                tracing::error!(
+                                    event = "fcp.discord.sidecar_failed",
+                                    error = %e,
+                                    "Discord sidecar exited with error"
+                                );
+                            }
+                            Err(join_err) => {
+                                tracing::warn!(
+                                    event = "fcp.discord.join_failed",
+                                    error = %join_err,
+                                    "Discord sidecar task join error"
+                                );
+                            }
+                        }
+                        r
+                    } else {
+                        let r = crate::ui::web::run_web_chat(
+                            presentation_rx,
+                            session.user_action_tx.clone(),
+                            config.clone(),
+                            cancel_token.clone(),
+                        )
+                        .await;
+                        log_peripheral_shutdown(&mut session);
+                        r
+                    };
 
                     cancel_token.cancel();
-                    log_peripheral_shutdown(&mut session);
                     web_result
                 }
                 ChatViewMode::Terminal => {
                     let terminal = setup_terminal()?;
+                    let cfg_for_discord = config.clone();
 
                     let session_result = start_chat_session(
                         cli,
@@ -75,6 +152,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                         cancel_token.clone(),
                         presentation_tx,
                         ignition_hint,
+                        discord_mux.as_ref().map(|(_, _, t, _)| t.clone()),
                     )
                     .await;
 
@@ -86,13 +164,64 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                         }
                     };
 
-                    let mut app = TuiApp::new(presentation_rx, session.user_action_tx.clone());
-                    let token_metrics_rx = session.token_metrics_rx.clone();
-                    let result = app.run(terminal, Some(token_metrics_rx)).await;
+                    let result = if let Some((dtx, drx, _typing_tx, typing_rx)) = discord_mux.take()
+                    {
+                        use crate::presentation::multiplex::{
+                            spawn_presentation_multiplex, PresentationMultiplexTargets,
+                        };
+
+                        let (tui_tx, tui_rx) = mpsc::channel(256);
+                        let mux_jh = spawn_presentation_multiplex(
+                            presentation_rx,
+                            PresentationMultiplexTargets {
+                                web_broadcast: None,
+                                terminal: Some(tui_tx),
+                                terminal_omit_system_alarm: true,
+                                user_action_tx: session.user_action_tx.clone(),
+                                discord_outbound: Some(dtx),
+                            },
+                        );
+                        let disc_jh = tokio::spawn(crate::ui::discord::run_discord_sidecar(
+                            cfg_for_discord,
+                            session.user_action_tx.clone(),
+                            drx,
+                            typing_rx,
+                            cancel_token.clone(),
+                        ));
+                        let mut app = TuiApp::new(tui_rx, session.user_action_tx.clone());
+                        let token_metrics_rx = session.token_metrics_rx.clone();
+                        let r = app.run(terminal, Some(token_metrics_rx)).await;
+                        log_peripheral_shutdown(&mut session);
+                        drop(session);
+                        let _ = mux_jh.await;
+                        match disc_jh.await {
+                            Ok(Ok(())) => {}
+                            Ok(Err(e)) => {
+                                tracing::error!(
+                                    event = "fcp.discord.sidecar_failed",
+                                    error = %e,
+                                    "Discord sidecar exited with error"
+                                );
+                            }
+                            Err(join_err) => {
+                                tracing::warn!(
+                                    event = "fcp.discord.join_failed",
+                                    error = %join_err,
+                                    "Discord sidecar task join error"
+                                );
+                            }
+                        }
+                        r
+                    } else {
+                        let mut app = TuiApp::new(presentation_rx, session.user_action_tx.clone());
+                        let token_metrics_rx = session.token_metrics_rx.clone();
+                        let r = app.run(terminal, Some(token_metrics_rx)).await;
+                        log_peripheral_shutdown(&mut session);
+                        r
+                    };
 
                     cancel_token.cancel();
                     restore_terminal()?;
-                    log_peripheral_shutdown(&mut session);
                     result
                 }
             }
@@ -293,6 +422,15 @@ mod tests {
             match action {
                 UserAction::Submit(msg) => {
                     let trimmed = msg.trim().to_string();
+                    if !trimmed.is_empty() {
+                        pending.push_back(trimmed);
+                    }
+                }
+                UserAction::SubmitIngress(ing) => {
+                    let content = ing
+                        .for_model
+                        .unwrap_or_else(|| ing.display.clone());
+                    let trimmed = content.trim().to_string();
                     if !trimmed.is_empty() {
                         pending.push_back(trimmed);
                     }

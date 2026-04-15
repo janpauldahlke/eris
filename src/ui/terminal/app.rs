@@ -1,7 +1,7 @@
 use tokio::sync::{mpsc, watch};
 use crate::engine::token_metrics::LlmTokenSnapshot;
 use crate::executive::error::{Result, FcpError};
-use crate::presentation::{AlarmPayload, AgentStateUpdate, SessionEvent, UserAction};
+use crate::presentation::{AlarmPayload, AgentStateUpdate, InputSource, SessionEvent, UserAction, UserIngress};
 use crossterm::event::{Event as CrosstermEvent, EventStream, KeyCode};
 use tokio_stream::StreamExt;
 use std::time::Duration;
@@ -129,6 +129,12 @@ impl TuiApp {
                                 .push(format!("[model thought]{suffix}\n{body}"));
                             redraw_now = true;
                         }
+                        SessionEvent::UserTranscriptLine { source, body } => {
+                            let badge = source.badge_label();
+                            self.chat_stack.push(format!("[{badge}] {}", body));
+                            self.chat_follow_latest = true;
+                            redraw_now = true;
+                        }
                         SessionEvent::IncomingMessage(msg) => {
                             let before_len = self.chat_stack.len();
                             self.chat_stack.push(msg);
@@ -201,7 +207,6 @@ impl TuiApp {
                         return;
                     }
 
-                    self.chat_stack.push(format!("You: {}", trimmed));
                     self.chat_follow_latest = true;
                     let normalized = trimmed.to_lowercase();
                     let now = Instant::now();
@@ -227,7 +232,15 @@ impl TuiApp {
                     }
                     self.last_submit = Some((normalized, now));
                     self.pending_inputs += 1;
-                    let _ = self.action_tx.send(UserAction::Submit(msg)).await;
+                    let ingress = UserIngress {
+                        source: InputSource::Cli,
+                        display: trimmed.to_string(),
+                        for_model: None,
+                    };
+                    let _ = self
+                        .action_tx
+                        .send(UserAction::SubmitIngress(ingress))
+                        .await;
                 }
             }
             KeyCode::Esc => {

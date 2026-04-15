@@ -2,24 +2,7 @@
 
 use tokio::sync::{broadcast, mpsc};
 
-use crate::presentation::{AlarmPayload, SessionEvent, UserAction};
-
-fn alarm_to_user_action(payload: AlarmPayload) -> UserAction {
-    match payload {
-        AlarmPayload::Plain(label) => UserAction::SystemInject(label),
-        AlarmPayload::AgendaLinked {
-            agenda_task_id,
-            label,
-            alarm_record_id,
-            seconds_late,
-        } => UserAction::AgendaAlarmPending {
-            agenda_task_id,
-            label,
-            alarm_record_id,
-            seconds_late,
-        },
-    }
-}
+use crate::presentation::{alarm_payload_to_user_action, SessionEvent, UserAction};
 
 /// Forwards every [`SessionEvent`] to `events_tx` and mirrors [`SessionEvent::SystemAlarm`] onto `user_action_tx`.
 pub fn spawn_presentation_bridge(
@@ -30,7 +13,7 @@ pub fn spawn_presentation_bridge(
     tokio::spawn(async move {
         while let Some(evt) = presentation_rx.recv().await {
             if let SessionEvent::SystemAlarm(payload) = &evt {
-                let action = alarm_to_user_action(payload.clone());
+                let action = alarm_payload_to_user_action(payload.clone());
                 if user_action_tx.try_send(action).is_err() {
                     tracing::error!(
                         event = "fcp.web.bridge.alarm_dropped",
@@ -67,7 +50,7 @@ pub fn spawn_presentation_bridge(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::presentation::SessionEvent;
+    use crate::presentation::{AlarmPayload, SessionEvent};
 
     #[tokio::test]
     async fn bridge_relays_system_alarm_to_user_action_and_broadcasts() {

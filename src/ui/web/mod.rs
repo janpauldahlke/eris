@@ -47,18 +47,13 @@ pub struct WebAppState {
     pub shutdown_token: CancellationToken,
 }
 
-/// Run the HTTP server until `cancel_token` is cancelled or the listener fails.
-pub async fn run_web_chat(
-    presentation_rx: mpsc::Receiver<SessionEvent>,
+/// Run the HTTP server with an **existing** session event broadcast (e.g. presentation multiplexer + Discord).
+pub async fn run_web_chat_with_broadcast(
+    events_tx: broadcast::Sender<SessionEvent>,
     user_action_tx: mpsc::Sender<UserAction>,
     config: Arc<AppConfig>,
     cancel_token: CancellationToken,
 ) -> Result<()> {
-    let (events_tx, _) = broadcast::channel::<SessionEvent>(EVENT_BACKLOG);
-    let bridge_user_tx = user_action_tx.clone();
-    let bridge_events_tx = events_tx.clone();
-    let _bridge = bridge::spawn_presentation_bridge(presentation_rx, bridge_events_tx, bridge_user_tx);
-
     let state = WebAppState {
         events_tx: events_tx.clone(),
         user_action_tx,
@@ -118,4 +113,19 @@ pub async fn run_web_chat(
         .map_err(|e| FcpError::NetworkFault(format!("Web server error: {e}")))?;
 
     Ok(())
+}
+
+/// Run the HTTP server until `cancel_token` is cancelled or the listener fails.
+pub async fn run_web_chat(
+    presentation_rx: mpsc::Receiver<SessionEvent>,
+    user_action_tx: mpsc::Sender<UserAction>,
+    config: Arc<AppConfig>,
+    cancel_token: CancellationToken,
+) -> Result<()> {
+    let (events_tx, _) = broadcast::channel::<SessionEvent>(EVENT_BACKLOG);
+    let bridge_user_tx = user_action_tx.clone();
+    let bridge_events_tx = events_tx.clone();
+    let _bridge = bridge::spawn_presentation_bridge(presentation_rx, bridge_events_tx, bridge_user_tx);
+
+    run_web_chat_with_broadcast(events_tx, user_action_tx, config, cancel_token).await
 }

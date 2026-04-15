@@ -43,6 +43,14 @@ unicode-normalization = "0.1"
 axum = { version = "0.8", features = ["json", "macros"] }
 askama = { version = "0.14", features = ["blocks", "derive"] }
 askama_web = { version = "0.14", features = ["axum-0.8"] }
+serenity = { version = "0.12.5", default-features = false, features = [
+    "builder",
+    "cache",
+    "client",
+    "gateway",
+    "model",
+    "rustls_backend",
+] }
 
 [build-dependencies]
 gws-builder = "0.1"
