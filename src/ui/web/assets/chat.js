@@ -8,9 +8,24 @@
   const input = document.getElementById("message-input");
   const btnExit = document.getElementById("btn-exit");
   const btnSend = form.querySelector('button[type="submit"]');
+  const shutdownOverlay = document.getElementById("shutdown-overlay");
+  const shutdownDetail = document.getElementById("shutdown-overlay-detail");
 
   const TELEMETRY_MAX_LINES = 80;
   let shuttingDown = false;
+
+  function showShutdownOverlay(detail) {
+    if (!shutdownOverlay) return;
+    if (shutdownDetail && detail) shutdownDetail.textContent = detail;
+    shutdownOverlay.classList.remove("hidden");
+    shutdownOverlay.setAttribute("aria-hidden", "false");
+  }
+
+  function hideShutdownOverlay() {
+    if (!shutdownOverlay) return;
+    shutdownOverlay.classList.add("hidden");
+    shutdownOverlay.setAttribute("aria-hidden", "true");
+  }
 
   /**
    * Some models emit LaTeX math for arrows (e.g. `$\rightarrow$`), which is not rendered in plain text.
@@ -121,15 +136,28 @@
     input.disabled = true;
     appendTelemetry("[ui] Stopping server (clean shutdown)…");
     setStatus("Shutting down…");
+    showShutdownOverlay(
+      "Stopping Eris, managed sidecars, and asking Ollama to unload this session’s models. This can take a few seconds after the page closes."
+    );
     try {
       const res = await fetch("/api/shutdown", { method: "POST" });
       if (res.ok) {
-        setStatus("Server stopped. Your shell prompt should return.");
-        appendTelemetry("[ui] Goodbye — closing tab if the browser allows…");
+        setStatus("Server stop requested. Terminal will finish cleanup.");
+        appendTelemetry(
+          "[ui] Goodbye — Ollama model RAM should drop shortly (check Activity Monitor). Closing tab if the browser allows…"
+        );
+        if (shutdownDetail) {
+          shutdownDetail.textContent =
+            "Stop signal sent. The terminal process will unload models and exit; this tab will close if the browser allows.";
+        }
         es.close();
+        await new Promise(function (resolve) {
+          window.setTimeout(resolve, 1100);
+        });
         tryCloseTab();
       } else {
         shuttingDown = false;
+        hideShutdownOverlay();
         if (btnExit) btnExit.disabled = false;
         if (btnSend) btnSend.disabled = false;
         input.disabled = false;
@@ -141,7 +169,14 @@
     } catch (err) {
       setStatus("Server unreachable (may already have exited).");
       appendTelemetry("[ui] Connection lost — if the terminal is back at a prompt, you are done.");
+      if (shutdownDetail) {
+        shutdownDetail.textContent =
+          "Could not reach the server. If your shell is back at a prompt, cleanup may already be running.";
+      }
       es.close();
+      await new Promise(function (resolve) {
+        window.setTimeout(resolve, 800);
+      });
       tryCloseTab();
     }
   }

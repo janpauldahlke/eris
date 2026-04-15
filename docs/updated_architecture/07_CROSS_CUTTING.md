@@ -9,7 +9,7 @@ Orchestrator maps many failures into recovery loops or idle; **`Interrupted`** i
 ## Async and concurrency
 
 - **Tokio** runtime (`#[tokio::main]`).
-- **No `Arc<Mutex<>>`** for orchestrator state—single task owns `Orchestrator`; UI talks via channels.
+- **No `Arc<Mutex<>>`** for orchestrator state—single task owns `Orchestrator`; presentation surfaces talk via **`mpsc`** (`UserAction` in, `SessionEvent` out) and optional **`broadcast`** for web + mux.
 - **Cross-task flags:** a shared `Arc<AtomicBool>` (`promotion_suppressed_during_step`) coordinates the snapshot daemon with `Orchestrator::step` using `SeqCst` load/store only—no mutex on orchestrator state.
 - **CPU-heavy work:** bincode in ephemeral, some JSON work uses `spawn_blocking`.
 - **`CancellationToken`** (tokio-util) for graceful shutdown.

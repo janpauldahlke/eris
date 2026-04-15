@@ -14,9 +14,9 @@ Each tool implements:
 
 - **Registry:** `HashMap<String, Arc<dyn Tool>>`.
 - **`get_allowed_tools(state)`** — filters tools by **`AgentState`**:
-  - **Chat:** most tools except `agenda:complete` (prevents completing before user turn semantics).
-  - **Reflect:** tool-sandbox style set: memory, vault read/list, web artifact query, agenda mutations, clocks, weather, wiki, system health—not `vault:write`.
-  - **Idle:** includes `vault:write`, `web:fetch`, `agenda:complete`, etc.
+  - **Chat:** all registered tools **except** `agenda:complete` (prevents completing before user turn semantics). Includes mail/DB/etc. when registered.
+  - **Reflect:** sandbox set: memory, `vault:read` / `vault:list`, `web:artifact_query`, agenda mutations, clocks, weather, wiki, `system:health`, `db:find_connections`, **`mail:check` / `mail:read` / `mail:digest`** — **no** `vault:write`, **`web:fetch`**, **`mail:write` / `mail:delete` / `mail:move`**.
+  - **Idle:** Reflect set **plus** `vault:write`, `web:fetch`, `agenda:complete`, **`mail:write` / `mail:delete` / `mail:move`**.
   - **Recover:** all registered (recovery pass).
 - **`execute_tool`:** state check → JSON Schema validate (`jsonschema`) → `tool.execute`.
 - **Recover empty result** → `ToolFault` semantic guard.
@@ -37,6 +37,8 @@ Shared helpers (e.g. path mutability) used by vault tools.
 | `tools/clock/` | `clock:now`, `clock:timer`, `clock:alarm` |
 | `tools/weather/` | `weather:current`, `weather:forecast` (Open-Meteo via `ApiHttpClient`) |
 | `tools/wiki/` | `wiki:summary` (Wikipedia REST) |
+| `tools/db_rest/` | `db:find_connections` (Deutsche Bahn–style journey search via configured REST profile) |
+| `tools/mail/` | `mail:check`, `mail:read`, `mail:write`, `mail:digest`, `mail:delete`, `mail:move` (Gmail via Google Workspace client; tools register only when `google.enabled` and credentials resolve) |
 
 Agenda and alarms persist JSON under `.fcp/tools/` (see `vault_layout`).
 
@@ -51,10 +53,14 @@ Agenda and alarms persist JSON under `.fcp/tools/` (see `vault_layout`).
 
 Only holds embedded descriptor strings—no runtime tool loading from disk.
 
+## Routing phrases (`tools/routing_phrases.rs`)
+
+Compile-time **`fallback_triggers(tool_name)`** strings used when a tool has **no** `routing_hints` in its embedded TOML descriptor. Keeps ToolRouter embedding text and the slim phrase compendium aligned without duplicating every tool inside `tool_router.rs`.
+
 ## Adding a tool (agent checklist)
 
 1. Implement `Tool` in appropriate `tools/<area>/`.
-2. Register in `executive/router.rs` `Gatekeeper::register`.
+2. Register in `executive/chat_session.rs` `Gatekeeper::register` (central chat bootstrap).
 3. Add embedded descriptor TOML in `specs.rs` and wire into `DESCRIPTOR_TOMLS`.
-4. Extend `tool_router::enrich_for_routing` default hints if needed for new `name`.
+4. If the tool should embed-route without full TOML hints, add a `fallback_triggers` arm in `routing_phrases.rs`.
 5. Run `cargo test`.

@@ -6,13 +6,24 @@ use crate::config::AppConfig;
 use tokio_util::sync::CancellationToken;
 use std::sync::Arc;
 
-fn log_peripheral_shutdown(session: &mut StartedChatSession) {
+async fn log_peripheral_shutdown(session: &mut StartedChatSession, config: &AppConfig) {
+    let eris_owned_ollama = session.peripheral_lifecycle.started_ollama();
     tracing::info!("Tearing down peripheral daemons started by this session…");
-    let stopped = session.peripheral_lifecycle.shutdown_started_peripherals();
+    let stopped = session.peripheral_lifecycle.shutdown_async().await;
     if stopped.is_empty() {
-        tracing::info!("No peripheral daemons were started by this session.");
+        tracing::info!("No managed peripheral child processes were stopped (Ollama/Qdrant were already running or not started by Eris).");
     } else {
-        tracing::info!(stopped = %stopped.join(", "), "Stopped peripheral daemons");
+        tracing::info!(stopped = %stopped.join(", "), "Stopped managed peripheral child processes");
+    }
+    if config.unload_ollama_models_on_chat_exit && !eris_owned_ollama {
+        tracing::info!(
+            chat_model = %config.model_name,
+            embed_model = %config.embed_model_name,
+            "Unloading session models via `ollama stop` (Ollama server was not started by this Eris session)"
+        );
+        crate::executive::peripherals::unload_ollama_models_cli_best_effort(config).await;
+    } else if config.unload_ollama_models_on_chat_exit && eris_owned_ollama {
+        tracing::debug!("Skipping `ollama stop`; managed Ollama server for this session was already torn down");
     }
 }
 
@@ -105,7 +116,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                             cancel_token.clone(),
                         )
                         .await;
-                        log_peripheral_shutdown(&mut session);
+                        log_peripheral_shutdown(&mut session, config.as_ref()).await;
                         drop(session);
                         let _ = mux_jh.await;
                         match disc_jh.await {
@@ -134,7 +145,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                             cancel_token.clone(),
                         )
                         .await;
-                        log_peripheral_shutdown(&mut session);
+                        log_peripheral_shutdown(&mut session, config.as_ref()).await;
                         r
                     };
 
@@ -144,6 +155,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                 ChatViewMode::Terminal => {
                     let terminal = setup_terminal()?;
                     let cfg_for_discord = config.clone();
+                    let cfg_shutdown = config.clone();
 
                     let session_result = start_chat_session(
                         cli,
@@ -191,7 +203,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                         let mut app = TuiApp::new(tui_rx, session.user_action_tx.clone());
                         let token_metrics_rx = session.token_metrics_rx.clone();
                         let r = app.run(terminal, Some(token_metrics_rx)).await;
-                        log_peripheral_shutdown(&mut session);
+                        log_peripheral_shutdown(&mut session, cfg_shutdown.as_ref()).await;
                         drop(session);
                         let _ = mux_jh.await;
                         match disc_jh.await {
@@ -216,7 +228,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                         let mut app = TuiApp::new(presentation_rx, session.user_action_tx.clone());
                         let token_metrics_rx = session.token_metrics_rx.clone();
                         let r = app.run(terminal, Some(token_metrics_rx)).await;
-                        log_peripheral_shutdown(&mut session);
+                        log_peripheral_shutdown(&mut session, cfg_shutdown.as_ref()).await;
                         r
                     };
 

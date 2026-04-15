@@ -2,7 +2,7 @@
 
 ## What this program is
 
-**Eris** is a local, vault-centric assistant: a Rust binary that connects a **terminal UI (TUI)** to an **Ollama** chat model, wraps tools behind a **gatekeeper** (JSON Schema validation + per-state allowlists), optionally routes “which tools matter” via **embedding similarity** (ToolRouter), and persists long-term recall in **Qdrant** (semantic memory) while keeping short-lived staging in an **moka** cache (ephemeral memory).
+**Eris** is a local, vault-centric assistant: a Rust binary that connects **presentation surfaces**—full-screen **ratatui** (`eris chat`), **localhost web + SSE** (`eris chat --web`), and optionally **Discord**—to one shared **Ollama**-backed orchestrator. Tools sit behind a **gatekeeper** (JSON Schema + per-state allowlists); pre-LLM “which tools matter” uses **embedding similarity** (ToolRouter). Long-term recall lives in **Qdrant**; short-lived staging uses an **moka** cache (ephemeral memory).
 
 The **active vault** is always the process **current working directory** at config load—not `vault_root + workspace` from TOML. That is a deliberate mental model: `cd` into your vault, run chat, `.fcp/` and markdown live beside your notes.
 
@@ -10,9 +10,10 @@ The **active vault** is always the process **current working directory** at conf
 
 ```mermaid
 flowchart TB
-    subgraph ui["UI layer"]
-        TUI["ratatui TuiApp"]
-        EVT["mpsc: TuiEvent / UserAction"]
+    subgraph ui["Presentation layer"]
+        TUI["ui/terminal TuiApp"]
+        WEB["ui/web Axum+SSE"]
+        DISC["ui/discord sidecar"]
     end
 
     subgraph orch["Orchestrator layer"]
@@ -37,8 +38,12 @@ flowchart TB
         SEM["SemanticBrain Qdrant"]
     end
 
-    TUI --> EVT
-    EVT --> ORC
+    TUI -->|UserAction| ORC
+    WEB -->|UserAction| ORC
+    DISC -->|UserAction| ORC
+    ORC -->|SessionEvent| TUI
+    ORC -->|SessionEvent| WEB
+    ORC -.->|mux / assistant lines| DISC
     ORC --> CA
     ORC --> CV
     ORC --> TR
@@ -58,19 +63,19 @@ flowchart TB
 sequenceDiagram
     participant M as main
     participant R as router execute_command
-    participant T as TUI
+    participant V as Terminal or Web (+ optional Discord mux)
     participant O as Orchestrator
     participant E as OllamaClient
 
     M->>R: Chat + config + cancel token
-    R->>T: channels + terminal
+    R->>V: presentation_tx + view setup
     R->>O: spawn loop + step on input
-    T->>O: UserAction::Submit
+    V->>O: UserAction (Submit / SubmitIngress / …)
     O->>O: pre-LLM routing, assemble context
     O->>E: generate JSON response
     E-->>O: assistant JSON
     O->>O: parse, tools, gatekeeper, stack
-    O->>T: TuiEvent deck / state
+    O->>V: SessionEvent deck / state / errors
 ```
 
 ## Glossary
@@ -98,7 +103,10 @@ sequenceDiagram
 | `tools/` | Trait, gatekeeper, tool implementations, descriptors |
 | `ingest/` | Chunking helpers for semantic pipeline |
 | `telemetry/` | tracing init, preflight, routing log codes |
-| `ui/` | TUI app, render, events |
+| `presentation/` | View-neutral `UserAction`, `SessionEvent`, `InputSource`, alarm → action relay, presentation multiplexer |
+| `ui/terminal/` | ratatui `TuiApp`, render, crossterm setup |
+| `ui/web/` | Axum router, SSE, browser chat |
+| `ui/discord/` | Optional Serenity gateway sidecar |
 | `util/` | HTTP API client, fs watch |
 
 ## Out of scope for this doc set

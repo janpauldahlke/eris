@@ -486,6 +486,7 @@ pub async fn start_chat_session(
         assistant_compact: config.optimize_context_assistant_compact,
         full_tool_schemas_in_llm_view: config.optimize_context_full_tool_schemas,
         omit_resolved_tool_recovery: config.optimize_context_omit_resolved_tool_recovery,
+        assistant_non_json_placeholder: config.optimize_context_assistant_non_json_placeholder,
         hints: Arc::new(context_view_hints),
     };
 

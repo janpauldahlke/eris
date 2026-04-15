@@ -139,3 +139,6 @@
 15/04/2026
 
 - [x] feature, discord integration, so user can call eris via discord
+- [x] DOCS: full pass on `README.md` and `docs/updated_architecture/*` (web UI, Discord, welder, presentation layer, heartbeat flag, mail/DB tools)
+- [x] fix: json tool violation excluded from chat stack
+- [x] fix: teardown is not grouped below spawn id

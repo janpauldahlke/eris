@@ -12,7 +12,7 @@ This folder is a **developer and agent** guide to the `eris` crate (`src/`). It 
 | [03_ENGINE_LLM_AND_ROUTING.md](./03_ENGINE_LLM_AND_ROUTING.md) | `LlmEngine`, Ollama, ToolRouter, optional reasoning FSM |
 | [04_MEMORY_SUBSYSTEM.md](./04_MEMORY_SUBSYSTEM.md) | Ephemeral cache, Qdrant semantic brain, ingest, snapshot daemon |
 | [05_TOOLS_GATEKEEPER_DESCRIPTORS.md](./05_TOOLS_GATEKEEPER_DESCRIPTORS.md) | `Tool` trait, registry, gatekeeper, embedded descriptors |
-| [06_UI_TELEMETRY_OPERATIONS.md](./06_UI_TELEMETRY_OPERATIONS.md) | TUI, events, alarms, heartbeat, logging, preflight |
+| [06_UI_TELEMETRY_OPERATIONS.md](./06_UI_TELEMETRY_OPERATIONS.md) | Presentation types (`SessionEvent` / `UserAction`), TUI (`ui/terminal`), web UI (`ui/web`), optional Discord sidecar, multiplexer, alarms, conditional idle heartbeat, logging, preflight |
 | [07_CROSS_CUTTING.md](./07_CROSS_CUTTING.md) | Errors, async patterns, workspace rules reminder |
 | [08_SELF_REVIEW.md](./08_SELF_REVIEW.md) | Author notes, caveats, possible doc drift |
 | [09_CRITICAL_REVIEW.md](./09_CRITICAL_REVIEW.md) | Critical engineering review: debt, refactors, redesign triggers |
