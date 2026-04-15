@@ -2,6 +2,9 @@ use std::io::ErrorKind;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 use url::Url;
@@ -18,6 +21,9 @@ const READY_POLL_MS: u64 = 250;
 /// If the first probe misses a slow-starting system Ollama (e.g. login item), wait this long
 /// before spawning a second `ollama serve`, which duplicates RAM use.
 const PRE_SPAWN_OLLAMA_WAIT_SECS: u64 = 30;
+/// After SIGTERM on the managed process group, wait this long before SIGKILL.
+const DAEMON_SIGTERM_GRACE_SECS: u64 = 10;
+const DAEMON_TRY_WAIT_POLL_MS: u64 = 150;
 
 enum ManagedProcessKind {
     Child(Child),
@@ -33,12 +39,7 @@ impl ManagedProcess {
     fn shutdown(&mut self) {
         match &mut self.kind {
             ManagedProcessKind::Child(child) => {
-                if let Err(e) = child.kill() {
-                    tracing::warn!(daemon = self.name, error = %e, "Failed to stop managed daemon");
-                }
-                if let Err(e) = child.wait() {
-                    tracing::warn!(daemon = self.name, error = %e, "Failed to reap managed daemon");
-                }
+                sync_reap_managed_child(child, self.name);
             }
             ManagedProcessKind::DockerContainer { name } => {
                 let status = Command::new("docker")
@@ -69,13 +70,43 @@ impl PeripheralLifecycle {
         self.qdrant.is_some()
     }
 
+    /// Best-effort teardown without blocking the async runtime (used from chat shutdown).
+    pub async fn shutdown_async(&mut self) -> Vec<&'static str> {
+        let ollama = self.ollama.take();
+        let qdrant = self.qdrant.take();
+        let mut stopped = Vec::new();
+        if ollama.is_some() {
+            stopped.push("ollama");
+        }
+        if qdrant.is_some() {
+            stopped.push("qdrant");
+        }
+        let join_result = tokio::task::spawn_blocking(move || {
+            if let Some(mut p) = ollama {
+                p.shutdown();
+            }
+            if let Some(mut p) = qdrant {
+                p.shutdown();
+            }
+        })
+        .await;
+        if let Err(e) = join_result {
+            tracing::error!(
+                error = %e,
+                "spawn_blocking join failed while tearing down peripheral daemons"
+            );
+        }
+        stopped
+    }
+
+    /// Synchronous teardown (used from [`Drop`]); may block briefly.
     pub fn shutdown_started_peripherals(&mut self) -> Vec<&'static str> {
         let mut stopped = Vec::new();
-        if let Some(ollama) = self.ollama.as_mut() {
+        if let Some(mut ollama) = self.ollama.take() {
             ollama.shutdown();
             stopped.push("ollama");
         }
-        if let Some(qdrant) = self.qdrant.as_mut() {
+        if let Some(mut qdrant) = self.qdrant.take() {
             qdrant.shutdown();
             stopped.push("qdrant");
         }
@@ -86,6 +117,142 @@ impl PeripheralLifecycle {
 impl Drop for PeripheralLifecycle {
     fn drop(&mut self) {
         let _ = self.shutdown_started_peripherals();
+    }
+}
+
+/// Stop a [`Child`] we spawned as a dedicated process group (Unix) or the direct child only.
+fn sync_reap_managed_child(child: &mut Child, name: &'static str) {
+    #[cfg(unix)]
+    {
+        let pid = child.id();
+        if pid == 0 {
+            tracing::warn!(
+                daemon = name,
+                "child pid is 0; falling back to Child::kill (process group signal unavailable)"
+            );
+            if let Err(e) = child.kill() {
+                tracing::warn!(daemon = name, error = %e, "Failed to stop managed daemon");
+            }
+            if let Err(e) = child.wait() {
+                tracing::warn!(daemon = name, error = %e, "Failed to reap managed daemon");
+            }
+            return;
+        }
+        let pid_i32 = match i32::try_from(pid) {
+            Ok(v) => v,
+            Err(_) => {
+                tracing::warn!(
+                    daemon = name,
+                    pid,
+                    "pid does not fit i32; falling back to Child::kill (no process-group signal)"
+                );
+                if let Err(e) = child.kill() {
+                    tracing::warn!(daemon = name, error = %e, "Failed to stop managed daemon");
+                }
+                if let Err(e) = child.wait() {
+                    tracing::warn!(daemon = name, error = %e, "Failed to reap managed daemon");
+                }
+                return;
+            }
+        };
+        let group = format!("-{pid_i32}");
+        match Command::new("kill")
+            .args(["-TERM", &group])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+        {
+            Err(e) => {
+                tracing::warn!(
+                    daemon = name,
+                    error = %e,
+                    "Could not send SIGTERM to process group; will try direct Child::kill"
+                );
+            }
+            Ok(st) if !st.success() => {
+                tracing::debug!(
+                    daemon = name,
+                    code = ?st.code(),
+                    "SIGTERM process group returned non-success (daemon may already be exiting)"
+                );
+            }
+            Ok(_) => {}
+        }
+
+        let deadline =
+            std::time::Instant::now() + Duration::from_secs(DAEMON_SIGTERM_GRACE_SECS);
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    tracing::info!(
+                        daemon = name,
+                        code = ?status.code(),
+                        "Managed daemon exited after SIGTERM"
+                    );
+                    return;
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!(
+                        daemon = name,
+                        error = %e,
+                        "try_wait failed while waiting for managed daemon to exit"
+                    );
+                    break;
+                }
+            }
+            if std::time::Instant::now() >= deadline {
+                tracing::warn!(
+                    daemon = name,
+                    grace_secs = DAEMON_SIGTERM_GRACE_SECS,
+                    "Managed daemon still running after SIGTERM grace window; sending SIGKILL to process group"
+                );
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(DAEMON_TRY_WAIT_POLL_MS));
+        }
+
+        let kill_group = Command::new("kill")
+            .args(["-KILL", &group])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        if let Err(e) = kill_group {
+            tracing::warn!(
+                daemon = name,
+                error = %e,
+                "SIGKILL process group failed; attempting Child::kill on direct child"
+            );
+        }
+
+        if let Err(e) = child.kill() {
+            tracing::debug!(
+                daemon = name,
+                error = %e,
+                "Child::kill after group SIGKILL (process may already be reaped)"
+            );
+        }
+        match child.wait() {
+            Ok(status) => {
+                tracing::info!(
+                    daemon = name,
+                    code = ?status.code(),
+                    "Managed daemon reaped"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(daemon = name, error = %e, "Failed to reap managed daemon");
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        if let Err(e) = child.kill() {
+            tracing::warn!(daemon = name, error = %e, "Failed to stop managed daemon");
+        }
+        if let Err(e) = child.wait() {
+            tracing::warn!(daemon = name, error = %e, "Failed to reap managed daemon");
+        }
     }
 }
 
@@ -103,8 +270,7 @@ pub async fn ensure_peripherals_for_chat(config: &AppConfig) -> Result<Periphera
             tracing::warn!("Ollama still not reachable after extended wait; attempting Rust-managed launch");
             let mut child = spawn_ollama_daemon(config)?;
             if !wait_for_ollama(&config.ollama_host, READY_TIMEOUT_SECS).await {
-                let _ = child.kill();
-                let _ = child.wait();
+                sync_reap_managed_child(&mut child, "ollama-bootstrap");
                 return Err(FcpError::NetworkFault(
                     "FATAL: Ollama daemon failed to become ready after launch attempt.".into(),
                 ));
@@ -122,8 +288,7 @@ pub async fn ensure_peripherals_for_chat(config: &AppConfig) -> Result<Periphera
         match spawn_daemon("qdrant", &config.qdrant_daemon) {
             Ok(mut child) => {
                 if !wait_for_qdrant(&config.qdrant_url, READY_TIMEOUT_SECS).await {
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    sync_reap_managed_child(&mut child, "qdrant-bootstrap");
                     return Err(FcpError::NetworkFault(
                         "FATAL: Qdrant sidecar failed to become ready after launch attempt.".into(),
                     ));
@@ -239,6 +404,14 @@ fn qdrant_host_port(qdrant_url: &str) -> Result<u16> {
     Ok(parsed.port().unwrap_or(6334))
 }
 
+fn apply_unix_sidecar_process_group(cmd: &mut Command) {
+    #[cfg(unix)]
+    {
+        // New session leader: SIGTERM/SIGKILL on `-pid` reaches `ollama serve` and its runners.
+        cmd.process_group(0);
+    }
+}
+
 fn spawn_ollama_daemon(config: &AppConfig) -> Result<Child> {
     let daemon = &config.ollama_daemon;
     let ctx = config.num_ctx.max(1);
@@ -248,12 +421,13 @@ fn spawn_ollama_daemon(config: &AppConfig) -> Result<Child> {
         command = %render_daemon_command(daemon),
         "Spawning Ollama with server default context length from config"
     );
-    Command::new(&daemon.command)
-        .args(&daemon.args)
+    let mut cmd = Command::new(&daemon.command);
+    cmd.args(&daemon.args)
         .env(OLLAMA_CONTEXT_LENGTH_ENV, ctx.to_string())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
+        .stderr(Stdio::null());
+    apply_unix_sidecar_process_group(&mut cmd);
+    cmd.spawn()
         .map_err(|e| {
             FcpError::NetworkFault(format!(
                 "FATAL: failed to launch ollama daemon with `{}` ({}={}): {e}",
@@ -265,11 +439,12 @@ fn spawn_ollama_daemon(config: &AppConfig) -> Result<Child> {
 }
 
 fn spawn_daemon(name: &'static str, daemon: &DaemonCommand) -> Result<Child> {
-    Command::new(&daemon.command)
-        .args(&daemon.args)
+    let mut cmd = Command::new(&daemon.command);
+    cmd.args(&daemon.args)
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
+        .stderr(Stdio::null());
+    apply_unix_sidecar_process_group(&mut cmd);
+    cmd.spawn()
         .map_err(|e| {
             FcpError::NetworkFault(format!(
                 "FATAL: failed to launch {name} daemon with `{}`: {e}",
@@ -283,6 +458,60 @@ fn render_daemon_command(daemon: &DaemonCommand) -> String {
         daemon.command.clone()
     } else {
         format!("{} {}", daemon.command, daemon.args.join(" "))
+    }
+}
+
+/// Best-effort `ollama stop` for the configured chat and embedding models. Frees most model RAM
+/// while leaving the Ollama server (e.g. Ollama.app) running. Safe to call when no model is loaded.
+pub async fn unload_ollama_models_cli_best_effort(config: &AppConfig) {
+    if !crate::util::ollama_host_cli::host_ollama_cli_subprocess_allowed() {
+        tracing::debug!(
+            event = "fcp.ollama.unload_skipped",
+            "Skipping `ollama stop` (host CLI disabled under test/CI or FCP_SKIP_HOST_OLLAMA_CLI)"
+        );
+        return;
+    }
+    let mut models = vec![config.model_name.clone(), config.embed_model_name.clone()];
+    models.retain(|m| !m.trim().is_empty());
+    models.sort();
+    models.dedup();
+    if models.is_empty() {
+        return;
+    }
+    let join_result = tokio::task::spawn_blocking(move || {
+        for model in models {
+            let status = Command::new("ollama")
+                .args(["stop", &model])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            match status {
+                Ok(s) if s.success() => {
+                    tracing::info!(%model, "ollama stop succeeded after chat exit");
+                }
+                Ok(s) => {
+                    tracing::debug!(
+                        %model,
+                        code = ?s.code(),
+                        "ollama stop exited with non-success (model may not have been loaded)"
+                    );
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        %model,
+                        error = %e,
+                        "ollama CLI not available or stop invocation failed"
+                    );
+                }
+            }
+        }
+    })
+    .await;
+    if let Err(e) = join_result {
+        tracing::warn!(
+            error = %e,
+            "spawn_blocking join failed while unloading Ollama models"
+        );
     }
 }
 

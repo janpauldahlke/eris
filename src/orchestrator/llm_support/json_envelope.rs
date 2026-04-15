@@ -11,7 +11,7 @@ pub const JSON_REPAIR_UI_SUMMARY: &str = "[SYSTEM OVERRIDE: FUCKUP DETECTED] JSO
 /// Human- and model-oriented hints appended after serde’s error when [`LlmResponse`] parsing fails.
 /// Serde’s `expected ',' or '}'` near a `]` is often misread as a comma problem; this steers toward
 /// the real issue (extra/missing `}` around `tool_calls` entries).
-const LLM_JSON_PARSE_RECOVERY_HINT_BODY: &str = r##"Your last assistant message was not valid JSON.
+const LLM_JSON_PARSE_RECOVERY_HINT_BODY: &str = r##"The reply you just generated for this turn was not valid protocol JSON (single object: thought, status, message_to_user, tool_calls).
 
 The serde error often means unbalanced { } braces — not “add a comma”. When `tool_calls` has exactly ONE item, a common mistake is: after the `}` that closes `args`, you must emit one more `}` to close the tool object before `]` ends the array.
 
@@ -22,11 +22,50 @@ If the error says expected ',' or '}' at a line that shows `]`, you probably nee
 
 Reply with one JSON object only (thought, status, message_to_user, tool_calls). No prose or markdown outside it."##;
 
+/// Max chars for the optional single-line preview appended to JSON-parse recovery messages.
+pub const LLM_JSON_PARSE_RECOVERY_PREVIEW_MAX_CHARS: usize = 200;
+
+/// Collapses newlines to spaces and caps length for a safe one-line model-facing preview.
+pub fn capped_single_line_protocol_preview(raw: &str, max_chars: usize) -> String {
+    let collapsed: String = raw
+        .chars()
+        .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+        .collect();
+    let collapsed = collapsed.trim();
+    let count = collapsed.chars().count();
+    if count <= max_chars {
+        return collapsed.to_string();
+    }
+    let take = max_chars.saturating_sub(1);
+    let mut s: String = collapsed.chars().take(take).collect();
+    s.push('…');
+    s
+}
+
+/// Parse the leading JSON object as [`LlmResponse`] after tool-call normalization (same contract as the orchestrator directive path).
+pub fn parse_llm_response_protocol(raw: &str) -> Result<LlmResponse, serde_json::Error> {
+    let json_str = split_leading_json_object(raw).0;
+    let mut parsed: LlmResponse = serde_json::from_str(json_str)?;
+    parsed.normalize_tool_calls();
+    Ok(parsed)
+}
+
 /// Full recovery payload for [`crate::orchestrator::state::LoopDirective::RecoverFromFuckup`].
 pub fn llm_json_parse_recovery_message(err: &serde_json::Error) -> String {
     format!(
         "{err}\n\n{}\n{}",
         FCP_JSON_REPAIR_MARKER, LLM_JSON_PARSE_RECOVERY_HINT_BODY
+    )
+}
+
+/// Same as [`llm_json_parse_recovery_message`] plus a capped single-line excerpt of the raw model output (for the recovery LLM pass only).
+pub fn llm_json_parse_recovery_message_with_excerpt(err: &serde_json::Error, raw: &str) -> String {
+    let preview = capped_single_line_protocol_preview(raw, LLM_JSON_PARSE_RECOVERY_PREVIEW_MAX_CHARS);
+    format!(
+        "{err}\n\n{}\n{}\n\n[FCP: protocol_preview]\n{}",
+        FCP_JSON_REPAIR_MARKER,
+        LLM_JSON_PARSE_RECOVERY_HINT_BODY,
+        preview
     )
 }
 
@@ -129,5 +168,14 @@ mod tests {
         assert!(msg.contains("tool_calls"));
         assert!(msg.contains(FCP_JSON_REPAIR_MARKER));
         assert!(msg.contains("one more"));
+    }
+
+    #[test]
+    fn json_parse_recovery_with_excerpt_includes_preview_marker() {
+        let raw = "That's prose\nnot json";
+        let err = parse_llm_response_protocol(raw).expect_err("expected parse failure");
+        let msg = llm_json_parse_recovery_message_with_excerpt(&err, raw);
+        assert!(msg.contains("[FCP: protocol_preview]"));
+        assert!(msg.contains("That's prose"));
     }
 }

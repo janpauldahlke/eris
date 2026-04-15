@@ -229,6 +229,9 @@ pub struct AppConfig {
     /// Command used when chat startup asks to launch a local Ollama if unreachable.
     #[serde(default = "default_ollama_daemon")]
     pub ollama_daemon: DaemonCommand,
+    /// When true, after a graceful chat exit, run `ollama stop` for the chat and embedding models so GPU/RAM drops even if Eris did **not** start `ollama serve` (for example Ollama.app is running). Ignored when this session spawned and already tore down its own Ollama child.
+    #[serde(default = "default_unload_ollama_models_on_chat_exit")]
+    pub unload_ollama_models_on_chat_exit: bool,
     /// Command used when chat startup asks to launch Qdrant if unreachable.
     #[serde(default = "default_qdrant_daemon")]
     pub qdrant_daemon: DaemonCommand,
@@ -271,6 +274,15 @@ pub struct AppConfig {
     /// When true and [`Self::optimize_context`] is true, collapse resolved tool-recovery spans in the LLM view only (canonical [`crate::orchestrator::core::Orchestrator::chat_stack`] unchanged).
     #[serde(default = "default_optimize_context_omit_resolved_tool_recovery")]
     pub optimize_context_omit_resolved_tool_recovery: bool,
+    /// When true and [`Self::optimize_context`] is true, replace non-protocol assistant rows in the LLM view with a short placeholder (canonical stack unchanged).
+    #[serde(default = "default_optimize_context_assistant_non_json_placeholder")]
+    pub optimize_context_assistant_non_json_placeholder: bool,
+    /// When true, run sliding-window condensation once before the main LLM `generate` if estimated stack tokens exceed `num_ctx * condensation_threshold * optimize_context_proactive_condensation_ratio` (same token proxy as [`crate::orchestrator::context::estimate_stack_tokens`]).
+    #[serde(default = "default_optimize_context_proactive_condensation")]
+    pub optimize_context_proactive_condensation: bool,
+    /// Scales the proactive condensation trigger (typical range `0.7`–`0.95`; lower = fold earlier). Ignored when proactive condensation is disabled.
+    #[serde(default = "default_optimize_context_proactive_condensation_ratio")]
+    pub optimize_context_proactive_condensation_ratio: f32,
     /// Default `top_k` for [`crate::tools::memory::MemoryQueryTool`] when the LLM omits it.
     #[serde(default = "default_memory_query_default_top_k")]
     pub memory_query_default_top_k: u32,
@@ -322,6 +334,10 @@ fn default_ollama_daemon() -> DaemonCommand {
         command: "ollama".into(),
         args: vec!["serve".into()],
     }
+}
+
+fn default_unload_ollama_models_on_chat_exit() -> bool {
+    true
 }
 
 /// Default peripheral spawn: `qdrant` with no args (container/binary default config).
@@ -443,6 +459,18 @@ fn default_optimize_context_full_tool_schemas() -> bool {
 
 fn default_optimize_context_omit_resolved_tool_recovery() -> bool {
     true
+}
+
+fn default_optimize_context_assistant_non_json_placeholder() -> bool {
+    true
+}
+
+fn default_optimize_context_proactive_condensation() -> bool {
+    false
+}
+
+fn default_optimize_context_proactive_condensation_ratio() -> f32 {
+    0.85
 }
 
 /// Default `top_k` for `memory:query` when the model omits it.
@@ -708,6 +736,7 @@ impl Default for AppConfig {
             slim_tool_prompt: default_slim_tool_prompt(),
             tool_map_offer_cap: default_tool_map_offer_cap(),
             ollama_daemon: default_ollama_daemon(),
+            unload_ollama_models_on_chat_exit: default_unload_ollama_models_on_chat_exit(),
             qdrant_daemon: default_qdrant_daemon(),
             require_semantic_brain: default_require_semantic_brain(),
             semantic_brain_connect_attempts: default_semantic_brain_connect_attempts(),
@@ -724,6 +753,11 @@ impl Default for AppConfig {
             optimize_context_full_tool_schemas: default_optimize_context_full_tool_schemas(),
             optimize_context_omit_resolved_tool_recovery:
                 default_optimize_context_omit_resolved_tool_recovery(),
+            optimize_context_assistant_non_json_placeholder:
+                default_optimize_context_assistant_non_json_placeholder(),
+            optimize_context_proactive_condensation: default_optimize_context_proactive_condensation(),
+            optimize_context_proactive_condensation_ratio:
+                default_optimize_context_proactive_condensation_ratio(),
             memory_query_default_top_k: default_memory_query_default_top_k(),
             memory_query_top_k_max: default_memory_query_top_k_max(),
             memory_query_default_max_total_chars: default_memory_query_default_max_total_chars(),
@@ -979,6 +1013,7 @@ mod tests {
         assert_eq!(parsed_config.tool_match_threshold, 0.50);
         assert_eq!(parsed_config.ollama_daemon.command, "ollama");
         assert_eq!(parsed_config.ollama_daemon.args, vec!["serve"]);
+        assert_eq!(parsed_config.unload_ollama_models_on_chat_exit, true);
         assert_eq!(parsed_config.qdrant_daemon.command, "qdrant");
         assert!(parsed_config.qdrant_daemon.args.is_empty());
         assert!(parsed_config.apis.is_empty());

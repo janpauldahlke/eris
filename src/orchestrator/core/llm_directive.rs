@@ -1,5 +1,7 @@
 use crate::engine::LlmEngine;
-use crate::orchestrator::llm_support::json_envelope::split_leading_json_object;
+use crate::orchestrator::llm_support::json_envelope::{
+    llm_json_parse_recovery_message_with_excerpt, parse_llm_response_protocol,
+};
 use crate::orchestrator::state::{
     AgentState, LoopAction, LoopDirective, LlmResponse,
 };
@@ -8,25 +10,16 @@ use super::Orchestrator;
 
 impl<E: LlmEngine> Orchestrator<E> {
     pub fn process_llm_response(&mut self, response_json: &str) -> LoopDirective {
-        let json_str = split_leading_json_object(response_json).0;
+        match parse_llm_response_protocol(response_json) {
+            Ok(parsed) => self.directive_from_parsed(parsed),
+            Err(e) => LoopDirective::RecoverFromFuckup(
+                llm_json_parse_recovery_message_with_excerpt(&e, response_json),
+            ),
+        }
+    }
 
-        tracing::debug!(extracted_json_len = json_str.len(), "Parsing LLM JSON response");
-
-        let mut parsed: LlmResponse = match serde_json::from_str(json_str) {
-            Ok(res) => res,
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    raw_snippet = &json_str[..json_str.len().min(200)],
-                    "Failed to parse LLM response as JSON"
-                );
-                return LoopDirective::RecoverFromFuckup(
-                    crate::orchestrator::llm_support::json_envelope::llm_json_parse_recovery_message(&e),
-                );
-            }
-        };
-        parsed.normalize_tool_calls();
-
+    /// Directive path for an already-parsed [`LlmResponse`] (avoids a second parse after `step` preflight).
+    pub(super) fn directive_from_parsed(&mut self, parsed: LlmResponse) -> LoopDirective {
         let explicit_status = parsed.has_explicit_status();
         let status = parsed.status();
         tracing::info!(
@@ -51,7 +44,6 @@ impl<E: LlmEngine> Orchestrator<E> {
             );
         }
 
-        // Tools take precedence: never drop tool_calls because of Idle/Reflect/Task mismatch.
         if !parsed.tool_calls.is_empty() {
             return LoopDirective::ExecuteTools(parsed.tool_calls);
         }

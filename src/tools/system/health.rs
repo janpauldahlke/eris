@@ -65,23 +65,30 @@ impl Tool for SystemHealthTool {
                 })
                 .collect::<Vec<Value>>();
 
-            let ollama_cli = match std::process::Command::new("ollama").arg("ps").output() {
-                Ok(output) => {
-                    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                    json!({
-                        "available": true,
-                        "exit_code": output.status.code(),
-                        "stdout": stdout,
-                        "stderr": stderr,
-                    })
+            let ollama_cli = if crate::util::ollama_host_cli::host_ollama_cli_subprocess_allowed() {
+                match std::process::Command::new("ollama").arg("ps").output() {
+                    Ok(output) => {
+                        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                        json!({
+                            "available": true,
+                            "exit_code": output.status.code(),
+                            "stdout": stdout,
+                            "stderr": stderr,
+                        })
+                    }
+                    Err(e) => {
+                        json!({
+                            "available": false,
+                            "error": e.to_string(),
+                        })
+                    }
                 }
-                Err(e) => {
-                    json!({
-                        "available": false,
-                        "error": e.to_string(),
-                    })
-                }
+            } else {
+                json!({
+                    "available": false,
+                    "skipped": "host ollama CLI disabled under test/CI (FCP_FORCE_HOST_OLLAMA_CLI=1 to enable)",
+                })
             };
 
             let load = System::load_average();

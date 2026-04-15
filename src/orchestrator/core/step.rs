@@ -1,7 +1,9 @@
 use crate::engine::LlmEngine;
 use crate::executive::error::{FcpError, Result};
-use crate::orchestrator::context::build_llm_view;
-use crate::orchestrator::llm_support::json_envelope::{split_leading_json_object, trailing_content_after_valid_llm_json};
+use crate::orchestrator::context::{build_llm_view, estimate_stack_tokens};
+use crate::orchestrator::llm_support::json_envelope::{
+    parse_llm_response_protocol, split_leading_json_object, trailing_content_after_valid_llm_json,
+};
 use crate::orchestrator::r#loop::directive_policy::decide_transition_from_directive;
 use crate::orchestrator::r#loop::tool_batch::ToolBatchDecision;
 use crate::orchestrator::r#loop::transition::{StateTransition, TransitionControl};
@@ -211,6 +213,34 @@ impl<E: LlmEngine> Orchestrator<E> {
                 });
             }
 
+            if self.config.optimize_context_proactive_condensation {
+                let est = estimate_stack_tokens(&self.chat_stack);
+                let active_ratio = if web_tool_activity {
+                    Self::WEB_CONDENSATION_THRESHOLD
+                } else {
+                    self.condensation_threshold
+                };
+                let ratio = self
+                    .config
+                    .optimize_context_proactive_condensation_ratio
+                    .clamp(0.05, 1.0);
+                let threshold_line =
+                    (self.num_ctx as f32 * active_ratio * ratio).max(1.0) as usize;
+                if est > threshold_line {
+                    tracing::info!(
+                        target: "fcp.context_view",
+                        event = "fcp.condensation.proactive",
+                        stack_est_tokens = est,
+                        threshold_tokens = threshold_line,
+                        proactive_ratio = ratio,
+                        active_threshold_ratio = active_ratio,
+                        turn_seq,
+                        "Estimated stack tokens exceed proactive threshold; folding before main generate"
+                    );
+                    self.execute_condensation().await?;
+                }
+            }
+
             tracing::info!(chat_stack_len = self.chat_stack.len(), "Sending to LLM engine");
 
             // 3. Engine Generation (build view before select! so the interrupt branch can borrow `self.interrupt_rx`.)
@@ -301,6 +331,33 @@ impl<E: LlmEngine> Orchestrator<E> {
                 return Ok(());
             }
 
+            let parsed = match parse_llm_response_protocol(&response.content) {
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        turn_seq,
+                        "LLM response failed protocol JSON parse; omitting assistant stack push and skipping condensation for this hop"
+                    );
+                    let directive = LoopDirective::RecoverFromFuckup(
+                        crate::orchestrator::llm_support::json_envelope::llm_json_parse_recovery_message_with_excerpt(
+                            &e,
+                            &response.content,
+                        ),
+                    );
+                    let transition = decide_transition_from_directive(directive);
+                    let control = self.apply_transition(transition).await?;
+                    self.last_llm_ms = llm_ms_acc;
+                    self.last_tool_ms = tool_ms_acc;
+                    self.last_total_ms = step_start.elapsed().as_millis() as u64;
+                    self.broadcast_state().await;
+                    if matches!(control, TransitionControl::ContinueLoop) {
+                        continue;
+                    }
+                    return Ok(());
+                }
+                Ok(p) => p,
+            };
+
             self.emit_optional_user_message(&response.content).await;
 
             self.chat_stack.push(crate::engine::Message {
@@ -329,7 +386,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             }
 
             // 4. Directive Processing
-            let directive = self.process_llm_response(&response.content);
+            let directive = self.directive_from_parsed(parsed);
             tracing::info!(directive = ?directive, "Directive from LLM response");
             let tool_cap_final = self.tool_round_cap_final_pass_pending;
             let mut transition = decide_transition_from_directive(directive);

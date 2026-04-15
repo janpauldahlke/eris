@@ -7,7 +7,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::engine::Message;
-use crate::orchestrator::llm_support::json_envelope::split_leading_json_object;
+use crate::orchestrator::llm_support::json_envelope::{parse_llm_response_protocol, split_leading_json_object};
 use crate::tools::ToolContextViewHint;
 
 use super::resolved_tool_recovery::apply_omit_resolved_tool_recovery;
@@ -128,6 +128,8 @@ pub struct ContextViewSettings {
     pub full_tool_schemas_in_llm_view: bool,
     /// When true and [`Self::enabled`] is true, collapse resolved tool-recovery spans before successful tool batches in the LLM view only.
     pub omit_resolved_tool_recovery: bool,
+    /// When true and [`Self::enabled`] is true, replace assistant rows that are not valid protocol JSON with a short placeholder (canonical stack unchanged).
+    pub assistant_non_json_placeholder: bool,
     pub hints: Arc<HashMap<String, ToolContextViewHint>>,
 }
 
@@ -139,6 +141,7 @@ impl Default for ContextViewSettings {
             assistant_compact: true,
             full_tool_schemas_in_llm_view: false,
             omit_resolved_tool_recovery: true,
+            assistant_non_json_placeholder: true,
             hints: Arc::new(HashMap::new()),
         }
     }
@@ -241,6 +244,19 @@ pub fn build_llm_view(messages: &[Message], settings: &ContextViewSettings) -> V
     let mut out: Vec<Message> = Vec::with_capacity(source.len());
 
     for m in source {
+        if m.role == "assistant"
+            && settings.assistant_non_json_placeholder
+            && parse_llm_response_protocol(&m.content).is_err()
+        {
+            let n = m.content.chars().count();
+            rewritten += 1;
+            out.push(Message {
+                role: m.role.clone(),
+                content: format!("[FCP: non-protocol assistant output omitted; {n} chars]"),
+            });
+            continue;
+        }
+
         if m.role == "assistant"
             && settings.assistant_compact
             && let Some(compact) = compact_assistant_json(&m.content)
@@ -360,6 +376,7 @@ mod tests {
             assistant_compact: false,
             full_tool_schemas_in_llm_view: false,
             omit_resolved_tool_recovery: false,
+            assistant_non_json_placeholder: false,
             hints: hint_map(&[("t:1", ToolContextViewHint::Default)]),
         };
         let v = build_llm_view(&m, &settings);
@@ -381,6 +398,7 @@ mod tests {
             assistant_compact: false,
             full_tool_schemas_in_llm_view: false,
             omit_resolved_tool_recovery: false,
+            assistant_non_json_placeholder: false,
             hints: hint_map(&[("t:2", ToolContextViewHint::Full)]),
         };
         let v = build_llm_view(&m, &settings);
@@ -399,6 +417,7 @@ mod tests {
             assistant_compact: false,
             full_tool_schemas_in_llm_view: false,
             omit_resolved_tool_recovery: false,
+            assistant_non_json_placeholder: false,
             hints: hint_map(&[("t:3", ToolContextViewHint::MarkerOnly)]),
         };
         let v = build_llm_view(&m, &settings);
@@ -418,6 +437,7 @@ mod tests {
             assistant_compact: true,
             full_tool_schemas_in_llm_view: false,
             omit_resolved_tool_recovery: false,
+            assistant_non_json_placeholder: false,
             hints: Arc::new(HashMap::new()),
         };
         let v = build_llm_view(&m, &settings);
@@ -428,7 +448,7 @@ mod tests {
     }
 
     #[test]
-    fn assistant_parse_failure_keeps_original() {
+    fn assistant_parse_failure_keeps_original_when_placeholder_disabled() {
         let m = vec![Message {
             role: "assistant".to_string(),
             content: "not json at all".to_string(),
@@ -439,10 +459,35 @@ mod tests {
             assistant_compact: true,
             full_tool_schemas_in_llm_view: false,
             omit_resolved_tool_recovery: false,
+            assistant_non_json_placeholder: false,
             hints: Arc::new(HashMap::new()),
         };
         let v = build_llm_view(&m, &settings);
         assert_eq!(v[0].content, "not json at all");
+    }
+
+    #[test]
+    fn assistant_parse_failure_rewrites_with_placeholder_when_enabled() {
+        let body = "not json at all";
+        let m = vec![Message {
+            role: "assistant".to_string(),
+            content: body.to_string(),
+        }];
+        let settings = ContextViewSettings {
+            enabled: true,
+            default_snippet_chars: 400,
+            assistant_compact: true,
+            full_tool_schemas_in_llm_view: false,
+            omit_resolved_tool_recovery: false,
+            assistant_non_json_placeholder: true,
+            hints: Arc::new(HashMap::new()),
+        };
+        let v = build_llm_view(&m, &settings);
+        let n = body.chars().count();
+        assert_eq!(
+            v[0].content,
+            format!("[FCP: non-protocol assistant output omitted; {n} chars]")
+        );
     }
 
     #[test]
@@ -475,6 +520,7 @@ mod tests {
             assistant_compact: false,
             full_tool_schemas_in_llm_view: false,
             omit_resolved_tool_recovery: false,
+            assistant_non_json_placeholder: false,
             hints: Arc::new(HashMap::new()),
         };
         let v = build_llm_view(&m, &settings);
@@ -502,6 +548,7 @@ mod tests {
             assistant_compact: false,
             full_tool_schemas_in_llm_view: true,
             omit_resolved_tool_recovery: false,
+            assistant_non_json_placeholder: false,
             hints: Arc::new(HashMap::new()),
         };
         let v = build_llm_view(&m, &settings);
@@ -538,6 +585,7 @@ mod tests {
             assistant_compact: false,
             full_tool_schemas_in_llm_view: false,
             omit_resolved_tool_recovery: true,
+            assistant_non_json_placeholder: false,
             hints: hint_map(&[("t:1", ToolContextViewHint::Default)]),
         };
         let v = build_llm_view(&stack, &settings);

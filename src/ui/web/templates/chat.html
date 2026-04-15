@@ -240,6 +240,39 @@
       button[type="submit"]:hover {
         background: #243d35;
       }
+      .shutdown-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        background: rgba(6, 8, 16, 0.94);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1rem;
+      }
+      .shutdown-overlay.hidden {
+        display: none;
+      }
+      .shutdown-card {
+        max-width: 28rem;
+        padding: 1.5rem;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--panel);
+        color: var(--text);
+      }
+      .shutdown-card h2 {
+        margin: 0 0 0.75rem 0;
+        font-size: 1rem;
+        color: var(--accent);
+        letter-spacing: 0.04em;
+      }
+      .shutdown-card p {
+        margin: 0;
+        font-size: 13px;
+        color: var(--muted);
+        line-height: 1.55;
+      }
       @media (max-width: 720px) {
         main {
           grid-template-columns: 1fr;
@@ -299,6 +332,21 @@
         </form>
       </footer>
     </main>
+    <div
+      id="shutdown-overlay"
+      class="shutdown-overlay hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="shutdown-overlay-title"
+      aria-hidden="true"
+    >
+      <div class="shutdown-card">
+        <h2 id="shutdown-overlay-title">Shutting down</h2>
+        <p id="shutdown-overlay-detail">
+          Stopping Eris and releasing resources…
+        </p>
+      </div>
+    </div>
     <script src="/assets/chat.js"></script>
   </body>
 </html>
