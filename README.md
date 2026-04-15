@@ -6,8 +6,6 @@
 [![Open issues](https://img.shields.io/github/issues/janpauldahlke/eris)](https://github.com/janpauldahlke/eris/issues)
 [![codecov](https://codecov.io/gh/janpauldahlke/eris/graph/badge.svg)](https://codecov.io/gh/janpauldahlke/eris)
 
-_Coverage:_ **Private repos are supported** on Codecov (sign in, install the Codecov GitHub app for your account or org, and add the repo). Put the upload token in GitHub **Actions** secrets as `CODECOV_TOKEN` so CI can upload; then the badge above tracks the default branch. Upload and user limits depend on your Codecov plan—see [Codecov pricing](https://about.codecov.io/pricing/).
-
 **Episodic Reasoning & Inference System** — a local, vault-centric assistant: same orchestrator and tools whether you use the **full-screen terminal UI (ratatui)**, **`eris chat --web`** (localhost Axum + SSE), or an **optional Discord sidecar** that shares the live session. Ollama drives chat and embeddings; optional Qdrant holds semantic memory; notes live in a Markdown vault; tools run only through the JSON-schema gatekeeper.
 
 Architecture detail: [docs/updated_architecture/README.md](docs/updated_architecture/README.md).
