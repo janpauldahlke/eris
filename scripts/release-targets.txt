@@ -1,0 +1,25 @@
+# One Rust target triple per line (see `rustup target list`).
+# Lines starting with # and blank lines are ignored.
+#
+# macOS — both usually build on an Apple machine with Xcode CLTs:
+#   Apple Silicon host → Intel Mac binary is normal cross-compile.
+#   Intel Mac host → aarch64 may require a sufficiently new Xcode / SDK.
+#
+# Linux — from macOS you need a cross linker (e.g. cargo-zigbuild, cross,
+#   or a Linux VM/CI). Easiest for releases: build these on ubuntu-latest CI.
+#   x86_64-unknown-linux-gnu   — typical Ubuntu/Debian desktop & server
+#   aarch64-unknown-linux-gnu — ARM64 Linux (AWS Graviton, Asahi, many SBCs)
+#
+# Windows — Rust supports it (e.g. x86_64-pc-windows-msvc). Building that
+#   triple from macOS is awkward; use a Windows runner (GitHub Actions) or
+#   a dedicated Windows machine with Visual Studio Build Tools + rustup.
+
+aarch64-apple-darwin
+x86_64-apple-darwin
+
+# Uncomment on Linux CI or a Linux host with the target installed:
+# x86_64-unknown-linux-gnu
+# aarch64-unknown-linux-gnu
+
+# Uncomment on Windows CI or a Windows host (MSVC toolchain):
+# x86_64-pc-windows-msvc
