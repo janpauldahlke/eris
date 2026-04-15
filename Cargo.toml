@@ -1,6 +1,7 @@
 [package]
 name = "eris"
 version = "0.1.0"
+build = "scripts/build.rs"
 authors = [
     "Jan Paul Dahlke <janpauldahlke@gmail.com>",
     "Jan Paul Dahlke <jandareal@gmail.com>",

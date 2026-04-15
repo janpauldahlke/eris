@@ -8,6 +8,8 @@
 
 Architecture detail: [docs/updated_architecture/README.md](docs/updated_architecture/README.md).
 
+**Installing a release binary (PATH, first-run wizard, day-to-day use):** [docs/END_USER_README.md](docs/END_USER_README.md).
+
 ## Prerequisites
 
 ### Rust
