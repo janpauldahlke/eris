@@ -8,8 +8,6 @@
 
 Architecture detail: [docs/updated_architecture/README.md](docs/updated_architecture/README.md).
 
-**Installing a release binary (PATH, first-run wizard, day-to-day use):** [docs/END_USER_README.md](docs/END_USER_README.md).
-
 ## Prerequisites
 
 ### Rust
@@ -81,6 +79,8 @@ With **`[discord]`** in `.fcp/config.toml` (`enabled = true`, **`application_id`
 | Discord     | `[discord]` table                               | Optional; needs `bot_token` + app id + channel when `enabled = true`      |
 
 Figment also merges `FCP_` environment variables over TOML (e.g. `FCP_WORKSPACE`, `FCP_LOG_LEVEL`, `FCP_USER_NAME`). For other fields, match `AppConfig` in `[src/config.rs](src/config.rs)` to the env key shape your Figment build expects.
+
+**Installing a release binary (PATH, first-run wizard, day-to-day use):** [docs/END_USER_README.md](docs/END_USER_README.md).
 
 ## Workspace initialization
 
