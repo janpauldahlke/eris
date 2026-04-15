@@ -1,8 +1,12 @@
 [package]
 name = "eris"
 version = "0.1.0"
-edition = "2024
-
+authors = [
+    "Jan Paul Dahlke <janpauldahlke@gmail.com>",
+    "Jan Paul Dahlke <jandareal@gmail.com>",
+    "Eris <admin@eris-system.dev>",
+]
+edition = "2024"
 
 [dependencies]
 clap = { version = "4.6.0", features = ["derive", "env"] }
