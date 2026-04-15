@@ -45,7 +45,7 @@ impl Tool for DbFindConnectionsTool {
     }
 
     fn description(&self) -> &'static str {
-        "German public transport connections between two named places: resolves each name to a stop, then returns up to three journeys as compact `summary` + `rides` + `transfers` (walking legs folded into transfers). Pass `when` with an explicit timezone offset. When the tool is offered, the system prompt includes `[SESSION_REFERENCE_TIME]`—use it as the calendar year anchor if the user omits the year. Data is a third-party mirror of DB-style timetables; results may differ slightly from the official app."
+        "German public transport connections between two named places: resolves each name to a stop, then returns up to three journeys as compact `summary` + `rides` + `transfers` (walking legs folded into transfers). Pass `when` with an explicit timezone offset. When this tool (or Google Calendar tools) are offered, the system prompt includes `[SESSION_REFERENCE_TIME]`—use it as the calendar year anchor if the user omits the year. Data is a third-party mirror of DB-style timetables; results may differ slightly from the official app."
     }
 
     fn parameters_schema(&self) -> schemars::schema::RootSchema {

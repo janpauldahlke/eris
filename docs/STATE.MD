@@ -143,3 +143,4 @@
 - [x] fix: json tool violation excluded from chat stack
 - [x] fix: teardown is not grouped below spawn id
 - [x] feature: binary build script MAC arm and intel mac
+- [x] feature: google calendar CRUD

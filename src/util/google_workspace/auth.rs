@@ -169,7 +169,7 @@ mod tests {
         let claims = JwtClaims {
             iss: "test@sa.iam.gserviceaccount.com".into(),
             sub: "user@example.com".into(),
-            scope: "https://mail.google.com/".into(),
+            scope: "https://mail.google.com/ https://www.googleapis.com/auth/calendar".into(),
             aud: TOKEN_URI.into(),
             iat: 1000,
             exp: 4600,

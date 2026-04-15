@@ -1,13 +1,20 @@
 {
   "gws_builder_version": "0.1.0",
-  "generated_at": "2026-04-06T14:05:36Z",
+  "generated_at": "2026-04-15T15:46:27Z",
   "services": {
     "gmail": {
-      "revision": "20260329",
-      "json_sha256": "8ff4091231f07fb28e265161883b78f4e1f0d15576f3c3c40912505ca82728ec",
+      "revision": "20260406",
+      "json_sha256": "997e7aa573357e48356f0d8ced6233c22b789bbfbc2893c203c9a322d61c2111",
       "actions_emitted": 3,
       "schemas_emitted": 7,
       "filter_applied": "Whitelist([\"users.messages.list\", \"users.messages.get\", \"users.messages.send\"])"
+    },
+    "calendar": {
+      "revision": "20260407",
+      "json_sha256": "2818066779ee2883c1135151a363b609df3f55b111d9891206a555463a956fbe",
+      "actions_emitted": 5,
+      "schemas_emitted": 26,
+      "filter_applied": "Whitelist([\"events.list\", \"events.get\", \"events.insert\", \"events.patch\", \"events.delete\"])"
     }
   }
 }
