@@ -338,8 +338,10 @@ pub async fn start_chat_session(
         api: api_http,
     }));
 
-    if let Some(gmail) = crate::util::GmailClient::new(&config.google).await? {
-        let gmail = Arc::new(gmail);
+    if let Some(auth) =
+        crate::util::google_workspace::workspace_auth(&config.google).await?
+    {
+        let gmail = Arc::new(crate::util::GmailClient::from_auth(auth.clone())?);
         gatekeeper.register(Arc::new(crate::tools::mail::MailCheckTool {
             client: gmail.clone(),
         }));
@@ -355,7 +357,26 @@ pub async fn start_chat_session(
         gatekeeper.register(Arc::new(crate::tools::mail::MailMoveTool {
             client: gmail.clone(),
         }));
-        gatekeeper.register(Arc::new(crate::tools::mail::MailWriteTool { client: gmail }));
+        gatekeeper.register(Arc::new(crate::tools::mail::MailWriteTool {
+            client: gmail,
+        }));
+
+        let calendar = Arc::new(crate::util::CalendarClient::from_auth(auth)?);
+        gatekeeper.register(Arc::new(crate::tools::calendar::CalendarListTool {
+            client: calendar.clone(),
+        }));
+        gatekeeper.register(Arc::new(crate::tools::calendar::CalendarGetTool {
+            client: calendar.clone(),
+        }));
+        gatekeeper.register(Arc::new(crate::tools::calendar::CalendarCreateTool {
+            client: calendar.clone(),
+        }));
+        gatekeeper.register(Arc::new(crate::tools::calendar::CalendarUpdateTool {
+            client: calendar.clone(),
+        }));
+        gatekeeper.register(Arc::new(crate::tools::calendar::CalendarDeleteTool {
+            client: calendar,
+        }));
     }
 
     let max_content_chars = config.num_ctx * 3;

@@ -11,7 +11,8 @@ use crate::tools::traits::Tool;
 pub struct ClockNowArgs {}
 
 /// Same wall-clock source as [`ClockNowTool::execute`], formatted for the system prompt when
-/// `db:find_connections` is offered so the model can anchor bare dates without a separate `clock:now` call.
+/// `db:find_connections` or Google Calendar tools are offered so the model can anchor bare dates
+/// without a separate `clock:now` call.
 pub fn session_reference_time_block_for_prompt() -> String {
     let now = Local::now();
     let rfc = now.to_rfc3339_opts(SecondsFormat::Secs, true);
@@ -21,7 +22,10 @@ pub fn session_reference_time_block_for_prompt() -> String {
         "[SESSION_REFERENCE_TIME]\n\
          Wall clock when this prompt was built: {rfc} (machine local timezone).\n\
          Default calendar year if the user omits the year: {yyyy} (session date {ymd}).\n\
-         Use this for db:find_connections `when` (RFC3339 with explicit offset); you do not need clock:now for the year anchor.\n\
+         Use this anchor for:\n\
+         - db:find_connections `when` (RFC3339 with explicit offset);\n\
+         - calendar:list `time_min` / `time_max` (RFC3339), and calendar:create / calendar:update `start_datetime` / `end_datetime` (RFC3339 with explicit offset).\n\
+         You do not need clock:now solely for this year/date anchor when this block is present.\n\
          [/SESSION_REFERENCE_TIME]"
     )
 }
@@ -66,5 +70,7 @@ mod session_ref_tests {
         assert!(s.contains("[SESSION_REFERENCE_TIME]"));
         assert!(s.contains("[/SESSION_REFERENCE_TIME]"));
         assert!(s.contains("Wall clock when this prompt was built:"));
+        assert!(s.contains("db:find_connections"));
+        assert!(s.contains("calendar:list"));
     }
 }

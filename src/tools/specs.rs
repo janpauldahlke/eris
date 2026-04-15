@@ -693,4 +693,94 @@ name = "empty_target"
 args = { message_id = "x", target = "" }
 rationale = "target must name a folder or spam."
 "#,
+    r#"descriptor_version = 1
+tool_name = "calendar:list"
+short_description = "List Google Calendar events in a time window (default: local today)."
+when_to_use = "Use when the user asks what is on their Google Calendar, meetings today or this week, or free/busy at a glance. Returns one line per event with id for calendar:get / calendar:update / calendar:delete. When calendar tools are offered, the system prompt includes [SESSION_REFERENCE_TIME]—use its default year for RFC3339 time_min/time_max if the user gives a date without a year."
+when_not_to_use = "Do not use for local vault-only todos (use agenda:list). Do not use without Google Workspace google.enabled."
+routing_hints = ["google calendar", "meetings today", "schedule this week", "appointments", "what is on my calendar", "list events", "am I free tomorrow"]
+
+[[examples_good]]
+name = "today_default"
+args = {}
+rationale = "Lists primary calendar for local today."
+
+[[examples_good]]
+name = "custom_range"
+args = { time_min = "2026-04-15T00:00:00+02:00", time_max = "2026-04-16T00:00:00+02:00", max_results = 50 }
+rationale = "Explicit RFC3339 window."
+
+[[examples_bad]]
+name = "max_only"
+args = { time_max = "2026-04-20T00:00:00Z" }
+rationale = "time_max alone is invalid; omit both for today or supply time_min."
+"#,
+    r#"descriptor_version = 1
+tool_name = "calendar:get"
+short_description = "Fetch one Google Calendar event by id (full JSON + summary line)."
+when_to_use = "Use after calendar:list when the user wants details, attendees, Meet link, or description for a specific event_id."
+when_not_to_use = "Do not use to list many events (use calendar:list). Do not invent event ids."
+routing_hints = ["event details", "open this meeting", "calendar event by id", "read google calendar event"]
+
+[[examples_good]]
+name = "primary_event"
+args = { event_id = "abc123example" }
+rationale = "Reads from primary calendar."
+
+[[examples_bad]]
+name = "missing_id"
+args = {}
+rationale = "event_id is required."
+"#,
+    r#"descriptor_version = 1
+tool_name = "calendar:create"
+short_description = "Create a Google Calendar event (title + RFC3339 start/end)."
+when_to_use = "Use when the user wants a new meeting or block on Google Calendar with explicit start and end times (RFC3339 with offset). Use [SESSION_REFERENCE_TIME] in the system prompt for the calendar year when the user omits it."
+when_not_to_use = "Do not use for local-only reminders without a calendar (use agenda:remind_at or clock:timer). Do not omit end time."
+routing_hints = ["schedule a meeting", "add to google calendar", "block my calendar", "create calendar appointment"]
+
+[[examples_good]]
+name = "one_hour"
+args = { summary = "Team sync", start_datetime = "2026-04-16T15:00:00+02:00", end_datetime = "2026-04-16T16:00:00+02:00", time_zone = "Europe/Berlin" }
+rationale = "Creates a timed event on primary calendar."
+
+[[examples_bad]]
+name = "empty_title"
+args = { summary = "", start_datetime = "2026-04-16T10:00:00Z", end_datetime = "2026-04-16T11:00:00Z" }
+rationale = "summary must be non-empty."
+"#,
+    r#"descriptor_version = 1
+tool_name = "calendar:update"
+short_description = "Patch fields on an existing Google Calendar event."
+when_to_use = "Use when the user wants to rename, reschedule, or edit description/location of an event they identified (event_id from calendar:list). For new start/end datetimes, use RFC3339 with offset; [SESSION_REFERENCE_TIME] supplies the year if omitted."
+when_not_to_use = "Do not use without event_id. When changing times, both start_datetime and end_datetime are required together."
+routing_hints = ["reschedule meeting", "change calendar event", "move appointment", "rename meeting", "update google calendar"]
+
+[[examples_good]]
+name = "rename_only"
+args = { event_id = "evt1", summary = "Renamed standup" }
+rationale = "Patch summary only."
+
+[[examples_bad]]
+name = "start_only"
+args = { event_id = "evt1", start_datetime = "2026-04-16T12:00:00Z" }
+rationale = "Changing time requires both start and end."
+"#,
+    r#"descriptor_version = 1
+tool_name = "calendar:delete"
+short_description = "Delete a Google Calendar event by id."
+when_to_use = "Use when the user clearly wants to remove or cancel a specific calendar event (event_id from calendar:list)."
+when_not_to_use = "Do not use for email or vault files. Do not use without event_id."
+routing_hints = ["cancel meeting", "delete calendar event", "remove from google calendar", "clear that appointment"]
+
+[[examples_good]]
+name = "delete_known"
+args = { event_id = "evt_deadbeef" }
+rationale = "Deletes from primary calendar."
+
+[[examples_bad]]
+name = "missing_id"
+args = {}
+rationale = "event_id is required."
+"#,
 ];

@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine;
@@ -10,39 +11,27 @@ use super::auth::GoogleAuth;
 const GMAIL_BASE: &str = "https://gmail.googleapis.com/gmail/v1/users/me";
 /// Gmail system label id for unread state.
 pub const GMAIL_LABEL_UNREAD: &str = "UNREAD";
-/// Must be a subset of scopes allowed for this service account in Admin → Domain-wide delegation.
-/// We use full mail scope only; do not add scopes here that are not listed there or token exchange returns 401.
-const GMAIL_SCOPES: &[&str] = &["https://mail.google.com/"];
 
 pub struct GmailClient {
-    auth: GoogleAuth,
+    auth: Arc<GoogleAuth>,
     http: reqwest::Client,
 }
 
 impl GmailClient {
     pub async fn new(config: &GoogleConfig) -> Result<Option<Self>> {
-        if !config.enabled {
-            tracing::info!("Google integration disabled in config");
+        let Some(auth) = super::workspace_auth(config).await? else {
             return Ok(None);
-        }
-        let key_path = config.service_account_key.as_ref().ok_or_else(|| {
-            FcpError::Config("google.enabled=true but service_account_key is missing".into())
-        })?;
-        let user = config.impersonate_user.as_deref().ok_or_else(|| {
-            FcpError::Config("google.enabled=true but impersonate_user is missing".into())
-        })?;
-        let auth =
-            GoogleAuth::from_service_account_key(key_path, user, GMAIL_SCOPES).await?;
+        };
+        tracing::info!("GmailClient initialized");
+        Self::from_auth(auth).map(Some)
+    }
+
+    pub fn from_auth(auth: Arc<GoogleAuth>) -> Result<Self> {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
             .map_err(|e| FcpError::NetworkFault(format!("gmail http client: {e}")))?;
-
-        tracing::info!(
-            impersonate = %user,
-            "GmailClient initialized"
-        );
-        Ok(Some(Self { auth, http }))
+        Ok(Self { auth, http })
     }
 
     pub async fn list_messages(

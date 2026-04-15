@@ -33,6 +33,11 @@ pub fn fallback_triggers(tool_name: &str) -> &'static str {
         "mail:digest" => "summarize email, today's mail, digest inbox, what came in today, recap messages, overview of recent gmail, batch list mail",
         "mail:delete" => "delete email, trash message, remove email, get rid of mail, discard message",
         "mail:move" => "move email to folder, label message, file under label, move to spam, archive to label, put mail in ebay folder",
+        "calendar:list" => "google calendar, what meetings, schedule today, events this week, appointments, show my calendar, list events, am I free, what's on tomorrow",
+        "calendar:get" => "open calendar event, event details by id, read meeting, full calendar event json",
+        "calendar:create" => "add calendar event, schedule meeting, block time, create google calendar appointment, invite on calendar",
+        "calendar:update" => "reschedule meeting, change event time, edit calendar event, move appointment, update meeting title",
+        "calendar:delete" => "cancel calendar event, remove from google calendar, delete meeting, clear calendar block",
         _ => "",
     }
 }

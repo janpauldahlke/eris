@@ -15,8 +15,8 @@ Each tool implements:
 - **Registry:** `HashMap<String, Arc<dyn Tool>>`.
 - **`get_allowed_tools(state)`** — filters tools by **`AgentState`**:
   - **Chat:** all registered tools **except** `agenda:complete` (prevents completing before user turn semantics). Includes mail/DB/etc. when registered.
-  - **Reflect:** sandbox set: memory, `vault:read` / `vault:list`, `web:artifact_query`, agenda mutations, clocks, weather, wiki, `system:health`, `db:find_connections`, **`mail:check` / `mail:read` / `mail:digest`** — **no** `vault:write`, **`web:fetch`**, **`mail:write` / `mail:delete` / `mail:move`**.
-  - **Idle:** Reflect set **plus** `vault:write`, `web:fetch`, `agenda:complete`, **`mail:write` / `mail:delete` / `mail:move`**.
+  - **Reflect:** sandbox set: memory, `vault:read` / `vault:list`, `web:artifact_query`, agenda mutations, clocks, weather, wiki, `system:health`, `db:find_connections`, **`mail:check` / `mail:read` / `mail:digest`**, **`calendar:list` / `calendar:get`** — **no** `vault:write`, **`web:fetch`**, **`mail:write` / `mail:delete` / `mail:move`**, **`calendar:create` / `calendar:update` / `calendar:delete`**.
+  - **Idle:** Reflect set **plus** `vault:write`, `web:fetch`, `agenda:complete`, **`mail:write` / `mail:delete` / `mail:move`**, **`calendar:create` / `calendar:update` / `calendar:delete`**.
   - **Recover:** all registered (recovery pass).
 - **`execute_tool`:** state check → JSON Schema validate (`jsonschema`) → `tool.execute`.
 - **Recover empty result** → `ToolFault` semantic guard.
@@ -39,6 +39,7 @@ Shared helpers (e.g. path mutability) used by vault tools.
 | `tools/wiki/` | `wiki:summary` (Wikipedia REST) |
 | `tools/db_rest/` | `db:find_connections` (Deutsche Bahn–style journey search via configured REST profile) |
 | `tools/mail/` | `mail:check`, `mail:read`, `mail:write`, `mail:digest`, `mail:delete`, `mail:move` (Gmail via Google Workspace client; tools register only when `google.enabled` and credentials resolve) |
+| `tools/calendar/` | `calendar:list`, `calendar:get`, `calendar:create`, `calendar:update`, `calendar:delete` (Google Calendar API; same `[google]` registration gate as mail) |
 
 Agenda and alarms persist JSON under `.fcp/tools/` (see `vault_layout`).
 
@@ -56,6 +57,8 @@ Only holds embedded descriptor strings—no runtime tool loading from disk.
 ## Routing phrases (`tools/routing_phrases.rs`)
 
 Compile-time **`fallback_triggers(tool_name)`** strings used when a tool has **no** `routing_hints` in its embedded TOML descriptor. Keeps ToolRouter embedding text and the slim phrase compendium aligned without duplicating every tool inside `tool_router.rs`.
+
+**Slim phrase map:** `ContextAssembler::assemble_slim_tool_map` emits `[FCP_TOOL_PHRASE_MAP]` from the same per-tool phrasing (descriptor `routing_hints` else `fallback_triggers`). When **`db:find_connections`** or any **`calendar:*`** tool appears in the allowed tool list, the assembler also appends **`[SESSION_REFERENCE_TIME]`** (wall clock + default calendar year) so RFC3339 fields (`when`, `time_min` / `time_max`, `start_datetime` / `end_datetime`) need not guess the year—see `tools/clock/now.rs` and `orchestrator/context/assembler.rs`.
 
 ## Adding a tool (agent checklist)
 

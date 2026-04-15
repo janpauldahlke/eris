@@ -13,7 +13,8 @@ use std::time::Instant;
 use super::Orchestrator;
 
 /// Dispatch priority within a single tool batch: `clock:now` must run before
-/// `db:find_connections` so the model can anchor RFC3339 `when` on the session clock.
+/// `db:find_connections` so the model can anchor RFC3339 `when` on live clock output.
+/// Calendar RFC3339 fields are primarily anchored by `[SESSION_REFERENCE_TIME]` injected in the system prompt when calendar (or db) tools are offered.
 fn tool_dispatch_order_priority(name: &str) -> u8 {
     match name {
         "clock:now" => 0,
