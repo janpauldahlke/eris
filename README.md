@@ -2,8 +2,6 @@
 
 [![CI](https://github.com/janpauldahlke/eris/actions/workflows/ci.yml/badge.svg)](https://github.com/janpauldahlke/eris/actions/workflows/ci.yml)
 [![Rust edition](https://img.shields.io/badge/Rust-Edition%202024-dea584?logo=rust&logoColor=white)](https://doc.rust-lang.org/edition-guide/rust-2024/index.html)
-[![Last commit](https://img.shields.io/github/last-commit/janpauldahlke/eris)](https://github.com/janpauldahlke/eris/commits/)
-[![Open issues](https://img.shields.io/github/issues/janpauldahlke/eris)](https://github.com/janpauldahlke/eris/issues)
 [![codecov](https://codecov.io/gh/janpauldahlke/eris/graph/badge.svg)](https://codecov.io/gh/janpauldahlke/eris)
 
 **Episodic Reasoning & Inference System** — a local, vault-centric assistant: same orchestrator and tools whether you use the **full-screen terminal UI (ratatui)**, **`eris chat --web`** (localhost Axum + SSE), or an **optional Discord sidecar** that shares the live session. Ollama drives chat and embeddings; optional Qdrant holds semantic memory; notes live in a Markdown vault; tools run only through the JSON-schema gatekeeper.
@@ -19,16 +17,18 @@ Architecture detail: [docs/updated_architecture/README.md](docs/updated_architec
 
 ### Ollama (LLM + embeddings)
 
-Eris talks to Ollama over HTTP; defaults match `AppConfig` (`ollama_host`, typically `**http://localhost:11434`\*\*).
+Eris talks to Ollama over HTTP; defaults match `AppConfig` (`ollama_host`, typically `http://localhost:11434`).
 
 1. **Install** [Ollama](https://ollama.com) for your OS and ensure the daemon is running (`ollama serve`, or the background service the installer sets up).
-2. **Pull a chat model** — must match `**model_name`** in `.fcp/config.toml` (default in code: `**gemma4:26b`\*\*):
+2. **Pull a chat model** — must match `model_name` in `.fcp/config.toml` (default in code: `gemma4:26b`):
 
 ```bash
  ollama pull gemma4:26b
 ```
 
-Use any tag you prefer; set `model_name` accordingly. 3. **Pull an embedding model** — must match `**embed_model_name`** (default: `**nomic-embed-text`\*\*) for ToolRouter similarity and Qdrant upserts:
+Use any tag you prefer; set `model_name` accordingly.
+
+3. **Pull an embedding model** — must match **`embed_model_name`** (default: **`nomic-embed-text`**) for ToolRouter similarity and Qdrant upserts:
 
 ```bash
  ollama pull nomic-embed-text
@@ -40,7 +40,7 @@ If Ollama is down, chat cannot run.
 
 ### Qdrant (vector DB)
 
-Used for semantic memory (`memory:query`), boot ingest, and web-artifact cleanup. The client uses the URL in `**qdrant_url`** (default `**http://localhost:6334`\*\*). gRPC must be reachable after TCP connect.
+Used for semantic memory (`memory:query`), boot ingest, and web-artifact cleanup. The client uses the URL in `qdrant_url` (default `http://localhost:6334`). gRPC must be reachable after TCP connect.
 
 **Option A — Docker (typical)**
 
@@ -53,7 +53,7 @@ docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant
 
 **Option B — native/binary** — install Qdrant from upstream and listen on the same ports, or change `qdrant_url` in `.fcp/config.toml`.
 
-If Qdrant is unreachable and `**require_semantic_brain`** is `true` (default), **chat startup fails\*\* after retries. Set `require_semantic_brain = false` only if you want chat without vector tools.
+If Qdrant is unreachable and `require_semantic_brain` is `true` (default), \*\*chat startup fails\*\* after retries. Set `require_semantic_brain = false` only if you want chat without vector tools.
 
 ### Web UI (browser)
 
@@ -78,12 +78,12 @@ With **`[discord]`** in `.fcp/config.toml` (`enabled = true`, **`application_id`
 | Web UI      | `web_bind_addr`, `web_port`, `web_open_browser` | Loopback + port for `eris chat --web`; optional `FCP_WEB_*` env overrides |
 | Discord     | `[discord]` table                               | Optional; needs `bot_token` + app id + channel when `enabled = true`      |
 
-Figment also merges `**FCP_`\* environment variables\*\* over TOML (e.g. `FCP_WORKSPACE`, `FCP_LOG_LEVEL`, `FCP_USER_NAME`). For other fields, match `AppConfig` in `[src/config.rs](src/config.rs)` to the env key shape your Figment build expects.
+Figment also merges `FCP_` environment variables over TOML (e.g. `FCP_WORKSPACE`, `FCP_LOG_LEVEL`, `FCP_USER_NAME`). For other fields, match `AppConfig` in `[src/config.rs](src/config.rs)` to the env key shape your Figment build expects.
 
 ## Workspace initialization
 
 1. **Choose or create a directory** that will be the vault (notes, `.fcp/`, etc.).
-2. `**cd` into that directory** — configuration and paths are resolved from the **current working directory\*\*, not from `FCP_VAULT` alone for normal chat.
+2. `cd` into that directory — configuration and paths are resolved from the \*\*current working directory\*\*, not from `FCP_VAULT` alone for normal chat.
 3. **First run:** if `.fcp/seal` is missing and stdin is a TTY, an optional **setup welder** may run first (environment probes, vault-root confirmation); then the **ignition** wizard scaffolds identity and config. It creates `.fcp/`, **`00_Invariants/`** (and the rest of the v2 vault layout), and writes `config.toml`.
 4. **Config:** edit `.fcp/config.toml` as needed (model name, `num_ctx`, Qdrant URL, `workspace` id for collection **`fcp_vault_v2_{workspace}`**, web bind/port, Discord block, etc.). Environment overrides use the `**FCP_`\*\* prefix (e.g. `FCP_WORKSPACE`).
 
@@ -105,11 +105,11 @@ cd /path/to/your/vault
 
 Common flags (see `eris chat --help`):
 
-- `**-w` / `--workspace**` — logical partition (Qdrant collection suffix, ephemeral snapshot id). Env: `FCP_WORKSPACE` (default `default`).
-- `**-v` / `--vault**` — legacy/config override for `vault_root` in `AppConfig`; normal chat still expects you to **launch from** the vault directory.
+- **`-w` / `--workspace`** — logical partition (Qdrant collection suffix, ephemeral snapshot id). Env: `FCP_WORKSPACE` (default `default`).
+- **`-v` / `--vault`** — legacy/config override for `vault_root` in `AppConfig`; normal chat still expects you to **launch from** the vault directory.
 - **`--web`** — localhost web chat (Axum + SSE) instead of ratatui.
 
-Verbose tracing: `**-V`**, `**-VV`\*\*.
+Verbose tracing: **`-V`**, **`-VV`**.
 
 ## Program flow
 
@@ -157,7 +157,7 @@ You interact through the **TUI**, a **localhost web page**, and/or **Discord**; 
 - **Terminal:** Full-screen **ratatui** UI under `src/ui/terminal/`: chat deck, status, telemetry; `Ctrl+C` exits and tears down daemons this process started.
 - **Web:** `src/ui/web/` — Axum router, SSE stream of `SessionEvent`, small static JS; suitable for the same machine or SSH port-forward.
 - **Discord:** Optional Serenity sidecar in `src/ui/discord/`; assistant lines are `try_send` to a bounded queue from the presentation multiplexer when enabled.
-- **Logs:** Rotating files under `**<vault>/.fcp/telemetry/logs/`\*\* (tracing); not printed to the TUI buffer for normal operation.
+- **Logs:** Rotating files under **`<vault>/.fcp/telemetry/logs/`** (tracing); not printed to the TUI buffer for normal operation.
 - **Semantics:** If Qdrant is reachable, boot may **ingest** markdown into **`fcp_vault_v2_{workspace}`**. If not and `require_semantic_brain` is true, startup fails; if false, chat runs without vector tools.
 - **Developers:** New tools and gatekeeper rules: [docs/ADDING_A_TOOL.md](docs/ADDING_A_TOOL.md).
 
@@ -171,7 +171,7 @@ The **gatekeeper** only enforces **state** and **JSON Schema** on tool calls (`[
 
 - **Short utterances** (≤3 words or ≤15 characters) are treated as chat-only unless you include a URL, a leading `/`, a domain-like token (e.g. `news.ycombinator.com`), or explicit web wording such as `search the web` / `look up online`.
 
-Representative `**routing_hints**` (say things _like_ this—the model still decides, and similarity is fuzzy):
+Representative **`routing_hints`** (say things _like_ this—the model still decides, and similarity is fuzzy):
 
 | Tool                       | Typical phrasing                                                                                                 |
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------- |
