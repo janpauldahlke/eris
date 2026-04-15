@@ -1,0 +1,32 @@
+# Rust CI: clippy on all targets/features, full test suite.
+# Toolchain: https://github.com/dtolnay/rust-toolchain
+# Caching: https://github.com/Swatinem/rust-cache
+
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust (clippy, test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets --all-features
+
+      - name: cargo test
+        run: cargo test --all-features

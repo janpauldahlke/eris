@@ -1,4 +1,6 @@
 #![deny(clippy::unwrap_used)]
+// `unwrap` in `#[test]` is allowed by project policy; clippy still checks non-test code.
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 #![forbid(unsafe_code)]
 
 use std::process::ExitCode;
