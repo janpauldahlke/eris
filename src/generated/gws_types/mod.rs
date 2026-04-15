@@ -1,12 +1,11 @@
 pub mod gmail;
+pub mod calendar;
 mod serde_helpers;
 
 pub use serde_helpers::*;
 pub use gmail::{ActionDescriptor, ParamDescriptor};
 
-/// Returns all action descriptors across generated services.
+/// Returns Gmail API action descriptors (generated). Calendar descriptors use a distinct struct type in `calendar.rs`.
 pub fn all_actions() -> Vec<&'static ActionDescriptor> {
-    let mut all = Vec::new();
-    all.extend_from_slice(gmail::ALL_ACTIONS);
-    all
+    gmail::ALL_ACTIONS.to_vec()
 }

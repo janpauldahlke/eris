@@ -248,7 +248,7 @@ impl ContextAssembler {
             tools = tools_block
         );
 
-        Ok(append_db_session_clock_if_needed(system_prompt, &allowed_tools))
+        Ok(append_session_reference_time_if_needed(system_prompt, &allowed_tools))
     }
 
     /// Builds a tool-free conversational prompt.
@@ -290,12 +290,17 @@ impl ContextAssembler {
     }
 }
 
-fn tools_include_db_find_connections(tools: &[serde_json::Value]) -> bool {
-    tools.iter().filter_map(tool_name_from_entry).any(|n| n == "db:find_connections")
+fn tools_need_session_reference_time(tools: &[serde_json::Value]) -> bool {
+    tools.iter().filter_map(tool_name_from_entry).any(|n| {
+        n == "db:find_connections" || n.starts_with("calendar:")
+    })
 }
 
-fn append_db_session_clock_if_needed(mut system_prompt: String, allowed_tools: &[serde_json::Value]) -> String {
-    if tools_include_db_find_connections(allowed_tools) {
+fn append_session_reference_time_if_needed(
+    mut system_prompt: String,
+    allowed_tools: &[serde_json::Value],
+) -> String {
+    if tools_need_session_reference_time(allowed_tools) {
         system_prompt.push_str("\n\n");
         system_prompt.push_str(&session_reference_time_block_for_prompt());
     }
@@ -461,5 +466,25 @@ mod tests {
             !assembled.contains("\"parameters\""),
             "slim prompt must not embed JSON parameter schemas"
         );
+    }
+
+    #[test]
+    fn tools_need_session_reference_time_db_and_calendar_prefix() {
+        let db = serde_json::json!({"function": {"name": "db:find_connections", "description": ""}});
+        let cal = serde_json::json!({"function": {"name": "calendar:list", "description": ""}});
+        let vault = serde_json::json!({"function": {"name": "vault:read", "description": ""}});
+        assert!(super::tools_need_session_reference_time(&[db.clone()]));
+        assert!(super::tools_need_session_reference_time(&[cal.clone()]));
+        assert!(!super::tools_need_session_reference_time(&[vault.clone()]));
+        assert!(super::tools_need_session_reference_time(&[vault, cal]));
+    }
+
+    #[test]
+    fn append_session_reference_time_inserts_block_for_calendar_tool() {
+        let tools = vec![serde_json::json!({"function": {"name": "calendar:create", "description": ""}})];
+        let out = super::append_session_reference_time_if_needed("PREAMBLE".into(), &tools);
+        assert!(out.contains("[SESSION_REFERENCE_TIME]"));
+        assert!(out.contains("calendar:list"));
+        assert!(out.starts_with("PREAMBLE"));
     }
 }

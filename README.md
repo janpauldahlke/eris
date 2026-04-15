@@ -63,9 +63,9 @@ If Qdrant is unreachable and `require_semantic_brain` is `true` (default), \*\*c
 
 With **`[discord]`** in `.fcp/config.toml` (`enabled = true`, **`application_id`**, **`channel_id`** or **`channel_name`**, and a non-empty **`bot_token`**), a Serenity **gateway sidecar** runs in parallel with the active view and forwards a guild text channel into the same orchestrator queue. If Discord is enabled in config but the bot token is missing, chat still runs without the sidecar (see tracing). Details: [docs/updated_architecture/01_BOOTSTRAP_AND_EXECUTIVE.md](docs/updated_architecture/01_BOOTSTRAP_AND_EXECUTIVE.md), [06_UI_TELEMETRY_OPERATIONS.md](docs/updated_architecture/06_UI_TELEMETRY_OPERATIONS.md).
 
-### Gmail (optional)
+### Google Workspace — Gmail and Calendar (optional)
 
-**`mail:*`** tools need **`[google]`** with `enabled = true`, `service_account_key`, and `impersonate_user` (Workspace domain-wide delegation). See `GoogleConfig` in `src/config.rs` and `src/tools/mail/`.
+**`mail:*`** and **`calendar:*`** tools need **`[google]`** with `enabled = true`, `service_account_key`, and `impersonate_user` (Workspace **domain-wide delegation**). In Google Admin → Security → API controls → Domain-wide delegation, authorize the service account client id with at least **`https://mail.google.com/`** and **`https://www.googleapis.com/auth/calendar`**. Enable **Gmail API** and **Google Calendar API** in the same Google Cloud project. See `GoogleConfig` in `src/config.rs`, `src/tools/mail/`, and `src/tools/calendar/`.
 
 ### Checklist
 
@@ -77,6 +77,7 @@ With **`[discord]`** in `.fcp/config.toml` (`enabled = true`, **`application_id`
 | Qdrant URL  | `qdrant_url`                                    | Default `http://localhost:6334` (gRPC)                                    |
 | Web UI      | `web_bind_addr`, `web_port`, `web_open_browser` | Loopback + port for `eris chat --web`; optional `FCP_WEB_*` env overrides |
 | Discord     | `[discord]` table                               | Optional; needs `bot_token` + app id + channel when `enabled = true`      |
+| Google WS   | `[google]` (`enabled`, `service_account_key`, `impersonate_user`) | Optional `mail:*` + `calendar:*`; Cloud APIs + Admin domain-wide delegation |
 
 Figment also merges `FCP_` environment variables over TOML (e.g. `FCP_WORKSPACE`, `FCP_LOG_LEVEL`, `FCP_USER_NAME`). For other fields, match `AppConfig` in `[src/config.rs](src/config.rs)` to the env key shape your Figment build expects.
 
@@ -167,6 +168,8 @@ Tool choice is **not** parsed from rigid commands. The orchestrator’s **ToolRo
 
 The **gatekeeper** only enforces **state** and **JSON Schema** on tool calls (`[src/tools/gatekeeper.rs](src/tools/gatekeeper.rs)`); it does not map phrases to tools.
 
+When **`db:find_connections`** or any **`calendar:*`** tool is in the current tool roster, **`[SESSION_REFERENCE_TIME]`** is appended to the system prompt (same wall clock as `clock:now`, built in [`src/tools/clock/now.rs`](src/tools/clock/now.rs) via [`src/orchestrator/context/assembler.rs`](src/orchestrator/context/assembler.rs)) so RFC3339 fields do not need a guessed year.
+
 **Extra rules (outside pure similarity):**
 
 - **Short utterances** (≤3 words or ≤15 characters) are treated as chat-only unless you include a URL, a leading `/`, a domain-like token (e.g. `news.ycombinator.com`), or explicit web wording such as `search the web` / `look up online`.
@@ -204,6 +207,11 @@ Representative **`routing_hints`** (say things _like_ this—the model still dec
 | **mail:digest**            | summarize email, today’s mail, digest, recap inbox                                                               |
 | **mail:delete**            | delete email, trash message, discard                                                                             |
 | **mail:move**              | move to folder, label email, file under, move to spam                                                            |
+| **calendar:list**          | Google Calendar, meetings today, this week’s schedule, appointments, what’s on my calendar, list events, am I free |
+| **calendar:get**           | open this calendar event, event details by id, full meeting JSON, read Google Calendar event                      |
+| **calendar:create**        | add calendar event, schedule meeting, block time, create Google Calendar appointment                              |
+| **calendar:update**        | reschedule meeting, change event time, rename meeting, edit calendar event                                       |
+| **calendar:delete**        | cancel meeting, delete calendar event, remove from Google Calendar                                                 |
 
 To change operator-facing routing text, prefer **`routing_hints`** in `[src/tools/specs.rs](src/tools/specs.rs)`; for tools without TOML hints, edit **`fallback_triggers`** in `[src/tools/routing_phrases.rs](src/tools/routing_phrases.rs)`. The lexical phrase lists inside `tool_router.rs` remain for URL/page detection and short-input guards (not the full tool roster).
 

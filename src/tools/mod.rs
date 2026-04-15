@@ -12,6 +12,7 @@ pub mod weather;
 pub mod wiki;
 pub mod db_rest;
 pub mod mail;
+pub mod calendar;
 pub mod descriptors;
 pub mod specs;
 pub mod routing_phrases;

@@ -46,7 +46,7 @@ impl Default for DiscordConfig {
     }
 }
 
-/// Optional Google Workspace (Gmail API) credentials. When `enabled`, both paths must be set.
+/// Optional Google Workspace credentials (Gmail + Calendar APIs via domain-wide delegation). When `enabled`, both paths must be set; Admin Console must allow `https://mail.google.com/` and `https://www.googleapis.com/auth/calendar` for the service account client id.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Default)]
 pub struct GoogleConfig {
     /// When true, Gmail tools may run; requires `service_account_key` and `impersonate_user`.

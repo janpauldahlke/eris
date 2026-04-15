@@ -53,13 +53,26 @@ fn main() {
 }
 
 fn build_services() -> Result<Vec<gws_builder::ServiceSpec>, Box<dyn std::error::Error>> {
-    Ok(vec![gws_builder::ServiceSpec::whitelist(
-        "gmail",
-        "v1",
-        vec![
-            "users.messages.list".into(),
-            "users.messages.get".into(),
-            "users.messages.send".into(),
-        ],
-    )?])
+    Ok(vec![
+        gws_builder::ServiceSpec::whitelist(
+            "gmail",
+            "v1",
+            vec![
+                "users.messages.list".into(),
+                "users.messages.get".into(),
+                "users.messages.send".into(),
+            ],
+        )?,
+        gws_builder::ServiceSpec::whitelist(
+            "calendar",
+            "v3",
+            vec![
+                "events.list".into(),
+                "events.get".into(),
+                "events.insert".into(),
+                "events.patch".into(),
+                "events.delete".into(),
+            ],
+        )?,
+    ])
 }
