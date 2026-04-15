@@ -19,7 +19,10 @@ use crate::executive::peripherals::PeripheralLifecycle;
 use crate::executive::setup_welder::IgnitionWorkspaceHint;
 use crate::memory::ephemeral::EphemeralMemory;
 use crate::orchestrator::core::Orchestrator;
-use crate::presentation::{SessionEvent, UserAction, SYSTEM_ALARM_PREFIX};
+use crate::presentation::{
+    InputSource, SessionEvent, UserAction, UserIngress, SYSTEM_ALARM_PREFIX,
+};
+use crate::ui::discord::DiscordTypingCtl;
 use crate::tools::Gatekeeper;
 use ollama_rs::Ollama;
 
@@ -41,6 +44,46 @@ impl ChatViewMode {
     }
 }
 
+fn try_send_discord_typing(tx: &Option<mpsc::Sender<DiscordTypingCtl>>, cmd: DiscordTypingCtl) {
+    if let Some(t) = tx {
+        if t.try_send(cmd).is_err() {
+            tracing::debug!(
+                event = "fcp.discord.typing_ctl_dropped",
+                cmd = ?cmd,
+                "Discord typing control not delivered (channel full or sidecar gone)"
+            );
+        }
+    }
+}
+
+async fn enqueue_user_ingress(
+    pending_inputs: &mut VecDeque<UserIngress>,
+    presentation_tx_err: &mpsc::Sender<SessionEvent>,
+    mut ing: UserIngress,
+) {
+    ing.display = ing.display.trim().to_string();
+    if ing.display.is_empty() {
+        return;
+    }
+    if pending_inputs.len() >= 3 {
+        let _ = pending_inputs.pop_front();
+        let _ = presentation_tx_err
+            .send(SessionEvent::SystemError(
+                "[ui] Queue full; dropped oldest queued input".into(),
+            ))
+            .await;
+    }
+    pending_inputs.push_back(ing);
+    if pending_inputs.len() > 1 {
+        let _ = presentation_tx_err
+            .send(SessionEvent::SystemError(format!(
+                "[ui] Processing older request ({} newer queued)",
+                pending_inputs.len() - 1
+            )))
+            .await;
+    }
+}
+
 /// Handle returned after chat core is running: wire the active view to these ends.
 pub struct StartedChatSession {
     pub user_action_tx: mpsc::Sender<UserAction>,
@@ -51,6 +94,9 @@ pub struct StartedChatSession {
 /// Bootstrap engine, tools, orchestrator, and background tasks. Caller keeps `presentation_rx` for the view.
 ///
 /// Send startup lines on `presentation_tx` before heavy work so the terminal can show progress.
+///
+/// When `discord_typing_tx` is set, [`DiscordTypingCtl`] is sent for Discord-originated turns only;
+/// it never emits [`SessionEvent`]s and does not affect web or TUI.
 pub async fn start_chat_session(
     cli: Cli,
     mut config: Arc<AppConfig>,
@@ -58,6 +104,7 @@ pub async fn start_chat_session(
     cancel_token: CancellationToken,
     presentation_tx: mpsc::Sender<SessionEvent>,
     ignition_workspace: IgnitionWorkspaceHint,
+    discord_typing_tx: Option<mpsc::Sender<DiscordTypingCtl>>,
 ) -> Result<StartedChatSession> {
     let seal_path = crate::vault_layout::seal(&workspace_root);
     if !seal_path.exists() {
@@ -474,12 +521,18 @@ pub async fn start_chat_session(
         "Orchestrator initialized"
     );
 
+    let submit_source_default = match ChatViewMode::from_cli(&cli) {
+        ChatViewMode::Web => InputSource::Web,
+        ChatViewMode::Terminal => InputSource::Cli,
+    };
+
     let (user_action_tx, mut action_rx) = mpsc::channel::<UserAction>(100);
     let presentation_tx_err = presentation_tx.clone();
     let cancel_token_loop = cancel_token.clone();
     let interrupt_tx_user = interrupt_tx.clone();
+    let discord_typing_loop = discord_typing_tx.clone();
     tokio::spawn(async move {
-        let mut pending_inputs: VecDeque<String> = VecDeque::new();
+        let mut pending_inputs: VecDeque<UserIngress> = VecDeque::new();
         loop {
             tokio::select! {
                 Some(action) = action_rx.recv() => {
@@ -580,27 +633,23 @@ This is a linked agenda reminder — please answer explicitly:\n\
                             orchestrator.broadcast_state().await;
                         }
                         UserAction::Submit(msg) => {
-                            let trimmed = msg.trim().to_string();
-                            if trimmed.is_empty() {
+                            let display = msg.trim().to_string();
+                            if display.is_empty() {
                                 continue;
                             }
-                            if pending_inputs.len() >= 3 {
-                                let _ = pending_inputs.pop_front();
-                                let _ = presentation_tx_err
-                                    .send(SessionEvent::SystemError(
-                                        "[ui] Queue full; dropped oldest queued input".into(),
-                                    ))
-                                    .await;
-                            }
-                            pending_inputs.push_back(trimmed);
-                            if pending_inputs.len() > 1 {
-                                let _ = presentation_tx_err
-                                    .send(SessionEvent::SystemError(format!(
-                                        "[ui] Processing older request ({} newer queued)",
-                                        pending_inputs.len() - 1
-                                    )))
-                                    .await;
-                            }
+                            enqueue_user_ingress(
+                                &mut pending_inputs,
+                                &presentation_tx_err,
+                                UserIngress {
+                                    source: submit_source_default,
+                                    display,
+                                    for_model: None,
+                                },
+                            )
+                            .await;
+                        }
+                        UserAction::SubmitIngress(ing) => {
+                            enqueue_user_ingress(&mut pending_inputs, &presentation_tx_err, ing).await;
                         }
                     }
                 }
@@ -610,10 +659,31 @@ This is a linked agenda reminder — please answer explicitly:\n\
                 }
             }
 
-            while let Some(msg) = pending_inputs.pop_front() {
+            while let Some(ing) = pending_inputs.pop_front() {
                 orchestrator.queued_inputs = pending_inputs.len();
                 orchestrator.broadcast_state().await;
-                tracing::info!(msg_len = msg.len(), queued = pending_inputs.len(), "User input received");
+                let for_model = ing
+                    .for_model
+                    .unwrap_or_else(|| ing.display.clone());
+                tracing::info!(
+                    msg_len = for_model.len(),
+                    queued = pending_inputs.len(),
+                    source = ?ing.source,
+                    "User input received"
+                );
+                if presentation_tx_err
+                    .send(SessionEvent::UserTranscriptLine {
+                        source: ing.source,
+                        body: ing.display.clone(),
+                    })
+                    .await
+                    .is_err()
+                {
+                    tracing::warn!(
+                        event = "fcp.chat.user_transcript_dropped",
+                        "Presentation channel closed; user transcript line not delivered to views"
+                    );
+                }
                 last_input_time.store(
                     std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -623,10 +693,18 @@ This is a linked agenda reminder — please answer explicitly:\n\
                 );
                 orchestrator.chat_stack.push(crate::engine::Message {
                     role: "user".to_string(),
-                    content: msg,
+                    content: for_model,
                 });
                 orchestrator.state = crate::orchestrator::state::AgentState::Chat;
-                if let Err(e) = orchestrator.step(None).await {
+                let pulse_discord = ing.source == InputSource::Discord;
+                if pulse_discord {
+                    try_send_discord_typing(&discord_typing_loop, DiscordTypingCtl::StartPulse);
+                }
+                let step_result = orchestrator.step(None).await;
+                if pulse_discord {
+                    try_send_discord_typing(&discord_typing_loop, DiscordTypingCtl::StopPulse);
+                }
+                if let Err(e) = step_result {
                     if matches!(e, FcpError::Interrupted) {
                         tracing::info!("Orchestrator interrupted by heartbeat, continuing loop");
                         continue;

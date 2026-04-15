@@ -147,7 +147,37 @@
       }
       .msg.user {
         color: var(--user);
+      }
+      .msg.user .user-body {
         font-weight: 600;
+        color: var(--user);
+      }
+      .msg.user .src-badge {
+        display: inline-block;
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        padding: 0.12rem 0.4rem;
+        margin-right: 0.45rem;
+        border-radius: 3px;
+        vertical-align: text-bottom;
+        line-height: 1.2;
+        background: #141a2e;
+        color: var(--muted);
+        border: 1px solid var(--border);
+      }
+      .msg.user .src-badge.src-discord {
+        border-color: #5865f2;
+        color: #aab4ff;
+      }
+      .msg.user .src-badge.src-web {
+        border-color: #3d5a7a;
+        color: #8eb8e8;
+      }
+      .msg.user .src-badge.src-cli {
+        border-color: #2d5c4e;
+        color: var(--accent);
       }
       .msg.assistant {
         color: #f5f8ff;

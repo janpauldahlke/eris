@@ -135,3 +135,7 @@
 - [x] feature: db:connection tool
 - [x] improve db:connections tool
 - [x] prepare installer on inital workspace ignations, pulling 3rd party, ollama qdrant and so on
+
+15/04/2026
+
+- [x] feature, discord integration, so user can call eris via discord

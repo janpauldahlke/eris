@@ -4,6 +4,48 @@ use std::path::PathBuf;
 
 use crate::tools::ToolContextViewHint;
 
+/// Optional Discord sidecar (Serenity gateway + REST). Store `application_id` / `public_key` / channel anytime; the
+/// gateway only starts when [`AppConfig::discord_sidecar_should_run`] is true (needs a non-empty [`DiscordConfig::bot_token`]).
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct DiscordConfig {
+    /// When true, run Serenity in parallel with web or terminal chat (same `user_action_tx` / presentation stream).
+    #[serde(default)]
+    pub enabled: bool,
+    /// Discord application snowflake (Developer Portal). Used when building the HTTP client.
+    pub application_id: Option<u64>,
+    /// Interactions public key (hex, from Developer Portal); reserved for future slash-command HTTP verification.
+    #[serde(default)]
+    pub public_key: Option<String>,
+    /// Target guild text channel snowflake when known.
+    pub channel_id: Option<u64>,
+    /// When `channel_id` is unset, the bot resolves this exact channel name against cached guild text channels at READY.
+    pub channel_name: Option<String>,
+    /// Bot token from TOML (trimmed). Required when [`Self::enabled`] is true; do not commit real tokens to version control.
+    #[serde(default)]
+    pub bot_token: Option<String>,
+    /// Capacity for assistant lines queued for Discord (`try_send` from presentation mux; overflow drops with `tracing::warn`).
+    #[serde(default = "default_discord_outbound_queue_capacity")]
+    pub outbound_queue_capacity: usize,
+}
+
+fn default_discord_outbound_queue_capacity() -> usize {
+    64
+}
+
+impl Default for DiscordConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            application_id: None,
+            public_key: None,
+            channel_id: None,
+            channel_name: None,
+            bot_token: None,
+            outbound_queue_capacity: default_discord_outbound_queue_capacity(),
+        }
+    }
+}
+
 /// Optional Google Workspace (Gmail API) credentials. When `enabled`, both paths must be set.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Default)]
 pub struct GoogleConfig {
@@ -220,6 +262,9 @@ pub struct AppConfig {
     /// Gmail / Google Workspace integration (service account + domain-wide delegation).
     #[serde(default)]
     pub google: GoogleConfig,
+    /// Optional Discord bot sidecar (same session as web/TUI).
+    #[serde(default)]
+    pub discord: DiscordConfig,
     /// When true, keep full JSON parameter schemas in the LLM view for tool definitions (larger prompt). When false and [`Self::optimize_context`] is true, [`crate::orchestrator::context::build_llm_view`] strips `parameters` in that block only; [`crate::orchestrator::core::Orchestrator::chat_stack`] stays full. Independently, the orchestrator forces full schemas for one recovery LLM pass after a Gatekeeper schema fault ([`crate::orchestrator::core::Orchestrator::force_full_tool_schemas_in_llm_view`]).
     #[serde(default = "default_optimize_context_full_tool_schemas")]
     pub optimize_context_full_tool_schemas: bool,
@@ -674,6 +719,7 @@ impl Default for AppConfig {
             optimize_context_assistant_compact: default_optimize_context_assistant_compact(),
             optimize_context_tool_overrides: HashMap::new(),
             google: GoogleConfig::default(),
+            discord: DiscordConfig::default(),
 
             optimize_context_full_tool_schemas: default_optimize_context_full_tool_schemas(),
             optimize_context_omit_resolved_tool_recovery:
@@ -720,6 +766,69 @@ impl AppConfig {
         config.qdrant_collection_v2 = format!("fcp_vault_v2_{}", config.workspace);
 
         Ok(config)
+    }
+
+    /// Bot token from [`Self::discord`] for the Serenity gateway (trimmed). Errors if missing or blank — see [`Self::discord_sidecar_should_run`].
+    pub fn resolved_discord_bot_token(&self) -> crate::executive::error::Result<String> {
+        let Some(ref t) = self.discord.bot_token else {
+            return Err(crate::executive::error::FcpError::Config(
+                "Set discord.bot_token in .fcp/config.toml (non-empty string) to run the Discord sidecar".into(),
+            ));
+        };
+        let trimmed = t.trim();
+        if trimmed.is_empty() {
+            return Err(crate::executive::error::FcpError::Config(
+                "discord.bot_token is empty in .fcp/config.toml".into(),
+            ));
+        }
+        Ok(trimmed.to_string())
+    }
+
+    /// Whether the Serenity Discord sidecar should start. Requires [`DiscordConfig::enabled`], `application_id`,
+    /// a listen channel, **and** a non-empty [`DiscordConfig::bot_token`] (gateway bots cannot use the public key alone).
+    pub fn discord_sidecar_should_run(&self) -> bool {
+        if !self.discord.enabled {
+            return false;
+        }
+        if self.discord.application_id.is_none() {
+            return false;
+        }
+        let has_channel = self.discord.channel_id.is_some()
+            || self
+                .discord
+                .channel_name
+                .as_ref()
+                .is_some_and(|s| !s.trim().is_empty());
+        if !has_channel {
+            return false;
+        }
+        self.resolved_discord_bot_token().is_ok()
+    }
+
+    /// Validates Discord **metadata** when the feature flag is on: `application_id` and a channel target.
+    /// A missing `bot_token` does **not** fail chat — the sidecar is simply skipped until you add one.
+    pub fn validate_discord_sidecar(&self) -> crate::executive::error::Result<()> {
+        if !self.discord.enabled {
+            return Ok(());
+        }
+        if self.discord.application_id.is_none() {
+            return Err(crate::executive::error::FcpError::Config(
+                "Discord enabled: set discord.application_id (Developer Portal Application ID)"
+                    .into(),
+            ));
+        }
+        let has_channel = self.discord.channel_id.is_some()
+            || self
+                .discord
+                .channel_name
+                .as_ref()
+                .is_some_and(|s| !s.trim().is_empty());
+        if !has_channel {
+            return Err(crate::executive::error::FcpError::Config(
+                "Discord enabled: set discord.channel_id and/or discord.channel_name".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// TTL in seconds for the given ephemeral tier.

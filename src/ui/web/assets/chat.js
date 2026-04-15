@@ -49,6 +49,22 @@
     transcript.scrollTop = transcript.scrollHeight;
   }
 
+  /** @param {string} source — `web` | `cli` | `discord` */
+  function appendUserTranscriptLine(source, body) {
+    const row = document.createElement("div");
+    row.className = "msg user";
+    const badge = document.createElement("span");
+    badge.className = "src-badge src-" + String(source || "").toLowerCase();
+    badge.textContent = String(source || "local");
+    const span = document.createElement("span");
+    span.className = "user-body";
+    span.textContent = normalizeLatexArrowsForDisplay(String(body));
+    row.appendChild(badge);
+    row.appendChild(span);
+    transcript.appendChild(row);
+    transcript.scrollTop = transcript.scrollHeight;
+  }
+
   function setStatus(text) {
     statusLine.textContent = text;
   }
@@ -139,6 +155,11 @@
       appendLine(data.IncomingMessage, "assistant");
       return;
     }
+    if (data.UserTranscriptLine) {
+      const u = data.UserTranscriptLine;
+      appendUserTranscriptLine(u.source, u.body);
+      return;
+    }
     if (data.ModelThought) {
       thoughtPane.textContent = normalizeLatexArrowsForDisplay(data.ModelThought);
       return;
@@ -192,13 +213,18 @@
       return;
     }
     input.value = "";
-    appendLine("You: " + trimmed, "user");
     thoughtPane.textContent = "";
     try {
       const res = await fetch("/api/action", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ Submit: text }),
+        body: JSON.stringify({
+          SubmitIngress: {
+            source: "web",
+            display: text,
+            for_model: null,
+          },
+        }),
       });
       if (!res.ok) {
         appendLine("[ui] could not send message (channel busy?)", "system");
