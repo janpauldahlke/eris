@@ -14,15 +14,15 @@
 - **tool_router:** optional semantic gating
 - **chat_stack:** full conversation for persistence logic; **not** always identical to what the LLM sees
 - **context_view:** `ContextViewSettings` for `build_llm_view`
-- **interrupt_rx:** `watch::Receiver` from heartbeat — triggers idle injection path
-- **tui_tx:** optional UI updates
+- **interrupt_rx:** `watch::Receiver` from heartbeat — triggers idle injection path (only populated when `idle_heartbeat_enabled` spawns the monitor)
+- **presentation_tx:** optional `mpsc::Sender<SessionEvent>` for terminal/web/Discord surfaces
 - **promotion_suppressed_during_step:** `Arc<std::sync::atomic::AtomicBool>` shared with `spawn_snapshot_daemon`. At the **start** of `step()`, a local `PromotionSuppressedDuringStep` guard sets it to `true` (`Ordering::SeqCst`); `Drop` clears it when `step` returns or unwinds, so promotion/decay never runs concurrently with an in-flight step.
 
 ### `step()` — one “turn”
 
 Rough pipeline:
 
-1. Arm promotion suppression (RAII above); increment `turn_seq`; reset recovery/tool counters; clear activity line / last deck dedupe state.
+1. Arm promotion suppression (RAII above); increment `turn_seq`; reset recovery/tool counters; clear activity line / last deck dedupe state (presentation-facing “deck” is driven by `SessionEvent::IncomingMessage` and related events).
 2. **Empty user message** → synthetic “SY FNORD” idle JSON (`handle_empty_user_turn`).
 3. **Deterministic agenda complete** — if user text matches “done” heuristics and prior `AGENDA_CONFIRM` line → run `agenda:complete` without LLM (`maybe_run_deterministic_agenda_complete`).
 4. **Pre-LLM routing** (`run_pre_llm_routing`):
@@ -36,11 +36,11 @@ Rough pipeline:
 6. **Interrupt:** `tokio::select!` on `interrupt_rx.changed()` → clear stack, inject idle/agenda prompt, return `FcpError::Interrupted`.
 7. **Parse** assistant JSON → `LlmResponse`; push to stack; condensation if over token threshold (`orchestrator::context`, implemented in `context/window.rs`); interpret `LoopDirective`; execute tools through gatekeeper; apply `orchestrator::loop::*` policies.
 
-### Assistant text on the TUI (`emit_optional_user_message`)
+### Assistant text on presentation surfaces (`emit_optional_user_message`)
 
 When the model returns **both** `tool_calls` and a non-empty `message_to_user`:
 
-- **Main transcript (deck):** only `message_to_user` is emitted as `TuiEvent::IncomingMessage` (prefixed with agent name). If the same body was already sent this `step()` (`last_deck_message_body`), the duplicate is skipped (avoids double bubbles when status-driven replays repeat the line).
+- **Main transcript (deck):** only `message_to_user` is emitted as `SessionEvent::IncomingMessage` (prefixed with agent name). If the same body was already sent this `step()` (`last_deck_message_body`), the duplicate is skipped (avoids double bubbles when status-driven replays repeat the line).
 - **Status (`activity_line`):** a short line `Tools: <comma-separated tool names>` (trimmed to a fixed character budget), not the old combined “message · tools…” pattern. Full JSON and tool payloads remain in `tracing` (e.g. `UI_TOOL_ROUND_STATUS`, `UI_EMIT_INCOMING_MESSAGE`).
 
 When there are **no** tool calls, behavior is unchanged: non-empty `message_to_user` goes to the deck as before.
@@ -71,7 +71,7 @@ System prompt text mandates **single JSON object** output, no markdown fences; m
 
 ## ToolRouter (`orchestrator/tool_router.rs`)
 
-- At startup, embeds each tool’s enriched string (description + optional `routing_hints` from descriptors + built-in lexical hints per tool name).
+- At startup, embeds each tool’s enriched string from `enrich_for_routing`: description + optional **`routing_hints`** from the embedded descriptor registry; if the registry has no hints for that tool, **`tools::routing_phrases::fallback_triggers`** supplies a long “typical phrasing” string (see `tools/routing_phrases.rs`). Lexical URL/page guards remain in `tool_router.rs` (short-input and web-intent heuristics), separate from those embedding strings.
 - **`match_tools`:** embed query text, cosine similarity vs threshold, return sorted hits.
 - **Guards:** short inputs and “looks like URL/news” heuristics to avoid false tool mode.
 
@@ -81,9 +81,11 @@ Note: **Pre-LLM** routing uses **user input** string, not the model’s `thought
 
 `heartbeat/monitor.rs` (`spawn_heartbeat_monitor`): polls every second; if `now - last_input_time > idle_timeout_secs`, sends on `watch` channel. Orchestrator uses this to enter idle injection (and clears stack in that branch).
 
+**Config gate:** the chat bootstrap calls `spawn_heartbeat_monitor` **only when** `AppConfig::idle_heartbeat_enabled` is `true`. Default in code is **false** (operators rely on explicit cancel / alarms without periodic idle injection).
+
 ## Alarms (`orchestrator/alarms/`, `tools/clock`)
 
-- **`alarms/scheduler.rs`:** `spawn_alarm_scheduler` — `alarms.json` stores `AlarmRecord` rows with `fire_at_unix`; sleeps until next due, fires `TuiEvent::SystemAlarm`, persists remaining rows.
+- **`alarms/scheduler.rs`:** `spawn_alarm_scheduler` — `alarms.json` stores `AlarmRecord` rows with `fire_at_unix`; sleeps until next due, fires `SessionEvent::SystemAlarm` on `presentation_tx`, persists remaining rows.
 - Agenda-linked alarms include `agenda_task_id` → UI sends `UserAction::AgendaAlarmPending` with confirmation block.
 - **`alarms/missed_startup.rs`:** `startup_overdue_agenda_hint` — startup banner if agenda-linked alarms were due while the app was offline.
 

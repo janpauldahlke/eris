@@ -6,7 +6,7 @@ Audience: senior Rust engineers and anyone designing LLM control planes. Opinion
 
 ## 1. Verdict in one paragraph
 
-The codebase is **coherent for a single-binary, local-first agent**: clear error taxonomy, channel-based UI, explicit gatekeeper, tests around the orchestrator. The main liabilities are **scale** (`orchestrator/core/` still coordinates a large `step()` and many concerns—now split across `step.rs`, `tool_dispatch.rs`, etc., but the loop remains dense), **product surface** (`Run`/`Tool` stubs, `FcpError` vs `eris` naming), **duplicate routing knowledge** (embeddings + giant `match` hint strings + TOML descriptors), and **latent config debt** (`enable_reasoning_fsm` unused, vector size implicit). None of that requires a rewrite; it requires **surgical extraction and honesty in the CLI**.
+The codebase is **coherent for a single-binary, local-first agent**: clear error taxonomy, channel-based presentation (TUI + web + optional Discord), explicit gatekeeper, tests around the orchestrator. The main liabilities are **scale** (`orchestrator/core/` still coordinates a large `step()` and many concerns—now split across `step.rs`, `tool_dispatch.rs`, etc., but the loop remains dense), **product surface** (`Run`/`Tool` stubs, `FcpError` vs `eris` naming), **routing knowledge surface** (embeddings + TOML `routing_hints` + `routing_phrases::fallback_triggers` + lexical guards in `tool_router.rs`—better than three full duplicate `match` trees, still multiple places to edit), and **latent config debt** (`enable_reasoning_fsm` unused, vector size implicit). None of that requires a rewrite; it requires **surgical extraction and honesty in the CLI**.
 
 ---
 
@@ -18,7 +18,7 @@ The codebase is **coherent for a single-binary, local-first agent**: clear error
 
 ### 2.2 `executive/router.rs` chat command
 
-Hundreds of lines in one `match` arm: wiring channels, watchers, gatekeeper registration, orchestrator spawn, TUI. This is **startup composition**, not business logic—but it is hard to navigate. **Low-hanging fruit:** `fn bootstrap_chat(...) -> Result<ChatRuntime>` in a `router` submodule or `executive/chat_bootstrap.rs` that returns handles. Same symbols, easier testing of registration order without running the full TUI.
+The `Chat` arm wires **view mode** (terminal vs web), **Discord mux** branches, `CancellationToken`, `start_chat_session`, and teardown—`chat_session.rs` now owns tool registration and orchestrator construction, which helped, but the router still contains **non-trivial concurrency plumbing** (multiplex + sidecar join order). **Low-hanging fruit:** extract `fn chat_view_runtime(...) -> Result<()>` per mode behind small functions to reduce merge pain; keep symbols identical for tests.
 
 ### 2.3 Semantic brain size and coupling
 
@@ -37,14 +37,14 @@ Forcing **one JSON object per turn** with Ollama `FormatType::Json` is a reasona
 
 **Low-hanging fruit:** centralize JSON extraction in one function with unit tests (valid JSON, junk prefix, fenced code—decide policy explicitly).
 
-### 3.2 ToolRouter: embeddings + lexical duplication
+### 3.2 ToolRouter: embeddings + hint strings
 
-Pre-LLM routing uses **user text** embedding against **precomputed tool vectors**. `enrich_for_routing` also embeds a **large manual `match` per tool name** for lexical hints. Embedded **TOML descriptors** add `routing_hints` again. Three sources of truth drift.
+Pre-LLM routing uses **user text** embedding against **precomputed tool vectors**. `enrich_for_routing` merges the tool description with descriptor **`routing_hints`** when present, otherwise **`routing_phrases::fallback_triggers`**. Lexical URL / short-input guards remain as **code** in `tool_router.rs` (not embedded into every tool vector).
 
 **Honest fixes (pick one direction, not all three):**
 
-- **Minimal:** delete or shrink the `match` arms; rely on `routing_hints` + short description from descriptors only (single compile-time source).
-- **Slightly more work:** generate the embedding text from descriptor TOML at build time (macro or `build.rs`) so Ollama never sees stale paraphrases.
+- **Minimal:** keep `routing_hints` authoritative in TOML; shrink `fallback_triggers` to only tools missing descriptors.
+- **Slightly more work:** generate the embedding text from descriptor TOML at build time (macro or `build.rs`) so vectors cannot drift from docs.
 
 **Do not** add a second embedding model without measuring latency and cost.
 
@@ -98,7 +98,7 @@ The daemon ties expired web artifacts to Qdrant deletes. Good. Failure modes are
 ## 7. Low-hanging fruit (prioritized)
 
 1. **Rename or fix startup log strings** (`main.rs`, log file prefix `fcp_core.log` if you care about branding consistency).
-2. **Consolidate ToolRouter hint strings** with descriptors (remove duplicate `match`).
+2. **Consolidate ToolRouter hint strings** with descriptors (keep `routing_phrases` only as a narrow fallback).
 3. **Extract** `bootstrap_chat` from `router.rs` for readability only.
 4. **Vector dimension** check or config validation at startup.
 5. **Remove or wire** `enable_reasoning_fsm` / `ReasoningRouter`.
