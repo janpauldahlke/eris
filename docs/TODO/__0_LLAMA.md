@@ -95,6 +95,37 @@ flowchart TD
 
 ---
 
+## Reflection: Failures Observed (2026-04-16 log pass)
+
+Source: `fcp_core.log.2026-04-16` range `2608-3831`.
+
+### What clearly failed
+
+- Constrained tool-mode still repeatedly produced invalid protocol payloads like `{"status":"Task","tool_calls":[]}` under active tools, triggering recover loops instead of deterministic action.
+- `agenda:remind_at` argument typing drift persisted (`"minutes":"45"` string) and repeatedly failed Gatekeeper schema validation (`integer` expected).
+- Recovery turns still allowed hallucinated non-existent tools (example: `agenda:validate`) despite targeted tool constraints.
+- Multiple turns degraded into: tool mode -> empty action -> forced no-tools recovery -> conversational apology/claim, instead of tool completion.
+- Memory capture intent regressed: “remember my coffee preference” routed conversationally (no `memory:stage` call), yet assistant claimed persistence.
+- Semantic/tool intent quality regressed in several prompts (e.g. reminder/task phrasing mapped to wrong agenda operations).
+
+### Architectural pressure points behind these failures
+
+- Condensation path still uses unconstrained `json_object` generation, which bypasses schema guarantees and can reintroduce malformed protocol outputs.
+- Current per-turn schema enforcement appears inconsistent with observed runtime output, suggesting a mismatch between expected schema strictness and effective decode constraints in some paths.
+- Prompt-context/tool-map pressure is still high in long sessions; when token pressure rises, quality collapses into empty-action recover churn.
+
+### Immediate stabilization priorities (next pass)
+
+1. Enforce constrained decoding in **all** protocol-generation paths (including condenser/recovery protocol passes), or hard-fail if a path cannot honor schema.
+2. Add runtime assertion telemetry: when constrained mode is on, reject/flag any response that violates `tool_calls.minItems` in tool-enabled turns before normal directive handling.
+3. Harden `agenda:remind_at` schema and runtime normalization jointly (strict integer coercion policy: either normalize safely pre-gatekeeper or reject early with deterministic recovery wording).
+4. Block unknown tool names at parser boundary even in recovery (`agenda:validate`-style hallucinations should never enter dispatch).
+5. Revisit routing threshold/short-input policy specifically for memory-intent utterances to prevent conversational false acknowledgements.
+
+### Practical takeaway
+
+This refactor is directionally correct (many successful constrained calls and real tool executions happened), but it is not yet operationally stable in long chat runs. The largest remaining risk is **mixed constrained/unconstrained protocol paths** plus **recovery-loop drift**.
+
 ---
 
 name: Deterministic Tool Routing Plan

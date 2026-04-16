@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use schemars::schema::RootSchema;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
@@ -44,7 +45,7 @@ impl Tool for AgendaRemindAtTool {
     }
 
     fn parameters_schema(&self) -> schemars::schema::RootSchema {
-        schemars::schema_for!(AgendaRemindAtArgs)
+        patch_agenda_remind_at_schema(schemars::schema_for!(AgendaRemindAtArgs))
     }
 
     async fn execute(&self, args: Value) -> Result<String> {
@@ -215,9 +216,65 @@ enum Schedule {
     Wall { hour: u8, minute: u8 },
 }
 
+fn patch_agenda_remind_at_schema(base: RootSchema) -> RootSchema {
+    // Keep the Rust-derived field schema, but enforce runtime XOR constraints directly in JSON Schema
+    // so constrained decoding and Gatekeeper validation stay aligned.
+    let Ok(mut value) = serde_json::to_value(&base) else {
+        tracing::warn!("agenda:remind_at schema patch skipped: serialize failed");
+        return base;
+    };
+
+    let Some(root_obj) = value.as_object_mut() else {
+        tracing::warn!("agenda:remind_at schema patch skipped: root is not an object");
+        return base;
+    };
+
+    let all_of = serde_json::json!([
+        {
+            "oneOf": [
+                {
+                    "required": ["task_id"],
+                    "not": { "required": ["description"] }
+                },
+                {
+                    "required": ["description"],
+                    "not": { "required": ["task_id"] }
+                }
+            ]
+        },
+        {
+            "oneOf": [
+                {
+                    "required": ["minutes"],
+                    "not": {
+                        "anyOf": [
+                            { "required": ["hour"] },
+                            { "required": ["minute"] }
+                        ]
+                    }
+                },
+                {
+                    "required": ["hour", "minute"],
+                    "not": { "required": ["minutes"] }
+                }
+            ]
+        }
+    ]);
+    root_obj.insert("allOf".to_string(), all_of);
+
+    match serde_json::from_value::<RootSchema>(value) {
+        Ok(patched) => patched,
+        Err(e) => {
+            tracing::warn!(error = %e, "agenda:remind_at schema patch skipped: deserialize failed");
+            base
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jsonschema::JSONSchema;
     use tempfile::tempdir;
 
     async fn write_agenda(dir: &std::path::Path, json: &str) -> Result<()> {
@@ -316,5 +373,38 @@ mod tests {
         assert_eq!(tasks[0].id, "only1");
         assert!(tasks[0].alarm_id.is_some());
         Ok(())
+    }
+
+    #[test]
+    fn test_parameters_schema_enforces_xor_and_schedule_mode() {
+        let dir = tempdir().unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let tool = AgendaRemindAtTool {
+            workspace_root: dir.path().to_path_buf(),
+            reschedule_tx: tx,
+        };
+        let schema = serde_json::to_value(tool.parameters_schema()).expect("schema serializes");
+        let compiled = JSONSchema::compile(&schema).expect("schema compiles");
+
+        let valid_minutes = serde_json::json!({
+            "description": "Call dentist",
+            "minutes": 15
+        });
+        assert!(compiled.validate(&valid_minutes).is_ok());
+
+        let invalid_target_both = serde_json::json!({
+            "task_id": "a1",
+            "description": "Call dentist",
+            "minutes": 15
+        });
+        assert!(compiled.validate(&invalid_target_both).is_err());
+
+        let invalid_schedule_both = serde_json::json!({
+            "task_id": "a1",
+            "minutes": 15,
+            "hour": 9,
+            "minute": 0
+        });
+        assert!(compiled.validate(&invalid_schedule_both).is_err());
     }
 }

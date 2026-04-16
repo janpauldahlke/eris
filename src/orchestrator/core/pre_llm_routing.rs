@@ -28,18 +28,76 @@ impl<E: LlmEngine> Orchestrator<E> {
         }
 
         if ToolRouter::short_input_guard_conversational_only(user_input) {
-            self.last_router_ms = 0;
-            self.last_top_tool_match = None;
-            tracing::info!(
-                category = routing_codes::CATEGORY_ROUTING,
-                issue = routing_codes::ISSUE_PRELLM_CONV_SHORT_INPUT,
-                outcome = routing_codes::OUTCOME_CONVERSATIONAL,
-                turn_seq,
-                tools_needed = false,
-                router_match_count = 0usize,
-                "short-input guard; conversational mode"
-            );
-            return (false, Vec::new());
+            let Some(router) = &self.tool_router else {
+                self.last_router_ms = 0;
+                self.last_top_tool_match = None;
+                tracing::warn!(
+                    category = routing_codes::CATEGORY_ROUTING,
+                    issue = routing_codes::ISSUE_PRELLM_ROUTER_UNAVAILABLE,
+                    outcome = routing_codes::OUTCOME_CONVERSATIONAL,
+                    turn_seq,
+                    tools_needed = false,
+                    router_match_count = 0usize,
+                    "short-input guard without router; conversational mode"
+                );
+                return (false, Vec::new());
+            };
+
+            let router_started = Instant::now();
+            match router.match_tools(user_input).await {
+                Ok(matches) if matches.is_empty() => {
+                    self.last_router_ms = router_started.elapsed().as_millis() as u64;
+                    self.last_top_tool_match = None;
+                    tracing::info!(
+                        category = routing_codes::CATEGORY_ROUTING,
+                        issue = routing_codes::ISSUE_PRELLM_CONV_SHORT_INPUT,
+                        outcome = routing_codes::OUTCOME_CONVERSATIONAL,
+                        turn_seq,
+                        tools_needed = false,
+                        router_match_count = 0usize,
+                        "short-input guard: no semantic tool match; conversational mode"
+                    );
+                    return (false, Vec::new());
+                }
+                Ok(matches) => {
+                    self.last_router_ms = router_started.elapsed().as_millis() as u64;
+                    self.last_top_tool_match = matches
+                        .first()
+                        .map(|(name, score)| format!("{name}({score:.3})"));
+                    let matched_preview: Vec<String> = matches
+                        .iter()
+                        .map(|(n, s)| format!("{}({:.3})", n, s))
+                        .collect();
+                    let names: Vec<String> = matches.into_iter().map(|(name, _)| name).collect();
+                    let router_match_count = names.len();
+                    tracing::info!(
+                        category = routing_codes::CATEGORY_ROUTING,
+                        issue = routing_codes::ISSUE_PRELLM_SEMANTIC_HIT,
+                        outcome = routing_codes::outcome_from_pre_llm_tuple(true, router_match_count),
+                        turn_seq,
+                        tools_needed = true,
+                        router_match_count,
+                        matched = ?matched_preview,
+                        "short-input guard: semantic tool match; tool mode"
+                    );
+                    return (true, names);
+                }
+                Err(e) => {
+                    self.last_router_ms = router_started.elapsed().as_millis() as u64;
+                    self.last_top_tool_match = None;
+                    tracing::warn!(
+                        category = routing_codes::CATEGORY_ROUTING,
+                        issue = routing_codes::ISSUE_PRELLM_MATCH_ERROR,
+                        outcome = routing_codes::OUTCOME_CONVERSATIONAL,
+                        turn_seq,
+                        tools_needed = false,
+                        router_match_count = 0usize,
+                        fcp_error = %e,
+                        "short-input guard: semantic match failed; conversational mode"
+                    );
+                    return (false, Vec::new());
+                }
+            }
         }
 
         let Some(router) = &self.tool_router else {
@@ -65,13 +123,13 @@ impl<E: LlmEngine> Orchestrator<E> {
                 tracing::info!(
                     category = routing_codes::CATEGORY_ROUTING,
                     issue = routing_codes::ISSUE_PRELLM_SEMANTIC_EMPTY,
-                    outcome = routing_codes::outcome_from_pre_llm_tuple(true, 0),
+                    outcome = routing_codes::OUTCOME_CONVERSATIONAL,
                     turn_seq,
-                    tools_needed = true,
+                    tools_needed = false,
                     router_match_count = 0usize,
-                    "no semantic tool match; tool fallback mode"
+                    "no semantic tool match; conversational mode"
                 );
-                (true, Vec::new())
+                (false, Vec::new())
             }
             Ok(matches) => {
                 self.last_router_ms = router_started.elapsed().as_millis() as u64;

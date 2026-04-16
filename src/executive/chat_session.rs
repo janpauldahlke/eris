@@ -9,7 +9,9 @@ use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-use crate::config::AppConfig;
+use crate::config::{AppConfig, LlmBackend};
+use crate::engine::chat_engine::ChatEngine;
+use crate::engine::llama_server::LlamaServerEngine;
 use crate::engine::ollama::OllamaClient;
 use crate::engine::token_metrics::LlmTokenSnapshot;
 use crate::executive::cli::Cli;
@@ -188,9 +190,14 @@ pub async fn start_chat_session(
     } else {
         "already running"
     };
+    let llama_server_status = if peripheral_lifecycle.started_llama_server() {
+        "started by eris"
+    } else {
+        "already running"
+    };
     let _ = presentation_tx
         .send(SessionEvent::SystemError(format!(
-            "[startup] Peripheral readiness: ollama={ollama_status}, qdrant={qdrant_status}"
+            "[startup] Peripheral readiness: ollama={ollama_status}, qdrant={qdrant_status}, llama_server={llama_server_status}"
         )))
         .await;
 
@@ -205,7 +212,20 @@ pub async fn start_chat_session(
 
     let client = Ollama::new(host, port);
     let (token_metrics_tx, token_metrics_rx) = crate::engine::token_metrics::channel();
-    let engine = OllamaClient::with_token_metrics(client.clone(), config.clone(), token_metrics_tx);
+    let engine = match config.llm_backend {
+        LlmBackend::Ollama => ChatEngine::Ollama(OllamaClient::with_token_metrics(
+            client.clone(),
+            config.clone(),
+            token_metrics_tx,
+        )),
+        LlmBackend::LlamaServer => {
+            let llama = LlamaServerEngine::with_token_metrics(config.clone(), token_metrics_tx)?;
+            if config.constrained_protocol_enabled {
+                llama.probe_strict_json_schema_support().await?;
+            }
+            ChatEngine::LlamaServer(llama)
+        }
+    };
     let ollama_arc = Arc::new(client);
     let ephemeral = Arc::new(EphemeralMemory::new(config.workspace.clone()));
     let connect_attempts = config.semantic_brain_connect_attempts;

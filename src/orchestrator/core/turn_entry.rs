@@ -2,7 +2,7 @@ use crate::engine::LlmEngine;
 use crate::executive::error::{FcpError, Result};
 use crate::orchestrator::state::AgentState;
 use serde_json::json;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use super::{Orchestrator, EMPTY_USER_MESSAGE_TAG};
@@ -148,6 +148,14 @@ impl<E: LlmEngine> Orchestrator<E> {
         let mut sections = Vec::new();
         let mut used = 0usize;
         let max_chars = self.descriptor_jit_max_chars.max(500);
+        let schema_lookup = self
+            .gatekeeper
+            .allowed_tool_schemas(state)
+            .ok()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|tool| (tool.name, tool.schema))
+            .collect::<HashMap<_, _>>();
         for name in selected {
             if !allowed_names.contains(&name) {
                 continue;
@@ -155,8 +163,19 @@ impl<E: LlmEngine> Orchestrator<E> {
             let Some(desc) = registry.get(&name) else {
                 continue;
             };
+            let schema_preview = schema_lookup
+                .get(&name)
+                .and_then(|schema| serde_json::to_string(schema).ok())
+                .map(|schema| {
+                    if schema.len() > 360 {
+                        format!("{}...", &schema[..360])
+                    } else {
+                        schema
+                    }
+                })
+                .unwrap_or_else(|| "{}".to_string());
             let snippet = format!(
-                "Tool: {}\nWhen to use: {}\nWhen not to use: {}\nGood examples: {}\nBad examples: {}",
+                "Tool: {}\nWhen to use: {}\nWhen not to use: {}\nGood examples: {}\nBad examples: {}\nArgs schema (strict): {}",
                 desc.tool_name,
                 desc.when_to_use.as_deref().unwrap_or("n/a"),
                 desc.when_not_to_use.as_deref().unwrap_or("n/a"),
@@ -171,7 +190,8 @@ impl<E: LlmEngine> Orchestrator<E> {
                     .take(2)
                     .map(|e| format!("{} {}", e.name, e.args))
                     .collect::<Vec<_>>()
-                    .join(" | ")
+                    .join(" | "),
+                schema_preview
             );
             if used + snippet.len() > max_chars {
                 break;

@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use schemars::JsonSchema;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum AgentState {
     Chat,
     Reflect,
@@ -9,7 +10,7 @@ pub enum AgentState {
     Recover,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
 pub enum LoopAction {
     Reflect,
     Idle,
@@ -18,7 +19,7 @@ pub enum LoopAction {
     Task,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, JsonSchema)]
 pub struct ToolCall {
     /// LLMs sometimes emit `action` instead of `name`.
     #[serde(alias = "action")]
@@ -34,7 +35,7 @@ fn default_empty_object() -> serde_json::Value {
     serde_json::Value::Object(serde_json::Map::new())
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, JsonSchema)]
 pub struct LlmResponse {
     #[serde(default)]
     pub thought: String,

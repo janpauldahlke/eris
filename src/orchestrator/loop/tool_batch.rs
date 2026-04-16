@@ -14,6 +14,8 @@ pub enum ToolBatchDecision {
     RetryWithTargetedSchema { message: String },
     /// Enter recover state with a recoverable failure message.
     Recover { message: String },
+    /// Enter recover state and force next generation to run without tools.
+    RecoverNoTools { message: String },
     /// Abort turn on non-recoverable failure.
     Fatal(FcpError),
 }

@@ -59,6 +59,7 @@ impl ManagedProcess {
 pub struct PeripheralLifecycle {
     ollama: Option<ManagedProcess>,
     qdrant: Option<ManagedProcess>,
+    llama_server: Option<ManagedProcess>,
 }
 
 impl PeripheralLifecycle {
@@ -70,10 +71,15 @@ impl PeripheralLifecycle {
         self.qdrant.is_some()
     }
 
+    pub fn started_llama_server(&self) -> bool {
+        self.llama_server.is_some()
+    }
+
     /// Best-effort teardown without blocking the async runtime (used from chat shutdown).
     pub async fn shutdown_async(&mut self) -> Vec<&'static str> {
         let ollama = self.ollama.take();
         let qdrant = self.qdrant.take();
+        let llama_server = self.llama_server.take();
         let mut stopped = Vec::new();
         if ollama.is_some() {
             stopped.push("ollama");
@@ -81,11 +87,17 @@ impl PeripheralLifecycle {
         if qdrant.is_some() {
             stopped.push("qdrant");
         }
+        if llama_server.is_some() {
+            stopped.push("llama_server");
+        }
         let join_result = tokio::task::spawn_blocking(move || {
             if let Some(mut p) = ollama {
                 p.shutdown();
             }
             if let Some(mut p) = qdrant {
+                p.shutdown();
+            }
+            if let Some(mut p) = llama_server {
                 p.shutdown();
             }
         })
@@ -109,6 +121,10 @@ impl PeripheralLifecycle {
         if let Some(mut qdrant) = self.qdrant.take() {
             qdrant.shutdown();
             stopped.push("qdrant");
+        }
+        if let Some(mut llama_server) = self.llama_server.take() {
+            llama_server.shutdown();
+            stopped.push("llama_server");
         }
         stopped
     }
@@ -324,6 +340,28 @@ pub async fn ensure_peripherals_for_chat(config: &AppConfig) -> Result<Periphera
         }
     }
 
+    if config.uses_llama_server() && !llama_server_reachable(&config.llama_server_base_url).await {
+        tracing::warn!(
+            endpoint = %config.llama_server_base_url,
+            "llama-server backend selected but endpoint is unreachable; attempting Rust-managed launch"
+        );
+        let mut child = spawn_daemon("llama-server", &config.llama_server_daemon)?;
+        if !wait_for_llama_server(&config.llama_server_base_url, READY_TIMEOUT_SECS).await {
+            sync_reap_managed_child(&mut child, "llama-server-bootstrap");
+            return Err(FcpError::NetworkFault(
+                "FATAL: llama-server failed to become ready after launch attempt.".into(),
+            ));
+        }
+        lifecycle.llama_server = Some(ManagedProcess {
+            name: "llama-server",
+            kind: ManagedProcessKind::Child(child),
+        });
+        tracing::info!(
+            endpoint = %config.llama_server_base_url,
+            "llama-server launched and reachable"
+        );
+    }
+
     Ok(lifecycle)
 }
 
@@ -535,12 +573,25 @@ pub async fn qdrant_reachable(qdrant_url: &str) -> bool {
     )
 }
 
+pub async fn llama_server_reachable(base_url: &str) -> bool {
+    let client = reqwest::Client::new();
+    let models_url = format!("{}/v1/models", base_url.trim_end_matches('/'));
+    matches!(
+        timeout(Duration::from_secs(2), client.get(models_url).send()).await,
+        Ok(Ok(res)) if res.status().is_success()
+    )
+}
+
 async fn wait_for_ollama(host: &str, timeout_secs: u64) -> bool {
     wait_until(timeout_secs, || ollama_reachable(host)).await
 }
 
 async fn wait_for_qdrant(url: &str, timeout_secs: u64) -> bool {
     wait_until(timeout_secs, || qdrant_reachable(url)).await
+}
+
+async fn wait_for_llama_server(url: &str, timeout_secs: u64) -> bool {
+    wait_until(timeout_secs, || llama_server_reachable(url)).await
 }
 
 async fn wait_until<F, Fut>(timeout_secs: u64, mut check: F) -> bool

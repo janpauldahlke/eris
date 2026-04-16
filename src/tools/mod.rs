@@ -19,7 +19,7 @@ pub mod routing_phrases;
 
 pub use traits::Tool;
 pub use context_view_hint::ToolContextViewHint;
-pub use gatekeeper::Gatekeeper;
+pub use gatekeeper::{AllowedToolSchema, Gatekeeper};
 pub use validation::validate_path_is_mutable;
 pub use descriptors::ToolDescriptorRegistry;
 

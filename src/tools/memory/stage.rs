@@ -13,12 +13,11 @@ use crate::tools::traits::Tool;
 #[derive(Deserialize, JsonSchema)]
 pub struct MemoryStageArgs {
     /// A short descriptive title (e.g. "hagbard_profile", "weather_api"). Required.
-    pub title: Option<String>,
+    pub title: String,
     /// The text content to remember. Required.
-    pub content: Option<String>,
+    pub content: String,
     /// Free-form tags for classification. Required, at least one tag.
-    #[serde(default)]
-    pub tags: Option<Vec<String>>,
+    pub tags: Vec<String>,
     /// Optional tier override for fast-lane promotion. One of: "session", "scratch", "promote".
     /// When omitted, defaults to "session" (or preserves existing tier on upsert).
     #[serde(default)]
@@ -53,29 +52,32 @@ impl Tool for MemoryStageTool {
         let args: MemoryStageArgs =
             serde_json::from_value(args).map_err(FcpError::ParseFault)?;
 
-        let title = args
-            .title
-            .filter(|t| !t.trim().is_empty())
-            .ok_or_else(|| FcpError::ToolFault {
+        let title = if args.title.trim().is_empty() {
+            return Err(FcpError::ToolFault {
                 tool_name: self.name().into(),
                 reason: "title is required — provide a short descriptive title (e.g. \"hagbard_profile\", \"weather_api\")".into(),
-            })?;
+            });
+        } else {
+            args.title
+        };
 
-        let content = args
-            .content
-            .filter(|c| !c.trim().is_empty())
-            .ok_or_else(|| FcpError::ToolFault {
+        let content = if args.content.trim().is_empty() {
+            return Err(FcpError::ToolFault {
                 tool_name: self.name().into(),
                 reason: "content is required — provide the actual text to remember".into(),
-            })?;
+            });
+        } else {
+            args.content
+        };
 
-        let tags = args
-            .tags
-            .filter(|t| !t.is_empty())
-            .ok_or_else(|| FcpError::ToolFault {
+        let tags = if args.tags.is_empty() {
+            return Err(FcpError::ToolFault {
                 tool_name: self.name().into(),
                 reason: "tags is required — provide at least one tag for vault routing (e.g. [\"person\",\"hagbard\"] or [\"api\",\"weather\"])".into(),
-            })?;
+            });
+        } else {
+            args.tags
+        };
 
         if content.len() > self.max_content_chars {
             return Err(FcpError::ToolFault {
@@ -307,7 +309,7 @@ mod tests {
         let result = tool.execute(args).await;
         assert!(result.is_err());
         let err = format!("{}", result.unwrap_err());
-        assert!(err.contains("title is required"));
+        assert!(err.contains("invalid type"));
     }
 
     #[tokio::test]
@@ -327,7 +329,7 @@ mod tests {
         let result = tool.execute(args).await;
         assert!(result.is_err());
         let err = format!("{}", result.unwrap_err());
-        assert!(err.contains("tags is required"));
+        assert!(err.contains("invalid type"));
     }
 
     #[tokio::test]

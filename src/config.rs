@@ -139,6 +139,15 @@ pub struct AppConfig {
     pub ollama_host: String,
     /// Default chat model id as understood by Ollama (`ollama pull …`).
     pub model_name: String,
+    /// Selects the chat-generation backend while embeddings remain Ollama-based.
+    #[serde(default)]
+    pub llm_backend: LlmBackend,
+    /// OpenAI-compatible endpoint for llama.cpp `llama-server`.
+    #[serde(default = "default_llama_server_base_url")]
+    pub llama_server_base_url: String,
+    /// When true, orchestrator uses `generate_constrained` for main protocol generation.
+    #[serde(default = "default_constrained_protocol_enabled")]
+    pub constrained_protocol_enabled: bool,
     /// Operator display name for UI / prompts; from TOML or `FCP_USER_NAME`; empty if unset.
     #[serde(default)]
     pub user_name: String,
@@ -235,6 +244,9 @@ pub struct AppConfig {
     /// Command used when chat startup asks to launch Qdrant if unreachable.
     #[serde(default = "default_qdrant_daemon")]
     pub qdrant_daemon: DaemonCommand,
+    /// Command used when llama-server backend is selected and endpoint is unreachable.
+    #[serde(default = "default_llama_server_daemon")]
+    pub llama_server_daemon: DaemonCommand,
     /// When true, startup fails if Qdrant gRPC (semantic brain) cannot connect after retries.
     #[serde(default = "default_require_semantic_brain")]
     pub require_semantic_brain: bool,
@@ -318,6 +330,14 @@ pub struct AppConfig {
     pub config_source_dir: PathBuf,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LlmBackend {
+    #[default]
+    Ollama,
+    LlamaServer,
+}
+
 /// Spawnable daemon for peripheral bootstrap (`[ollama_daemon]` / `[qdrant_daemon]`).
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct DaemonCommand {
@@ -340,10 +360,25 @@ fn default_unload_ollama_models_on_chat_exit() -> bool {
     true
 }
 
+fn default_llama_server_base_url() -> String {
+    "http://127.0.0.1:8080".into()
+}
+
+fn default_constrained_protocol_enabled() -> bool {
+    false
+}
+
 /// Default peripheral spawn: `qdrant` with no args (container/binary default config).
 fn default_qdrant_daemon() -> DaemonCommand {
     DaemonCommand {
         command: "qdrant".into(),
+        args: Vec::new(),
+    }
+}
+
+fn default_llama_server_daemon() -> DaemonCommand {
+    DaemonCommand {
+        command: "llama-server".into(),
         args: Vec::new(),
     }
 }
@@ -364,7 +399,7 @@ fn default_slim_tool_prompt() -> bool {
 
 /// With slim tool prompt + semantic hits, cap how many matched tools appear in the phrase map; `0` = no cap.
 fn default_tool_map_offer_cap() -> usize {
-    0
+    6
 }
 
 /// When true, chat startup fails if Qdrant is unreachable after retries.
@@ -701,6 +736,9 @@ impl Default for AppConfig {
             log_level: "info".into(),
             ollama_host: "http://localhost:11434".into(),
             model_name: "gemma4:26b".into(),
+            llm_backend: LlmBackend::default(),
+            llama_server_base_url: default_llama_server_base_url(),
+            constrained_protocol_enabled: default_constrained_protocol_enabled(),
             user_name: String::new(),
             num_ctx: 16384,
             generation_timeout_secs: 120,
@@ -738,6 +776,7 @@ impl Default for AppConfig {
             ollama_daemon: default_ollama_daemon(),
             unload_ollama_models_on_chat_exit: default_unload_ollama_models_on_chat_exit(),
             qdrant_daemon: default_qdrant_daemon(),
+            llama_server_daemon: default_llama_server_daemon(),
             require_semantic_brain: default_require_semantic_brain(),
             semantic_brain_connect_attempts: default_semantic_brain_connect_attempts(),
             semantic_brain_connect_retry_delay_ms: default_semantic_brain_connect_retry_delay_ms(),
@@ -778,6 +817,7 @@ impl AppConfig {
         use figment::{Figment, providers::{Env, Format, Toml}};
 
         let _ = dotenvy::dotenv();
+        let _ = dotenvy::from_path(crate::vault_layout::fcp_dir(std::path::Path::new(".")).join(".env"));
 
         let figment = Figment::from(figment::providers::Serialized::defaults(AppConfig::default()))
             .merge(Toml::file(crate::vault_layout::config_toml(std::path::Path::new("."))))
@@ -800,6 +840,10 @@ impl AppConfig {
         config.qdrant_collection_v2 = format!("fcp_vault_v2_{}", config.workspace);
 
         Ok(config)
+    }
+
+    pub fn uses_llama_server(&self) -> bool {
+        self.llm_backend == LlmBackend::LlamaServer
     }
 
     /// Bot token from [`Self::discord`] for the Serenity gateway (trimmed). Errors if missing or blank — see [`Self::discord_sidecar_should_run`].
@@ -995,6 +1039,9 @@ mod tests {
         assert_eq!(parsed_config.log_level, "debug");
         assert_eq!(parsed_config.ollama_host, "http://localhost:11434");
         assert_eq!(parsed_config.model_name, "qwen2.5:14b");
+        assert_eq!(parsed_config.llm_backend, LlmBackend::Ollama);
+        assert_eq!(parsed_config.llama_server_base_url, "http://127.0.0.1:8080");
+        assert!(!parsed_config.constrained_protocol_enabled);
         assert_eq!(parsed_config.user_name, "");
         assert_eq!(parsed_config.num_ctx, 32768);
         assert_eq!(parsed_config.generation_timeout_secs, 60);

@@ -12,7 +12,7 @@ pub struct ToolRouter {
 }
 
 impl ToolRouter {
-    /// Short greetings and tiny utterances: conversational only (evaluated in orchestrator **before** embedding).
+    /// Marks very short inputs that should go through a semantic pre-check before entering broad tool mode.
     pub fn short_input_guard_conversational_only(text: &str) -> bool {
         Self::is_short_input_without_explicit_tool_intent(text)
     }

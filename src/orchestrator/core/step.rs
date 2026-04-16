@@ -1,9 +1,10 @@
-use crate::engine::LlmEngine;
+use crate::engine::{GenerationConstraints, LlmEngine};
 use crate::executive::error::{FcpError, Result};
 use crate::orchestrator::context::{build_llm_view, estimate_stack_tokens};
 use crate::orchestrator::llm_support::json_envelope::{
     parse_llm_response_protocol, split_leading_json_object, trailing_content_after_valid_llm_json,
 };
+use crate::orchestrator::llm_support::protocol_schema::build_llm_response_schema_for_tools;
 use crate::orchestrator::r#loop::directive_policy::decide_transition_from_directive;
 use crate::orchestrator::r#loop::tool_batch::ToolBatchDecision;
 use crate::orchestrator::r#loop::transition::{StateTransition, TransitionControl};
@@ -19,6 +20,80 @@ use super::{
 };
 
 impl<E: LlmEngine> Orchestrator<E> {
+    fn active_tool_names_for_turn(
+        &self,
+        tools_needed: bool,
+        pre_llm_matched_tools: &[String],
+        targeted_tools: &HashSet<String>,
+    ) -> Vec<String> {
+        if !tools_needed {
+            return Vec::new();
+        }
+        let allowed = self.gatekeeper.allowed_tool_names(&self.state);
+        if allowed.is_empty() {
+            return Vec::new();
+        }
+        let allowed_set = allowed.iter().cloned().collect::<HashSet<_>>();
+        if !targeted_tools.is_empty() {
+            let mut names = targeted_tools
+                .iter()
+                .filter(|name| allowed_set.contains(*name))
+                .cloned()
+                .collect::<Vec<_>>();
+            names.sort();
+            names.dedup();
+            return names;
+        }
+        let has_router_matches = !pre_llm_matched_tools.is_empty();
+        let slim_matched_mode = self.slim_tool_prompt
+            && has_router_matches
+            && !self.force_full_tool_schemas_in_llm_view;
+        if slim_matched_mode {
+            let cap = self.tool_map_offer_cap;
+            let offered = if cap == 0 {
+                pre_llm_matched_tools.to_vec()
+            } else {
+                pre_llm_matched_tools.iter().take(cap).cloned().collect()
+            };
+            let mut names = offered
+                .into_iter()
+                .filter(|name| allowed_set.contains(name))
+                .collect::<Vec<_>>();
+            names.sort();
+            names.dedup();
+            return names;
+        }
+        allowed
+    }
+
+    fn constrained_protocol_for_turn(
+        &self,
+        tools_needed: bool,
+        pre_llm_matched_tools: &[String],
+        targeted_tools: &HashSet<String>,
+    ) -> Result<GenerationConstraints> {
+        let active_tools =
+            self.active_tool_names_for_turn(tools_needed, pre_llm_matched_tools, targeted_tools);
+        let allowed_schemas = self.gatekeeper.allowed_tool_schemas(&self.state)?;
+        let schema = build_llm_response_schema_for_tools(&active_tools, &allowed_schemas);
+        let schema_chars = serde_json::to_string(&schema)
+            .map(|s| s.len())
+            .unwrap_or(0);
+        tracing::info!(
+            target: "fcp.constrained_protocol",
+            event = "fcp.constrained_protocol.schema_built",
+            active_tool_count = active_tools.len(),
+            allowed_schema_count = allowed_schemas.len(),
+            schema_serialized_chars = schema_chars,
+            active_tools = %active_tools.join(", "),
+            "Per-turn LlmResponse JSON schema for llama-server"
+        );
+        Ok(GenerationConstraints::new(
+            schema,
+            "eris_protocol_response",
+        ))
+    }
+
     /// The main cognitive loop.
     ///
     /// Pre-LLM routing: alarm prefix and short-input guard → conversational; else
@@ -252,11 +327,33 @@ impl<E: LlmEngine> Orchestrator<E> {
                 );
             }
             let view = build_llm_view(&self.chat_stack, &view_settings);
+            let constraints = if self.config.constrained_protocol_enabled {
+                Some(self.constrained_protocol_for_turn(
+                    tools_needed,
+                    &pre_llm_matched_tools,
+                    &targeted_tools,
+                )?)
+            } else {
+                None
+            };
+            if let Some(ref c) = constraints {
+                tracing::debug!(
+                    schema = %c.schema_name,
+                    strict = c.strict,
+                    "Constrained protocol decoding enabled for this generation"
+                );
+            }
 
             let response_result = tokio::select! {
                 res = async {
                     let llm_started = Instant::now();
-                    let out = self.engine.generate(&view, "", None).await;
+                    let out = if let Some(ref active_constraints) = constraints {
+                        self.engine
+                            .generate_constrained(&view, "", active_constraints, None)
+                            .await
+                    } else {
+                        self.engine.generate(&view, "", None).await
+                    };
                     llm_ms_acc = llm_ms_acc.saturating_add(llm_started.elapsed().as_millis() as u64);
                     out
                 } => res,
@@ -432,6 +529,15 @@ impl<E: LlmEngine> Orchestrator<E> {
                             })
                             .await?;
                         }
+                        ToolBatchDecision::RecoverNoTools { message } => {
+                            tools_needed = false;
+                            targeted_tools.clear();
+                            self.apply_transition(StateTransition::Recover {
+                                message,
+                                schema_retry: false,
+                            })
+                            .await?;
+                        }
                         ToolBatchDecision::Fatal(e) => {
                             tracing::error!(error = %e, "System fatality - aborting orchestrator");
                             self.apply_transition(StateTransition::Fatal(FcpError::EngineFault(
@@ -443,6 +549,16 @@ impl<E: LlmEngine> Orchestrator<E> {
                     }
                 }
                 non_tool_transition => {
+                    if let StateTransition::Recover { message, .. } = &non_tool_transition
+                        && message.contains("Tool-enabled mode forbids empty action")
+                    {
+                        tracing::info!(
+                            event = "fcp.constrained_protocol.recover_no_tools",
+                            "Recovering from empty tool-mode action by forcing no-tools reply pass"
+                        );
+                        tools_needed = false;
+                        targeted_tools.clear();
+                    }
                     let control = self.apply_transition(non_tool_transition).await?;
                     if matches!(control, TransitionControl::ReturnOk) {
                         return Ok(());

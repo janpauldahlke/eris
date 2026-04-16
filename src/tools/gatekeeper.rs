@@ -11,6 +11,12 @@ pub struct Gatekeeper {
     registry: HashMap<String, Arc<dyn Tool>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct AllowedToolSchema {
+    pub name: String,
+    pub schema: Value,
+}
+
 impl Default for Gatekeeper {
     fn default() -> Self {
         Self::new()
@@ -29,7 +35,7 @@ impl Gatekeeper {
 
     fn state_allows_tool(state: &AgentState, tool_name: &str) -> bool {
         match state {
-            AgentState::Chat => !matches!(tool_name, "agenda:complete"),
+            AgentState::Chat => true,
             AgentState::Reflect => matches!(tool_name, "memory:stage" | "memory:staged_list" | "memory:commit" | "memory:commit_all" | "memory:query" | "vault:read" | "vault:list" | "agenda:push" | "agenda:list" | "agenda:remove" | "agenda:remind_at" | "web:artifact_query" | "system:health" | "clock:now" | "clock:timer" | "clock:alarm" | "weather:current" | "weather:forecast" | "wiki:summary" | "db:find_connections" | "mail:check" | "mail:read" | "mail:digest" | "calendar:list" | "calendar:get"),
             AgentState::Idle => matches!(tool_name, "memory:stage" | "memory:staged_list" | "memory:commit" | "memory:commit_all" | "memory:query" | "vault:read" | "vault:write" | "vault:list" | "agenda:list" | "agenda:complete" | "agenda:remove" | "agenda:remind_at" | "web:fetch" | "web:artifact_query" | "system:health" | "clock:now" | "clock:timer" | "clock:alarm" | "weather:current" | "weather:forecast" | "wiki:summary" | "db:find_connections" | "mail:check" | "mail:read" | "mail:digest" | "mail:write" | "mail:delete" | "mail:move" | "calendar:list" | "calendar:get" | "calendar:create" | "calendar:update" | "calendar:delete"),
             AgentState::Recover => true,
@@ -84,6 +90,35 @@ impl Gatekeeper {
                     }
                 })
             }).collect()
+    }
+
+    pub fn allowed_tool_names(&self, state: &AgentState) -> Vec<String> {
+        let mut names = self
+            .registry
+            .values()
+            .filter(|tool| Self::state_allows_tool(state, tool.name()))
+            .map(|tool| tool.name().to_string())
+            .collect::<Vec<_>>();
+        names.sort();
+        names
+    }
+
+    pub fn allowed_tool_schemas(&self, state: &AgentState) -> Result<Vec<AllowedToolSchema>> {
+        let mut out = Vec::new();
+        for tool in self
+            .registry
+            .values()
+            .filter(|tool| Self::state_allows_tool(state, tool.name()))
+        {
+            let schema = serde_json::to_value(tool.parameters_schema())
+                .map_err(|e| FcpError::Config(format!("Failed to serialize tool schema for {}: {e}", tool.name())))?;
+            out.push(AllowedToolSchema {
+                name: tool.name().to_string(),
+                schema,
+            });
+        }
+        out.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(out)
     }
 
     pub async fn execute_tool(&self, state: &AgentState, name: &str, args: Value) -> Result<String> {
@@ -260,7 +295,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_gatekeeper_blocks_agenda_complete_in_chat() {
+    async fn test_gatekeeper_allows_agenda_complete_in_chat() {
         let mut gatekeeper = Gatekeeper::new();
         
         struct MockAgendaComplete;
@@ -275,13 +310,8 @@ mod tests {
         gatekeeper.register(Arc::new(MockAgendaComplete));
 
         let res = gatekeeper.execute_tool(&AgentState::Chat, "agenda:complete", json!({})).await;
-        assert!(res.is_err());
-        match res {
-            Err(FcpError::SchemaViolation(msg)) => {
-                assert!(msg.contains("not authorized"));
-            }
-            _ => panic!("Expected SchemaViolation"),
-        }
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), "done");
     }
 
     #[test]

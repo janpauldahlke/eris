@@ -260,8 +260,9 @@ impl<E: LlmEngine> Orchestrator<E> {
         {
             tracing::info!("All tool intents in batch were duplicate-suppressed; forcing user-facing reply via recover");
             let msg = "[SYSTEM OVERRIDE] All requested tool calls in this batch were suppressed as duplicates (already executed earlier). Do NOT repeat those tool calls again. Respond to the user now with status Idle and a non-empty message_to_user confirming the outcome. tool_calls MUST be [].".to_string();
-            // IMPORTANT: route through Recover so retry is bounded by `max_recovery_attempts`.
-            return Ok(ToolBatchDecision::Recover { message: msg });
+            // IMPORTANT: route through Recover so retry is bounded by `max_recovery_attempts`,
+            // but force next pass into conversational/no-tools mode to prevent repeated duplicate intents.
+            return Ok(ToolBatchDecision::RecoverNoTools { message: msg });
         }
 
         if targeted_recovery_requested {

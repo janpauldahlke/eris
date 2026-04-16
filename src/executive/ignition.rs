@@ -1,4 +1,4 @@
-use crate::config::AppConfig;
+use crate::config::{AppConfig, LlmBackend};
 use crate::executive::error::{FcpError, Result};
 use std::path::Path;
 use tokio::fs;
@@ -20,6 +20,8 @@ impl Default for IgnitionOptions {
 }
 
 pub async fn run_ignition_sequence(workspace_root: &Path, options: IgnitionOptions) -> Result<AppConfig> {
+    const LLAMA_SERVER_DEFAULT_MODEL: &str = "qwen2.5-coder:14b";
+
     // 1. Fetch available models first to keep async cleanly separated
     let host = "http://localhost".to_string();
     let port = 11434;
@@ -29,7 +31,8 @@ pub async fn run_ignition_sequence(workspace_root: &Path, options: IgnitionOptio
     let model_names: Vec<String> = local_models.into_iter().map(|m| m.name).collect();
 
     // 2. Interactive Prompts (blocking task)
-    let (agent_name, user_name, model_name) = tokio::task::spawn_blocking(move || -> Result<(String, String, String)> {
+    let (agent_name, user_name, llm_backend, model_name, constrained_protocol_enabled) =
+        tokio::task::spawn_blocking(move || -> Result<(String, String, LlmBackend, String, bool)> {
         let agent_name = Text::new("Agent Name:")
             .with_default("ERIS")
             .prompt()
@@ -51,33 +54,72 @@ pub async fn run_ignition_sequence(workspace_root: &Path, options: IgnitionOptio
             })?;
         let user_name = user_name.trim().to_string();
 
-        let model_name = if !model_names.is_empty() {
-            // Find if default qwen2.5:14b is in the list
-            let default_idx = model_names.iter().position(|m| m.contains("qwen2.5:14b")).unwrap_or(0);
-            
-            Select::new("Ollama Model:", model_names.clone())
-                .with_starting_cursor(default_idx)
-                .prompt()
-                .map_err(|e| match e {
-                    inquire::InquireError::OperationCanceled | inquire::InquireError::OperationInterrupted => {
-                        FcpError::Cancellation("Ignition cancelled by user".into())
-                    }
-                    _ => FcpError::Config(format!("Prompt error: {}", e)),
-                })?
-        } else {
-            Text::new("Ollama Model:")
-                .with_default("qwen2.5:14b")
-                .prompt()
-                .map_err(|e| match e {
-                    inquire::InquireError::OperationCanceled | inquire::InquireError::OperationInterrupted => {
-                        FcpError::Cancellation("Ignition cancelled by user".into())
-                    }
-                    _ => FcpError::Config(format!("Prompt error: {}", e)),
-                })?
-        };
+        let backend_label = Select::new(
+            "Chat Backend:",
+            vec![
+                "Local Ollama".to_string(),
+                "llama-server (OpenAI-compatible)".to_string(),
+            ],
+        )
+        .prompt()
+        .map_err(|e| match e {
+            inquire::InquireError::OperationCanceled | inquire::InquireError::OperationInterrupted => {
+                FcpError::Cancellation("Ignition cancelled by user".into())
+            }
+            _ => FcpError::Config(format!("Prompt error: {}", e)),
+        })?;
 
-        Ok((agent_name, user_name, model_name))
+        let (llm_backend, model_name, constrained_protocol_enabled) =
+            if backend_label.starts_with("Local Ollama") {
+                let model_name = if !model_names.is_empty() {
+                    let default_idx = model_names
+                        .iter()
+                        .position(|m| m.contains("qwen2.5:14b"))
+                        .unwrap_or(0);
+                    Select::new("Ollama Model:", model_names.clone())
+                        .with_starting_cursor(default_idx)
+                        .prompt()
+                        .map_err(|e| match e {
+                            inquire::InquireError::OperationCanceled | inquire::InquireError::OperationInterrupted => {
+                                FcpError::Cancellation("Ignition cancelled by user".into())
+                            }
+                            _ => FcpError::Config(format!("Prompt error: {}", e)),
+                        })?
+                } else {
+                    Text::new("Ollama Model:")
+                        .with_default("qwen2.5:14b")
+                        .prompt()
+                        .map_err(|e| match e {
+                            inquire::InquireError::OperationCanceled | inquire::InquireError::OperationInterrupted => {
+                                FcpError::Cancellation("Ignition cancelled by user".into())
+                            }
+                            _ => FcpError::Config(format!("Prompt error: {}", e)),
+                        })?
+                };
+                (LlmBackend::Ollama, model_name, false)
+            } else {
+                (
+                    LlmBackend::LlamaServer,
+                    LLAMA_SERVER_DEFAULT_MODEL.to_string(),
+                    true,
+                )
+            };
+
+        Ok((
+            agent_name,
+            user_name,
+            llm_backend,
+            model_name,
+            constrained_protocol_enabled,
+        ))
     }).await.map_err(|e| FcpError::Config(format!("Spawn blocking failed: {}", e)))??;
+
+    tracing::info!(
+        backend = ?llm_backend,
+        model = %model_name,
+        constrained_protocol_enabled,
+        "Ignition model/backend selection complete"
+    );
 
     // 3. The Scaffold (v2 Zettelkasten roots)
     let dirs_to_create = [
@@ -123,6 +165,8 @@ pub async fn run_ignition_sequence(workspace_root: &Path, options: IgnitionOptio
     // 5. The Seal
     let mut config = AppConfig {
         model_name,
+        llm_backend,
+        constrained_protocol_enabled,
         user_name,
         workspace: options.workspace,
         ..Default::default()

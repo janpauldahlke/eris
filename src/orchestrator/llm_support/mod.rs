@@ -3,3 +3,4 @@
 
 pub mod json_envelope;
 pub mod post_tool_guidance;
+pub mod protocol_schema;
