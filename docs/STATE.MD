@@ -148,3 +148,4 @@
 - [x] feature: new tool vault:search to find many documents
 - [x] feature: todays news by category
 - [x] fix: show condensatoin tail on loglevel debug
+- [x] feature: enhance system health tool by GPU

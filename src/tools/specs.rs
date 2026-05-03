@@ -277,10 +277,10 @@ rationale = "Expected include_content_preview."
 "#,
     r#"descriptor_version = 1
 tool_name = "system:health"
-short_description = "Structured JSON: FCP Ollama host and chat/embed models, CPU and RAM, plus ollama ps; follow report_hint when summarizing."
-when_to_use = "Use when the user asks for runtime health or diagnostics. Always summarize Ollama (URL + models), CPU usage, and RAM from the tool JSON."
+short_description = "Structured JSON: FCP Ollama host and chat/embed models, CPU and RAM, ollama ps, optional gpu.nvidia_smi; follow report_hint when summarizing."
+when_to_use = "Use when the user asks for runtime health or diagnostics. Always summarize Ollama (URL + models), CPU usage, and RAM from the tool JSON; when gpu.nvidia_smi.available is true, include NVIDIA GPU utilization and memory from gpus."
 when_not_to_use = "Do not use for vault or memory operations."
-routing_hints = ["health check", "system status", "cpu usage", "memory usage", "ollama status", "diagnostics"]
+routing_hints = ["health check", "system status", "cpu usage", "memory usage", "gpu usage", "nvidia", "ollama status", "diagnostics"]
 
 [[examples_good]]
 name = "health"

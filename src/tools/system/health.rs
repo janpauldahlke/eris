@@ -17,7 +17,7 @@ pub struct SystemHealthTool {
     pub config: Arc<AppConfig>,
 }
 
-const REPORT_HINT: &str = "When answering the user, always cover in order: (1) `fcp`: Ollama URL and chat + embed models; (2) `ollama.cli_ps`: whether the CLI ran and summarize stdout or error; (3) `cpu.usage_pct` and load averages; (4) `memory` used vs total and `used_pct`. Optionally mention `host` and `disks` if relevant.";
+const REPORT_HINT: &str = "When answering the user, always cover in order: (1) `fcp`: Ollama URL and chat + embed models; (2) `ollama.cli_ps`: whether the CLI ran and summarize stdout or error; (3) `cpu.usage_pct` and load averages; (4) `memory` used vs total and `used_pct`. If `gpu.nvidia_smi.available` is true, summarize per-GPU memory, utilization, and temperature from `gpus`; if `available` is false and `reason` is `not_on_path`, omit GPU detail; if `skipped` is present, omit GPU detail. Optionally mention `host` and `disks` if relevant.";
 
 #[async_trait]
 impl Tool for SystemHealthTool {
@@ -26,7 +26,7 @@ impl Tool for SystemHealthTool {
     }
 
     fn description(&self) -> &'static str {
-        "Structured host diagnostics JSON with stable sections: `report_hint` (how to summarize), `fcp` (configured Ollama host and models), `cpu`, `memory`, `ollama` (`ollama ps`), plus `host` and `disks`. Follow `report_hint` so answers consistently mention Ollama, models, CPU, and RAM."
+        "Structured host diagnostics JSON with stable sections: `report_hint` (how to summarize), `fcp` (configured Ollama host and models), `cpu`, `memory`, `ollama` (`ollama ps`), `gpu.nvidia_smi` (optional NVIDIA GPUs via `nvidia-smi` when on PATH), plus `host` and `disks`. Follow `report_hint` so answers consistently mention Ollama, models, CPU, and RAM, and GPU when available."
     }
 
     fn parameters_schema(&self) -> schemars::schema::RootSchema {
@@ -91,6 +91,10 @@ impl Tool for SystemHealthTool {
                 })
             };
 
+            let gpu = json!({
+                "nvidia_smi": crate::util::nvidia_smi::run_nvidia_smi_health_json(),
+            });
+
             let load = System::load_average();
             // Key order preserved (serde_json preserve_order): snippet truncation keeps the hint and core metrics first.
             json!({
@@ -118,6 +122,7 @@ impl Tool for SystemHealthTool {
                 "ollama": {
                     "cli_ps": ollama_cli,
                 },
+                "gpu": gpu,
                 "host": {
                     "os_name": System::name(),
                     "os_version": System::os_version(),
@@ -156,6 +161,17 @@ mod tests {
         assert!(parsed.get("cpu").and_then(|x| x.get("usage_pct")).is_some());
         assert!(parsed.get("memory").and_then(|x| x.get("used_pct")).is_some());
         assert!(parsed.get("ollama").is_some());
+        let gpu = parsed.get("gpu").expect("gpu section");
+        let nsmi = gpu.get("nvidia_smi").expect("gpu.nvidia_smi");
+        if std::env::var("FCP_FORCE_NVIDIA_SMI").as_deref() == Ok("1") {
+            assert!(
+                nsmi.get("skipped").is_none(),
+                "when FCP_FORCE_NVIDIA_SMI=1 the probe is not skipped"
+            );
+            assert!(nsmi.get("available").is_some());
+        } else {
+            assert!(nsmi.get("skipped").is_some(), "nvidia_smi skipped by default in unit tests");
+        }
         assert!(parsed.get("host").is_some());
         assert!(parsed.get("disks").is_some());
     }

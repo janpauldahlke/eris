@@ -20,7 +20,7 @@ pub fn fallback_triggers(tool_name: &str) -> &'static str {
         "web:fetch" => "fetching URLs, web search, look up online, check website, browse internet, search the web, what is happening, news, look this up",
         "news:today" => "todays headlines, top stories, morning briefing, news digest, breaking news, front page news, what is in the news today, latest headlines from homepage, politics news science business economics technology sport world uk health section",
         "web:artifact_query" => "query fetched web artifact by artifact id, search fetched page snippets, retrieve specific sections from buffered webpage",
-        "system:health" => "system status, Ollama endpoint, LLM model, CPU usage, RAM memory usage, disk space, health check, diagnostics, how is the system, performance, resources",
+        "system:health" => "system status, Ollama endpoint, LLM model, CPU usage, RAM memory usage, GPU usage NVIDIA nvidia-smi, disk space, health check, diagnostics, how is the system, performance, resources",
         "clock:now" => "what time is it, current time, timezone, date now, local time",
         "clock:timer" => "generic timer in 30 minutes, countdown, stretch break, ping me in, not tied to agenda list, label-only reminder",
         "clock:alarm" => "wake me up, wake alarm, alarm clock only, no task just alarm, not on my todo list, standalone alarm no agenda, no errand, bell only",
