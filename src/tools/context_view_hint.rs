@@ -7,6 +7,10 @@ use serde::{Deserialize, Serialize};
 /// Default cap for HTTP/API tools when using [`ToolContextViewHint::Snippet`].
 pub const API_TOOL_SNIPPET_CHARS: usize = 320;
 
+/// `web:artifact_query` returns chunk `matches` plus many `outbound_links`; the LLM view must stay
+/// large enough that truncation does not hide `matches` (see orchestrator `build_llm_view`).
+pub const ARTIFACT_QUERY_SNIPPET_CHARS: usize = 12_288;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ToolContextViewHint {

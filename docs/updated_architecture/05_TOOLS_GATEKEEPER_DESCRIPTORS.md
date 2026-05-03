@@ -15,8 +15,8 @@ Each tool implements:
 - **Registry:** `HashMap<String, Arc<dyn Tool>>`.
 - **`get_allowed_tools(state)`** — filters tools by **`AgentState`**:
   - **Chat:** all registered tools **except** `agenda:complete` (prevents completing before user turn semantics). Includes mail/DB/etc. when registered.
-  - **Reflect:** sandbox set: memory, `vault:read` / `vault:list`, `web:artifact_query`, agenda mutations, clocks, weather, wiki, `system:health`, `db:find_connections`, **`mail:check` / `mail:read` / `mail:digest`**, **`calendar:list` / `calendar:get`** — **no** `vault:write`, **`web:fetch`**, **`mail:write` / `mail:delete` / `mail:move`**, **`calendar:create` / `calendar:update` / `calendar:delete`**.
-  - **Idle:** Reflect set **plus** `vault:write`, `web:fetch`, `agenda:complete`, **`mail:write` / `mail:delete` / `mail:move`**, **`calendar:create` / `calendar:update` / `calendar:delete`**.
+- **Reflect:** sandbox set: memory, `vault:read` / `vault:list`, `web:artifact_query`, agenda mutations, clocks, weather, wiki, `system:health`, `db:find_connections`, **`mail:check` / `mail:read` / `mail:digest`**, **`calendar:list` / `calendar:get`** — **no** `vault:write`, **`web:fetch`**, **`news:today`**, **`mail:write` / `mail:delete` / `mail:move`**, **`calendar:create` / `calendar:update` / `calendar:delete`**.
+- **Idle:** Reflect set **plus** `vault:write`, `web:fetch`, `news:today`, `agenda:complete`, **`mail:write` / `mail:delete` / `mail:move`**, **`calendar:create` / `calendar:update` / `calendar:delete`**.
   - **Recover:** all registered (recovery pass).
 - **`execute_tool`:** state check → JSON Schema validate (`jsonschema`) → `tool.execute`.
 - **Recover empty result** → `ToolFault` semantic guard.
@@ -33,6 +33,7 @@ Shared helpers (e.g. path mutability) used by vault tools.
 | `tools/memory/` | `memory:stage`, `memory:staged_list`, `memory:commit`, `memory:commit_all`, `memory:query` |
 | `tools/agenda/` | `agenda:push`, `agenda:list`, `agenda:remind_at`, `agenda:complete`, `agenda:remove` |
 | `tools/web/` | `web:fetch`, `web:artifact_query` |
+| `tools/news/` | `news:today` (homepage headlines + optional deep article fetches; shared fetch pipeline) |
 | `tools/system/` | `system:health` |
 | `tools/clock/` | `clock:now`, `clock:timer`, `clock:alarm` |
 | `tools/weather/` | `weather:current`, `weather:forecast` (Open-Meteo via `ApiHttpClient`) |

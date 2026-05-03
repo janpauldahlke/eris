@@ -18,9 +18,9 @@
 - **Collection:** `AppConfig::qdrant_collection_v2` (computed `fcp_vault_v2_{workspace}`); vectors 768-dim cosine (matches typical nomic-embed dimensions).
 - **`create_collection`** if missing.
 - **`generate_embedding`:** via Ollama embeddings API (same as ToolRouter).
-- **Upsert:** point with payload `text`, `tags`, `vault_key`.
+- **Upsert:** point with payload `text`, `tags`, `vault_key`, **`recency_ts`** (Unix time in **milliseconds**: vault ingest uses source file `mtime`; commits and web chunks use wall-clock at upsert).
 - **`upsert_vault_document`:** stable point id from UUID v5 of path — avoids duplicate points on re-ingest.
-- **Search:** `search_memory_query` with optional tag filter, `vault_path_prefix`, oversampling when filtering post-Qdrant.
+- **Search:** `search_memory_query` — **`semantic`** (default): vector similarity, optional tag filter, `vault_path_prefix`, oversampling when filtering post-Qdrant. **`recency`**: Qdrant scroll ordered by `recency_ts` descending (no embedding call); same tag/prefix fallback behavior as semantic mode.
 - **Web artifacts:** dedicated delete/cleanup helpers for staged web fetch chunks.
 
 ## Ingest (`ingest/`)

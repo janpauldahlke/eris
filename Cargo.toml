@@ -58,6 +58,7 @@ serenity = { version = "0.12.5", default-features = false, features = [
     "model",
     "rustls_backend",
 ] }
+scraper = "0.22"
 
 [build-dependencies]
 gws-builder = "0.1"

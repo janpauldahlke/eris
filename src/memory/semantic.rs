@@ -3,10 +3,17 @@ use crate::config::AppConfig;
 use crate::ingest::truncate_char_boundary;
 use std::sync::Arc;
 use qdrant_client::Qdrant;
-use qdrant_client::qdrant::{Condition, CreateCollectionBuilder, DeletePointsBuilder, Distance, Filter, VectorParamsBuilder, PointStruct, SearchPointsBuilder, UpsertPointsBuilder};
+use qdrant_client::qdrant::{
+    Condition, CreateCollectionBuilder, CreateFieldIndexCollectionBuilder, DeletePointsBuilder,
+    Distance, FieldType, Filter, OrderBy, PointStruct, ScrollPointsBuilder, SearchPointsBuilder,
+    UpsertPointsBuilder, VectorParamsBuilder, Direction,
+};
 use ollama_rs::Ollama;
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use std::collections::HashMap;
+
+/// Qdrant payload key for millisecond UNIX time used to order “where we left off” recall.
+pub const RECENCY_TS_PAYLOAD_KEY: &str = "recency_ts";
 
 /// Parsed vault markdown frontmatter + body (used by boot ingest).
 #[derive(Debug, Clone)]
@@ -28,6 +35,14 @@ pub struct MemorySearchOutcome {
     pub attempted_vault_prefix: Option<String>,
 }
 
+/// Semantic similarity vs. latest persisted memory (by [`RECENCY_TS_PAYLOAD_KEY`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MemoryQuerySort {
+    #[default]
+    Semantic,
+    Recency,
+}
+
 /// Tunable knobs for [`SemanticBrain::search_memory_query`].
 #[derive(Debug, Clone, Copy)]
 pub struct MemoryQueryOptions<'a> {
@@ -42,6 +57,8 @@ pub struct MemoryQueryOptions<'a> {
     pub qdrant_oversample_cap: u64,
     pub qdrant_oversample_multiplier: u64,
     pub qdrant_oversample_min: u64,
+    /// [`MemoryQuerySort::Semantic`] uses vector similarity; [`MemoryQuerySort::Recency`] scrolls by `recency_ts` (no embedding call).
+    pub memory_sort: MemoryQuerySort,
 }
 
 /// Zettelkasten vault directories for v2 ingest.
@@ -58,6 +75,8 @@ pub struct MemoryHit {
     pub score: f32,
     pub text: String,
     pub vault_key: Option<String>,
+    /// When set, output uses a recency header instead of a cosine score (see [`format_memory_hits_markdown`]).
+    pub recency_ts_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -99,6 +118,37 @@ impl SemanticBrain {
             ollama,
             config,
         })
+    }
+
+    /// Ensures an integer payload index exists for [`RECENCY_TS_PAYLOAD_KEY`] (idempotent).
+    async fn ensure_recency_payload_index(&self) -> Result<()> {
+        let collection = &self.config.qdrant_collection_v2;
+        if collection.is_empty() {
+            return Ok(());
+        }
+        let builder = CreateFieldIndexCollectionBuilder::new(
+            collection.clone(),
+            RECENCY_TS_PAYLOAD_KEY.to_string(),
+            FieldType::Integer,
+        )
+        .wait(true);
+        match self.client.create_field_index(builder).await {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("already exists")
+                    || msg.contains("AlreadyExists")
+                    || msg.contains("duplicate")
+                    || msg.contains("Conflict")
+                {
+                    Ok(())
+                } else {
+                    Err(FcpError::NetworkFault(format!(
+                        "recency_ts payload index: {msg}"
+                    )))
+                }
+            }
+        }
     }
 
     /// Qdrant gRPC connect with bounded retries. Peripheral checks only TCP; this covers the gap
@@ -177,6 +227,10 @@ impl SemanticBrain {
         payload.insert("text".to_string(), serde_json::json!(text));
         payload.insert("tags".to_string(), serde_json::json!(tags));
         payload.insert("vault_key".to_string(), serde_json::json!(vk));
+        payload.insert(
+            RECENCY_TS_PAYLOAD_KEY.to_string(),
+            serde_json::json!(unix_ms_now()),
+        );
 
         let point = PointStruct::new(id, embedding, payload);
 
@@ -206,6 +260,10 @@ impl SemanticBrain {
         payload.insert("url".to_string(), serde_json::json!(url));
         payload.insert("chunk_index".to_string(), serde_json::json!(chunk_index));
         payload.insert("tags".to_string(), serde_json::json!(vec!["web_artifact"]));
+        payload.insert(
+            RECENCY_TS_PAYLOAD_KEY.to_string(),
+            serde_json::json!(unix_ms_now()),
+        );
 
         let point = PointStruct::new(id, embedding, payload);
         self.client
@@ -301,6 +359,7 @@ impl SemanticBrain {
         rev: Option<u32>,
         is_current: bool,
         epistemic_status: Option<&str>,
+        recency_ts_ms: u64,
     ) -> Result<()> {
         let collection = &self.config.qdrant_collection_v2;
         if collection.is_empty() {
@@ -328,6 +387,10 @@ impl SemanticBrain {
         if let Some(es) = epistemic_status {
             payload.insert("epistemic_status".into(), serde_json::json!(es));
         }
+        payload.insert(
+            RECENCY_TS_PAYLOAD_KEY.into(),
+            serde_json::json!(recency_ts_ms),
+        );
 
         let point = PointStruct::new(point_id, embedding, payload);
         self.client
@@ -390,6 +453,12 @@ impl SemanticBrain {
                     if parsed.content.trim().is_empty() {
                         continue;
                     }
+                    let recency_ts_ms = tokio::fs::metadata(&path)
+                        .await
+                        .ok()
+                        .and_then(|m| m.modified().ok())
+                        .and_then(system_time_to_unix_ms)
+                        .unwrap_or_else(unix_ms_now);
                     let file_name = path
                         .file_name()
                         .and_then(|n| n.to_str())
@@ -407,6 +476,7 @@ impl SemanticBrain {
                             None,
                             true,
                             None,
+                            recency_ts_ms,
                         )
                         .await
                     {
@@ -477,6 +547,12 @@ impl SemanticBrain {
                     if parsed.content.trim().is_empty() {
                         continue;
                     }
+                    let recency_ts_ms = tokio::fs::metadata(&head_path)
+                        .await
+                        .ok()
+                        .and_then(|m| m.modified().ok())
+                        .and_then(system_time_to_unix_ms)
+                        .unwrap_or_else(unix_ms_now);
                     let file_name = head_path
                         .file_name()
                         .and_then(|n| n.to_str())
@@ -497,6 +573,7 @@ impl SemanticBrain {
                             Some(rev),
                             true,
                             epistemic.as_deref(),
+                            recency_ts_ms,
                         )
                         .await
                     {
@@ -523,14 +600,18 @@ impl SemanticBrain {
         count
     }
 
-    /// One query embedding, then Qdrant search with optional tag filter; if the filter yields no
-    /// hits, repeats search with the **same** vector without a filter (no second Ollama call).
-    /// Optional `vault_path_prefix` post-filters on `vault_key` with oversampled retrieval.
+    /// Semantic search uses one query embedding; optional tag filter with global fallback.
+    /// [`MemoryQuerySort::Recency`] skips embeddings and scrolls by [`RECENCY_TS_PAYLOAD_KEY`].
     pub async fn search_memory_query(
         &self,
         query: &str,
         options: MemoryQueryOptions<'_>,
     ) -> Result<MemorySearchOutcome> {
+        if options.memory_sort == MemoryQuerySort::Recency {
+            self.ensure_recency_payload_index().await?;
+            return self.search_memory_query_recency(query, options).await;
+        }
+
         let embedding = self.generate_embedding(query).await?;
         let trimmed_tag = options.filter_tag.map(str::trim).filter(|t| !t.is_empty());
         let trimmed_prefix = options.vault_path_prefix.map(str::trim).filter(|t| !t.is_empty());
@@ -635,6 +716,166 @@ impl SemanticBrain {
         })
     }
 
+    async fn search_memory_query_recency(
+        &self,
+        query: &str,
+        options: MemoryQueryOptions<'_>,
+    ) -> Result<MemorySearchOutcome> {
+        let trimmed_tag = options.filter_tag.map(str::trim).filter(|t| !t.is_empty());
+        let trimmed_prefix = options.vault_path_prefix.map(str::trim).filter(|t| !t.is_empty());
+
+        let qdrant_limit = qdrant_oversample_limit(
+            options.top_k,
+            trimmed_prefix.is_some(),
+            options.qdrant_oversample_cap,
+            options.qdrant_oversample_multiplier,
+            options.qdrant_oversample_min,
+        );
+
+        tracing::debug!(
+            top_k = options.top_k,
+            qdrant_limit,
+            has_tag = trimmed_tag.is_some(),
+            has_prefix = trimmed_prefix.is_some(),
+            max_total_chars = options.max_total_chars,
+            "memory:query search_memory_query_recency"
+        );
+
+        let top_k = (options.top_k as usize).max(1);
+
+        let mut markdown = self
+            .run_memory_recency_query_pipeline(
+                qdrant_limit,
+                trimmed_tag,
+                trimmed_prefix,
+                top_k,
+                options.max_total_chars,
+            )
+            .await?;
+
+        let mut used_fallback = false;
+        let mut attempted_filter_tag: Option<String> = None;
+        let mut used_vault_prefix_fallback = false;
+        let mut attempted_vault_prefix: Option<String> = None;
+
+        if markdown.trim().is_empty() && trimmed_tag.is_some() {
+            attempted_filter_tag = trimmed_tag.map(|s| s.to_string());
+            markdown = self
+                .run_memory_recency_query_pipeline(
+                    qdrant_limit,
+                    None,
+                    trimmed_prefix,
+                    top_k,
+                    options.max_total_chars,
+                )
+                .await?;
+            if !markdown.trim().is_empty() {
+                used_fallback = true;
+                tracing::info!(
+                    query = %query,
+                    attempted_tag = ?attempted_filter_tag,
+                    "memory:query recency used global scroll after tag filter returned no hits"
+                );
+            }
+        }
+
+        if markdown.trim().is_empty() && trimmed_prefix.is_some() {
+            attempted_vault_prefix = trimmed_prefix.map(|s| s.to_string());
+            markdown = self
+                .run_memory_recency_query_pipeline(
+                    qdrant_limit,
+                    trimmed_tag,
+                    None,
+                    top_k,
+                    options.max_total_chars,
+                )
+                .await?;
+            if !markdown.trim().is_empty() {
+                used_vault_prefix_fallback = true;
+                tracing::info!(
+                    query = %query,
+                    attempted_prefix = ?attempted_vault_prefix,
+                    "memory:query recency used scroll without vault_path_prefix after prefix matched no hits"
+                );
+            }
+        }
+
+        Ok(MemorySearchOutcome {
+            markdown,
+            used_fallback,
+            attempted_filter_tag: if used_fallback {
+                attempted_filter_tag
+            } else {
+                None
+            },
+            used_vault_prefix_fallback,
+            attempted_vault_prefix: if used_vault_prefix_fallback {
+                attempted_vault_prefix
+            } else {
+                None
+            },
+        })
+    }
+
+    async fn run_memory_recency_query_pipeline(
+        &self,
+        qdrant_limit: u64,
+        qdrant_tag: Option<&str>,
+        vault_prefix: Option<&str>,
+        top_k: usize,
+        max_total_chars: usize,
+    ) -> Result<String> {
+        let scroll_limit = u32::try_from(qdrant_limit.max(1)).unwrap_or(u32::MAX);
+        let mut hits = self.scroll_recency_hits(scroll_limit, qdrant_tag).await?;
+        hits = filter_hits_vault_prefix(hits, vault_prefix);
+        hits = truncate_hits_preserve_order(hits, top_k);
+        Ok(format_memory_hits_markdown(&hits, max_total_chars))
+    }
+
+    async fn scroll_recency_hits(
+        &self,
+        limit: u32,
+        filter_tag: Option<&str>,
+    ) -> Result<Vec<MemoryHit>> {
+        if self.config.qdrant_collection_v2.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let order_by = OrderBy {
+            key: RECENCY_TS_PAYLOAD_KEY.to_string(),
+            direction: Some(Direction::Desc as i32),
+            start_from: None,
+        };
+
+        let mut scroll = ScrollPointsBuilder::new(self.config.qdrant_collection_v2.clone())
+            .limit(limit.max(1))
+            .with_payload(true)
+            .order_by(order_by);
+
+        if let Some(tag) = filter_tag.map(str::trim).filter(|t| !t.is_empty()) {
+            scroll = scroll.filter(Filter::must([Condition::matches(
+                "tags",
+                tag.to_string(),
+            )]));
+        }
+
+        let scroll_response = self
+            .client
+            .scroll(scroll)
+            .await
+            .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
+
+        let mut out = Vec::new();
+        for point in scroll_response.result {
+            let Some(hit) = memory_hit_from_retrieved_payload(&point.payload) else {
+                continue;
+            };
+            out.push(hit);
+        }
+
+        Ok(out)
+    }
+
     async fn run_memory_query_pipeline(
         &self,
         embedding: &[f32],
@@ -698,11 +939,68 @@ impl SemanticBrain {
                 score,
                 text: text.clone(),
                 vault_key,
+                recency_ts_ms: None,
             });
         }
 
         Ok(out)
     }
+}
+
+fn unix_ms_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|d| u64::try_from(d.as_millis()).ok())
+        .unwrap_or(0)
+}
+
+fn system_time_to_unix_ms(st: std::time::SystemTime) -> Option<u64> {
+    st.duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|d| u64::try_from(d.as_millis()).ok())
+}
+
+fn truncate_hits_preserve_order(mut hits: Vec<MemoryHit>, top_k: usize) -> Vec<MemoryHit> {
+    hits.truncate(top_k.max(1));
+    hits
+}
+
+fn payload_integer_to_u64(val: &qdrant_client::qdrant::Value) -> Option<u64> {
+    match &val.kind {
+        Some(qdrant_client::qdrant::value::Kind::IntegerValue(i)) if *i >= 0 => {
+            u64::try_from(*i).ok()
+        }
+        Some(qdrant_client::qdrant::value::Kind::DoubleValue(d)) if *d >= 0.0 && d.is_finite() => {
+            Some(*d as u64)
+        }
+        _ => None,
+    }
+}
+
+fn memory_hit_from_retrieved_payload(
+    payload: &std::collections::HashMap<String, qdrant_client::qdrant::Value>,
+) -> Option<MemoryHit> {
+    let text_val = payload.get("text")?;
+    let Some(qdrant_client::qdrant::value::Kind::StringValue(text)) = &text_val.kind else {
+        return None;
+    };
+    let vault_key = payload.get("vault_key").and_then(|v| {
+        if let Some(qdrant_client::qdrant::value::Kind::StringValue(s)) = &v.kind {
+            Some(s.clone())
+        } else {
+            None
+        }
+    });
+    let recency_ts_ms = payload
+        .get(RECENCY_TS_PAYLOAD_KEY)
+        .and_then(payload_integer_to_u64);
+    Some(MemoryHit {
+        score: 1.0,
+        text: text.clone(),
+        vault_key,
+        recency_ts_ms,
+    })
 }
 
 fn qdrant_oversample_limit(
@@ -756,7 +1054,11 @@ pub fn format_memory_hits_markdown(hits: &[MemoryHit], max_total_chars: usize) -
     let mut out = String::new();
     let mut used = 0usize;
     for h in hits {
-        let header = format!("- (score: {:.4}) ", h.score);
+        let header = if let Some(ts) = h.recency_ts_ms {
+            format!("- (recency_ms: {ts}) ")
+        } else {
+            format!("- (score: {:.4}) ", h.score)
+        };
         if used >= max_total_chars {
             break;
         }
@@ -947,17 +1249,66 @@ Hello there."#;
     }
 
     #[test]
+    fn format_memory_hits_markdown_shows_recency_header() {
+        let hits = vec![MemoryHit {
+            score: 1.0,
+            text: "hello".into(),
+            vault_key: Some("30_Synthesis/x/r0001.md".into()),
+            recency_ts_ms: Some(1_700_000_000_000),
+        }];
+        let md = format_memory_hits_markdown(&hits, 500);
+        assert!(md.contains("recency_ms:"));
+        assert!(!md.contains("score:"));
+    }
+
+    #[test]
+    fn truncate_hits_preserve_order_keeps_sequence() {
+        let hits = vec![
+            MemoryHit {
+                score: 1.0,
+                text: "first".into(),
+                vault_key: None,
+                recency_ts_ms: Some(3),
+            },
+            MemoryHit {
+                score: 1.0,
+                text: "second".into(),
+                vault_key: None,
+                recency_ts_ms: Some(2),
+            },
+            MemoryHit {
+                score: 1.0,
+                text: "third".into(),
+                vault_key: None,
+                recency_ts_ms: Some(1),
+            },
+        ];
+        let out = truncate_hits_preserve_order(hits, 2);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].text, "first");
+        assert_eq!(out[1].text, "second");
+    }
+
+    #[test]
+    fn system_time_to_unix_ms_positive() {
+        let ts = system_time_to_unix_ms(std::time::UNIX_EPOCH);
+        assert_eq!(ts, Some(0));
+    }
+
+    #[test]
     fn test_format_memory_hits_markdown_respects_budget() {
         let hits = vec![
             MemoryHit {
                 score: 0.9,
                 text: "a".repeat(100),
                 vault_key: Some("40_User/x.md".to_string()),
+                recency_ts_ms: None,
             },
             MemoryHit {
                 score: 0.8,
                 text: "b".repeat(100),
                 vault_key: Some("40_User/y.md".to_string()),
+                recency_ts_ms: None,
             },
         ];
         let md = format_memory_hits_markdown(&hits, 80);
@@ -972,11 +1323,13 @@ Hello there."#;
                 score: 0.5,
                 text: "a".into(),
                 vault_key: None,
+                recency_ts_ms: None,
             },
             MemoryHit {
                 score: 0.9,
                 text: "b".into(),
                 vault_key: None,
+                recency_ts_ms: None,
             },
         ];
         let out = filter_hits_min_score(hits, Some(0.7));
@@ -991,16 +1344,19 @@ Hello there."#;
                 score: 0.9,
                 text: "a".into(),
                 vault_key: Some("30_Persons/a.md".to_string()),
+                recency_ts_ms: None,
             },
             MemoryHit {
                 score: 0.8,
                 text: "b".into(),
                 vault_key: Some("40_User/b.md".to_string()),
+                recency_ts_ms: None,
             },
             MemoryHit {
                 score: 0.7,
                 text: "c".into(),
                 vault_key: None,
+                recency_ts_ms: None,
             },
         ];
         let out = filter_hits_vault_prefix(hits, Some("30_Persons/"));

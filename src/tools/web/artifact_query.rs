@@ -2,7 +2,9 @@ use crate::executive::error::{FcpError, Result};
 use crate::ingest::{trim_chars, trim_snippets_to_budget};
 use crate::memory::ephemeral::EphemeralMemory;
 use crate::memory::semantic::SemanticBrain;
-use crate::tools::context_view_hint::{ToolContextViewHint, API_TOOL_SNIPPET_CHARS};
+use crate::tools::web::artifact::{WebArtifact, WebOutboundLink};
+use crate::tools::web::markdown_focus::chunk_heading_weight_factor;
+use crate::tools::context_view_hint::{ToolContextViewHint, ARTIFACT_QUERY_SNIPPET_CHARS};
 use crate::tools::traits::Tool;
 use async_trait::async_trait;
 use schemars::schema::RootSchema;
@@ -18,12 +20,6 @@ pub struct WebArtifactQueryArgs {
     pub top_k: Option<usize>,
 }
 
-#[derive(Serialize, Deserialize)]
-struct WebArtifact {
-    url: String,
-    chunks: Vec<String>,
-}
-
 #[derive(Serialize)]
 struct ArtifactMatch {
     chunk_index: usize,
@@ -31,11 +27,17 @@ struct ArtifactMatch {
     snippet: String,
 }
 
+/// Ranked `<a href>` hints attached to the query response (capped; full list is on the `web:fetch` receipt).
+const ARTIFACT_QUERY_OUTBOUND_CAP: usize = 12;
+
 #[derive(Serialize)]
 struct ArtifactQueryResponse {
     artifact_id: String,
     url: String,
+    /// Lexical or semantic hits — listed **first** so LLM context truncation still surfaces body text.
     matches: Vec<ArtifactMatch>,
+    /// Subset of stored outbound links (same order/ranks as fetch; remainder omitted to save space).
+    outbound_links: Vec<WebOutboundLink>,
 }
 
 pub struct WebArtifactQueryTool {
@@ -65,12 +67,20 @@ fn lexical_matches(
     max_snippet_chars: usize,
 ) -> Vec<ArtifactMatch> {
     let tokens = tokenize(query);
-    let mut scored: Vec<(usize, usize)> = chunks
+    let mut scored: Vec<(usize, f32)> = chunks
         .iter()
         .enumerate()
-        .map(|(idx, c)| (idx, score_chunk(c, &tokens)))
+        .map(|(idx, c)| {
+            let base = score_chunk(c, &tokens) as f32;
+            let w = chunk_heading_weight_factor(c);
+            (idx, base * w)
+        })
         .collect();
-    scored.sort_by(|a, b| b.1.cmp(&a.1));
+    scored.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
 
     scored
         .into_iter()
@@ -78,7 +88,7 @@ fn lexical_matches(
         .filter_map(|(idx, score)| {
             chunks.get(idx).map(|chunk| ArtifactMatch {
                 chunk_index: idx,
-                score: score as f32,
+                score,
                 snippet: trim_chars(chunk, max_snippet_chars),
             })
         })
@@ -92,12 +102,12 @@ impl Tool for WebArtifactQueryTool {
     }
 
     fn description(&self) -> &'static str {
-        "Query sanitized buffered web artifact and return top-k snippets."
+        "Query buffered web artifact: returns top-k chunk text matches first, then a capped list of outbound article links (full link list is on the web:fetch receipt)."
     }
 
     fn context_view_hint(&self) -> ToolContextViewHint {
         ToolContextViewHint::Snippet {
-            max_chars: API_TOOL_SNIPPET_CHARS,
+            max_chars: ARTIFACT_QUERY_SNIPPET_CHARS,
         }
     }
 
@@ -152,10 +162,17 @@ impl Tool for WebArtifactQueryTool {
             m.snippet = snippet;
         }
 
+        let outbound_links = artifact
+            .outbound_links
+            .iter()
+            .take(ARTIFACT_QUERY_OUTBOUND_CAP)
+            .cloned()
+            .collect::<Vec<_>>();
         let response = ArtifactQueryResponse {
             artifact_id: args.artifact_id,
             url: artifact.url,
             matches,
+            outbound_links,
         };
         serde_json::to_string(&response).map_err(FcpError::ParseFault)
     }
@@ -175,6 +192,11 @@ mod tests {
                 "economy and markets update".to_string(),
                 "international politics".to_string(),
             ],
+            outbound_links: vec![WebOutboundLink {
+                url: "https://example.com/deep/article".to_string(),
+                anchor_text: Some("Story".to_string()),
+                rank: 1,
+            }],
         };
         let payload = serde_json::to_string(&artifact).expect("serialize");
         let stored = mem
@@ -199,5 +221,9 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&res).expect("json");
         let idx = parsed["matches"][0]["chunk_index"].as_u64().unwrap_or(99);
         assert_eq!(idx, 1);
+        assert_eq!(
+            parsed["outbound_links"][0]["url"].as_str().unwrap_or(""),
+            "https://example.com/deep/article"
+        );
     }
 }

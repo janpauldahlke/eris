@@ -146,3 +146,5 @@
 
 - [x] massive testing - qwen3.5 9B Q8 is the clear winner here
 - [x] feature: new tool vault:search to find many documents
+- [x] feature: todays news by category
+- [x] fix: show condensatoin tail on loglevel debug

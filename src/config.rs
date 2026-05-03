@@ -116,6 +116,27 @@ fn default_vault_watch_paths() -> Vec<String> {
     ]
 }
 
+fn default_web_fetch_user_agent() -> String {
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        .to_string()
+}
+
+fn default_news_today_max_headlines() -> usize {
+    12
+}
+
+fn default_news_today_deep_fetch_max() -> u8 {
+    0
+}
+
+fn default_news_today_site_base() -> String {
+    "https://www.bbc.com".to_string()
+}
+
+fn default_news_today_default_homepage() -> Option<String> {
+    Some("https://www.bbc.com/".to_string())
+}
+
 impl Default for VaultWatchConfig {
     fn default() -> Self {
         Self {
@@ -210,6 +231,27 @@ pub struct AppConfig {
     pub web_fetch_timeout_secs: u64,
     /// Default max response body size for web fetch and API profiles without their own cap.
     pub web_fetch_max_bytes: usize,
+    /// `User-Agent` for `web:fetch`; combined with browser-like `Accept` / `Sec-Fetch-*` headers on the HTTP client.
+    #[serde(default = "default_web_fetch_user_agent")]
+    pub web_fetch_user_agent: String,
+    /// When set, used as the HTTP `Referer` for `web:fetch` if the tool call does not pass `referer` (e.g. `https://www.google.com/` or the site homepage — reduces some CDN/bot 403s; not guaranteed).
+    #[serde(default)]
+    pub web_fetch_default_referer: Option<String>,
+    /// Origin used by `news:today` to resolve `category` into a listing URL (paths like `news/politics`, `sport`). Default `https://www.bbc.com`.
+    #[serde(default = "default_news_today_site_base")]
+    pub news_today_site_base: String,
+    /// Default listing URL when `news:today` omits `homepage_url` and `category` (default BBC home `https://www.bbc.com/` — site-wide top stories; use `category` for section fronts).
+    #[serde(default = "default_news_today_default_homepage")]
+    pub news_today_default_homepage: Option<String>,
+    /// Default cap on headline rows returned by `news:today` (hard ceiling applied in tool).
+    #[serde(default = "default_news_today_max_headlines")]
+    pub news_today_max_headlines_default: usize,
+    /// Default number of top-ranked article URLs to fetch after the homepage (0 = headlines only).
+    #[serde(default = "default_news_today_deep_fetch_max")]
+    pub news_today_deep_fetch_max_default: u8,
+    /// Allow outbound/deep-fetch targets on these hosts in addition to the homepage host. Empty = same-host only.
+    #[serde(default)]
+    pub news_today_allowed_hosts: Vec<String>,
     /// Fraction of [`Self::num_ctx`] used to cap vault read and web chunk sizes in tools (not the condensation trigger).
     pub vault_read_ratio: f32,
     /// Cosine similarity floor for ToolRouter pre-LLM semantic matches (0.0–1.0).
@@ -764,6 +806,13 @@ impl Default for AppConfig {
             idle_heartbeat_enabled: false,
             web_fetch_timeout_secs: 10,
             web_fetch_max_bytes: 20480,
+            web_fetch_user_agent: default_web_fetch_user_agent(),
+            web_fetch_default_referer: None,
+            news_today_site_base: default_news_today_site_base(),
+            news_today_default_homepage: default_news_today_default_homepage(),
+            news_today_max_headlines_default: default_news_today_max_headlines(),
+            news_today_deep_fetch_max_default: default_news_today_deep_fetch_max(),
+            news_today_allowed_hosts: Vec::new(),
             vault_read_ratio: 0.5,
             tool_match_threshold: 0.50,
             tool_descriptor_jit_top_k: default_tool_descriptor_jit_top_k(),
@@ -1049,6 +1098,7 @@ mod tests {
         assert_eq!(parsed_config.idle_timeout_secs, 42);
         assert_eq!(parsed_config.web_fetch_timeout_secs, 15);
         assert_eq!(parsed_config.web_fetch_max_bytes, 10240);
+        assert_eq!(parsed_config.web_fetch_user_agent, default_web_fetch_user_agent());
         assert_eq!(parsed_config.vault_read_ratio, 0.25);
         assert_eq!(parsed_config.tool_match_threshold, 0.50);
         assert_eq!(parsed_config.ollama_daemon.command, "ollama");

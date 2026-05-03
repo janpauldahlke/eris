@@ -8,6 +8,7 @@ pub mod system;
 pub mod agenda;
 pub mod clock;
 pub mod web;
+pub mod news;
 pub mod weather;
 pub mod wiki;
 pub mod db_rest;

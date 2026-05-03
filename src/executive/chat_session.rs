@@ -309,8 +309,28 @@ pub async fn start_chat_session(
             web_chunk_chars,
             web_preview_chars,
             config.ephemeral_ttl_session_secs,
+            config.web_fetch_user_agent.clone(),
+            config.web_fetch_default_referer.clone(),
             ephemeral.clone(),
             semantic_arc.clone(),
+        )));
+        gatekeeper.register(Arc::new(crate::tools::news::NewsTodayTool::new(
+            config.web_fetch_timeout_secs,
+            effective_web_fetch_max_bytes,
+            web_chunk_chars,
+            web_preview_chars,
+            config.ephemeral_ttl_session_secs,
+            config.web_fetch_user_agent.clone(),
+            config.web_fetch_default_referer.clone(),
+            ephemeral.clone(),
+            semantic_arc.clone(),
+            crate::tools::news::NewsTodayConfigSnapshot {
+                site_base: config.news_today_site_base.clone(),
+                default_homepage: config.news_today_default_homepage.clone(),
+                max_headlines_default: config.news_today_max_headlines_default,
+                deep_fetch_max_default: config.news_today_deep_fetch_max_default,
+                allowed_hosts: config.news_today_allowed_hosts.clone(),
+            },
         )));
     }
     gatekeeper.register(Arc::new(crate::tools::web::WebArtifactQueryTool {

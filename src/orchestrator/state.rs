@@ -23,7 +23,8 @@ pub struct ToolCall {
     /// LLMs sometimes emit `action` instead of `name`.
     #[serde(alias = "action")]
     pub name: String,
-    #[serde(default = "default_empty_object")]
+    /// OpenAI-style tool calls often use `arguments` (string or object); we store the object in `args`.
+    #[serde(default = "default_empty_object", alias = "arguments")]
     pub args: serde_json::Value,
     /// Top-level task id (e.g. agenda) folded into `args` during normalization.
     #[serde(default)]
@@ -120,6 +121,7 @@ pub struct ToolIntentTicket {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn test_llm_response_deserialization() {
@@ -187,6 +189,17 @@ mod tests {
         let response: LlmResponse = serde_json::from_str(json).unwrap();
         assert!(response.has_explicit_status());
         assert_eq!(response.status(), LoopAction::Task);
+    }
+
+    #[test]
+    fn test_tool_call_arguments_alias_deserializes_like_args() {
+        let json = r#"{
+            "thought": "news",
+            "status": "Task",
+            "tool_calls": [{"name": "news:today", "arguments": {"category": "politics"}}]
+        }"#;
+        let response: LlmResponse = serde_json::from_str(json).expect("parse");
+        assert_eq!(response.tool_calls[0].args, json!({"category": "politics"}));
     }
 
     #[test]

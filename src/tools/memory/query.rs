@@ -6,7 +6,15 @@ use serde_json::Value;
 
 use crate::executive::error::{FcpError, Result};
 use crate::tools::traits::Tool;
-use crate::memory::semantic::{MemoryQueryOptions, SemanticBrain};
+use crate::memory::semantic::{MemoryQueryOptions, MemoryQuerySort, SemanticBrain};
+
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MemorySortArg {
+    #[default]
+    Semantic,
+    Recency,
+}
 
 #[derive(Deserialize, JsonSchema)]
 pub struct MemoryQueryArgs {
@@ -26,6 +34,9 @@ pub struct MemoryQueryArgs {
     /// Only include points whose indexed `vault_key` starts with this prefix (e.g. `30_Synthesis/`).
     #[serde(default)]
     pub vault_path_prefix: Option<String>,
+    /// `semantic` (default): cosine similarity to `query`. `recency`: latest by vault mtime / commit time (`recency_ts`); does not use embedding.
+    #[serde(default)]
+    pub memory_sort: MemorySortArg,
 }
 
 pub struct MemoryQueryTool {
@@ -47,7 +58,7 @@ impl Tool for MemoryQueryTool {
     }
 
     fn description(&self) -> &'static str {
-        "Search long-term semantic memory. Prefer `query` alone first; omit `filter_tag` unless you know the exact tag from vault frontmatter. Optional: `top_k`, `max_total_chars`, `min_score`, `vault_path_prefix` (e.g. `30_Synthesis/`). Defaults and caps come from `.fcp/config.toml` (`memory_query_*`). A wrong `filter_tag` may yield a WARNING and unfiltered fallback. For an exact file path, use vault:read."
+        "Search long-term memory. Default is semantic similarity (`memory_sort` omitted or `semantic`). Use `memory_sort: \"recency\"` for where-you-left-off (latest vault edits / commits by `recency_ts`), not conceptual recall. Optional: `top_k`, `max_total_chars`, `min_score`, `vault_path_prefix`, `filter_tag`. Defaults/caps: `.fcp/config.toml` (`memory_query_*`). Wrong `filter_tag` may WARNING and fall back. Exact path: vault:read."
     }
 
     fn parameters_schema(&self) -> schemars::schema::RootSchema {
@@ -93,6 +104,11 @@ impl Tool for MemoryQueryTool {
             .map(str::trim)
             .filter(|t| !t.is_empty());
 
+        let memory_sort = match args.memory_sort {
+            MemorySortArg::Semantic => MemoryQuerySort::Semantic,
+            MemorySortArg::Recency => MemoryQuerySort::Recency,
+        };
+
         let options = MemoryQueryOptions {
             top_k,
             filter_tag: filter,
@@ -102,6 +118,7 @@ impl Tool for MemoryQueryTool {
             qdrant_oversample_cap: self.qdrant_oversample_cap,
             qdrant_oversample_multiplier: self.qdrant_oversample_multiplier,
             qdrant_oversample_min: self.qdrant_oversample_min,
+            memory_sort,
         };
 
         let outcome = self

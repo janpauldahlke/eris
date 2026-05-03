@@ -182,8 +182,8 @@ rationale = "Tool does not require args."
 "#,
     r#"descriptor_version = 1
 tool_name = "memory:query"
-short_description = "Search long-term semantic memory for facts, user identity, preferences, and past context."
-when_to_use = "Use for fuzzy recall, who am I / what is my name, user preferences, and anything stored in indexed vault memory. Prefer query alone; use filter_tag only when you know an exact frontmatter tag. Optional: top_k (1..25), max_total_chars, min_score (0..1), vault_path_prefix (e.g. 30_Synthesis/) to narrow by vault path. In multi-step flows (reminder then email, contact then send), query memory for stored addresses or contact facts before guessing from inbox metadata."
+short_description = "Search long-term memory (semantic similarity or recency / where-you-left-off)."
+when_to_use = "Use for fuzzy recall (default semantic), who am I / preferences, and indexed vault memory. For resuming work after a break, use memory_sort = \"recency\" (latest by vault file mtime / commit time), not for fuzzy conceptual search. Prefer query alone for semantic; use filter_tag only when you know an exact frontmatter tag. Optional: top_k (1..25), max_total_chars, min_score (0..1, semantic only), vault_path_prefix (e.g. 30_Synthesis/). Multi-step flows: query memory for stored contacts before guessing from inbox metadata."
 when_not_to_use = "Do not use for exact file reads by path; use vault:read."
 routing_hints = [
     "search memory",
@@ -211,12 +211,20 @@ routing_hints = [
     "facts about the user",
     "long-term recall",
     "vector memory",
+    "where we left off",
+    "latest notes",
+    "most recent saved",
 ]
 
 [[examples_good]]
 name = "query_broad"
 args = { query = "coffee preference" }
 rationale = "Default: semantic search without filter_tag first."
+
+[[examples_good]]
+name = "query_recency_resume"
+args = { query = "resume", memory_sort = "recency", top_k = 5 }
+rationale = "Latest touched vault / committed memories; not embedding similarity."
 
 [[examples_good]]
 name = "query_with_known_tag"
@@ -337,15 +345,15 @@ rationale = "mode is required."
 "#,
     r#"descriptor_version = 1
 tool_name = "web:artifact_query"
-short_description = "Query a previously fetched web artifact by artifact_id."
-when_to_use = "Use after web:fetch to extract targeted snippets."
+short_description = "Query a fetched web artifact: top-k chunk text matches first, then capped outbound_links (full list on web:fetch receipt)."
+when_to_use = "Use after web:fetch for targeted chunks; matches list article body text; use outbound_links for URLs (subset—full list on fetch receipt)."
 when_not_to_use = "Do not use without a valid artifact_id from web:fetch."
 routing_hints = ["search fetched page", "query artifact", "find in web artifact"]
 
 [[examples_good]]
 name = "query_artifact"
 args = { artifact_id = "artifact-uuid", query = "latest updates", top_k = 3 }
-rationale = "Queries cached web chunks."
+rationale = "Returns snippets and outbound_links from the staged artifact."
 
 [[examples_bad]]
 name = "missing_artifact_id"
@@ -354,8 +362,8 @@ rationale = "artifact_id is required."
 "#,
     r#"descriptor_version = 1
 tool_name = "web:fetch"
-short_description = "Fetch and sanitize a webpage into an artifact receipt."
-when_to_use = "Use for URL retrieval before targeted querying of fetched content."
+short_description = "Fetch and sanitize a webpage into an artifact receipt; includes ranked outbound link hints (HTML anchors, image URLs filtered heuristically)."
+when_to_use = "Use for URL retrieval; the receipt lists heuristic article-style links—prefer those over inventing paths from image filenames. Then use web:artifact_query for buffered text."
 when_not_to_use = "Do not use for local file reads or direct semantic vault search."
 routing_hints = ["open website", "read web page", "fetch url", "news from"]
 
@@ -364,10 +372,52 @@ name = "fetch_url"
 args = { url = "https://example.com" }
 rationale = "Valid fully-qualified URL."
 
+[[examples_good]]
+name = "fetch_with_referer"
+args = { url = "https://example.com/article", referer = "https://example.com/" }
+rationale = "Optional referer can reduce HTTP 403 on some origins."
+
 [[examples_bad]]
 name = "bad_url"
 args = { url = "example.com" }
 rationale = "URL must start with http:// or https://."
+"#,
+    r#"descriptor_version = 1
+tool_name = "news:today"
+short_description = "Fetch a news homepage and return ranked headline links; optionally deep-fetch a few top articles in one call (reuses the web:fetch pipeline internally)."
+when_to_use = "Use for today's headlines, top stories, or a news digest from a single homepage. Default listing URL is https://www.bbc.com/ (BBC home mix) when args omit homepage_url and category—configure news_today_site_base + news_today_default_homepage if needed. Pass category (politics, science, business, sport, world, uk, technology, health) for section listings built from site_base + path (no hardcoded origin in the tool). Prefer over repeating identical web:fetch in the same turn (duplicates are suppressed). Set deep_fetch_top_n (1–3) for article bodies."
+when_not_to_use = "Do not use for a one-off non-listing URL (use web:fetch). Not available when web:fetch is deprecated in config."
+routing_hints = ["todays news", "headlines", "top stories", "morning news", "news digest", "breaking news", "what is happening", "front page", "politics headlines", "science news", "business news", "economics news", "world news", "uk news"]
+
+[[examples_good]]
+name = "default_bbc_news_listing"
+args = {}
+rationale = "Uses config default homepage (BBC home https://www.bbc.com/ unless overridden via news_today_default_homepage)."
+
+[[examples_good]]
+name = "bbc_politics_section"
+args = { category = "politics" }
+rationale = "Fetches the BBC politics section listing instead of the generic news hub."
+
+[[examples_good]]
+name = "bbc_science_section"
+args = { category = "science", max_headlines = 8 }
+rationale = "Science, climate, and environment listing with a headline cap."
+
+[[examples_good]]
+name = "bbc_homepage"
+args = { homepage_url = "https://www.bbc.com/news", max_headlines = 10 }
+rationale = "Explicit homepage and headline cap."
+
+[[examples_good]]
+name = "with_deep_fetch"
+args = { homepage_url = "https://www.bbc.com/news", deep_fetch_top_n = 2 }
+rationale = "Fetches two top-ranked article URLs after the homepage."
+
+[[examples_bad]]
+name = "bad_homepage_scheme"
+args = { homepage_url = "ftp://example.com/news" }
+rationale = "homepage_url must start with http:// or https://."
 "#,
     r#"descriptor_version = 1
 tool_name = "clock:now"
