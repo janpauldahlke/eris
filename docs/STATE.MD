@@ -47,9 +47,6 @@
 - [x] patch (S02): better staging and more instructive fields
 
 01/04/2026
-
-- [x] refactor (s04): CHANGES ephemeral and staging process
-- [x] refactor (S08_Preflight): harden init and tear down of peripheral systems // user info for this progress
 - [x] IMPROVEMENT (S03): introduce ticket like workflow for tools to avoid duplications in calls
 - [x] REFACTOR Phase A (S6.01): completly rework web:search improved chuking // in memory // llm lense
 - [x] REFACTOR Phase B (S6.01): completly rework web:search // making ingest a util
@@ -144,3 +141,8 @@
 - [x] fix: teardown is not grouped below spawn id
 - [x] feature: binary build script MAC arm and intel mac
 - [x] feature: google calendar CRUD
+
+03/05/2026
+
+- [x] massive testing - qwen3.5 9B Q8 is the clear winner here
+- [x] feature: new tool vault:search to find many documents

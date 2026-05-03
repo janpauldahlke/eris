@@ -35,7 +35,14 @@ impl Tool for VaultListTool {
         let args: VaultListArgs = serde_json::from_value(args)
             .map_err(FcpError::ParseFault)?;
 
-        let target_dir = self.workspace_root.join(&args.directory);
+        let dir_normalized = args.directory.trim().replace('\\', "/");
+        let dir_trimmed = dir_normalized.trim_end_matches('/');
+
+        let target_dir = if dir_trimmed.is_empty() || dir_trimmed == "." {
+            self.workspace_root.clone()
+        } else {
+            self.workspace_root.join(dir_trimmed)
+        };
 
         if !target_dir.starts_with(&self.workspace_root) {
             return Err(FcpError::ToolFault { 
@@ -49,11 +56,20 @@ impl Tool for VaultListTool {
             Err(e) => return Err(FcpError::Io(e)),
         };
 
+        let path_prefix = if dir_trimmed.is_empty() || dir_trimmed == "." {
+            None
+        } else {
+            Some(dir_trimmed.to_string())
+        };
+
         let mut files = Vec::new();
         while let Some(entry) = entries.next_entry().await.map_err(FcpError::Io)? {
             if let Some(name) = entry.file_name().to_str() {
-                // Return relative path elements for density
-                files.push(name.to_string());
+                let rel = match &path_prefix {
+                    Some(prefix) => format!("{prefix}/{name}"),
+                    None => name.to_string(),
+                };
+                files.push(rel);
             }
         }
 
@@ -81,8 +97,8 @@ mod tests {
         let args = serde_json::json!({ "directory": "90_Drops" });
 
         let result = tool.execute(args).await?;
-        assert!(result.contains("a.md"));
-        assert!(result.contains("b.md"));
+        assert!(result.contains("90_Drops/a.md"));
+        assert!(result.contains("90_Drops/b.md"));
         Ok(())
     }
 }

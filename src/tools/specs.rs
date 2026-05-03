@@ -783,4 +783,37 @@ name = "missing_id"
 args = {}
 rationale = "event_id is required."
 "#,
+    r#"descriptor_version = 1
+tool_name = "vault:search"
+short_description = "Lexically scan vault file contents recursively and return top files with hit excerpts."
+when_to_use = "Use when the user wants to locate where something was discussed inside the vault by keywords or phrases (e.g. 'where did we talk about the database migration?'). Returns top-N matching files with line snippets so you can summarize."
+when_not_to_use = "Do not use for exact file reads by path (vault:read), folder listings (vault:list), or fuzzy/conceptual recall via embeddings (memory:query). Do not use to write or modify files."
+routing_hints = [
+    "search the vault",
+    "find in my notes",
+    "where did we discuss",
+    "which file mentions",
+    "look up keyword in vault",
+    "scan vault contents",
+    "grep my notes",
+    "find that paragraph about",
+    "search markdown",
+    "locate references to",
+]
+
+[[examples_good]]
+name = "search_keywords"
+args = { query = "database migration" }
+rationale = "Multi-word AND scan across the vault."
+
+[[examples_good]]
+name = "scoped_folder"
+args = { query = "topology", directory = "10_Topology" }
+rationale = "Narrows scan to one subtree."
+
+[[examples_bad]]
+name = "empty_query"
+args = { query = "" }
+rationale = "query cannot be empty."
+"#,
 ];

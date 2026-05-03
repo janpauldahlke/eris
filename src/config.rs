@@ -304,6 +304,21 @@ pub struct AppConfig {
     /// Minimum Qdrant limit when oversampling for path prefix.
     #[serde(default = "default_memory_query_oversample_min")]
     pub memory_query_oversample_min: u64,
+    /// Max files returned by [`crate::tools::vault::VaultSearchTool`] (caps LLM `max_files`).
+    #[serde(default = "default_vault_search_max_files")]
+    pub vault_search_max_files: u32,
+    /// Max excerpt lines per file in `vault:search` (distinct hit lines, before radius merge).
+    #[serde(default = "default_vault_search_max_snippets_per_file")]
+    pub vault_search_max_snippets_per_file: u32,
+    /// Lines above/below each hit line to include in `vault:search` excerpts.
+    #[serde(default = "default_vault_search_snippet_radius_lines")]
+    pub vault_search_snippet_radius_lines: u32,
+    /// Total character budget for formatted `vault:search` output.
+    #[serde(default = "default_vault_search_max_total_chars")]
+    pub vault_search_max_total_chars: usize,
+    /// Skip reading files larger than this many bytes (lexical scan only).
+    #[serde(default = "default_vault_search_max_file_bytes")]
+    pub vault_search_max_file_bytes: u64,
     /// Bind address for [`crate::ui::web::run_web_chat`] (`eris chat --web`). Prefer loopback until bind/auth are hardened.
     #[serde(default = "default_web_bind_addr")]
     pub web_bind_addr: String,
@@ -506,6 +521,26 @@ fn default_memory_query_oversample_multiplier() -> u64 {
 /// Minimum Qdrant limit during oversampling for path-prefix queries.
 fn default_memory_query_oversample_min() -> u64 {
     30
+}
+
+fn default_vault_search_max_files() -> u32 {
+    10
+}
+
+fn default_vault_search_max_snippets_per_file() -> u32 {
+    3
+}
+
+fn default_vault_search_snippet_radius_lines() -> u32 {
+    1
+}
+
+fn default_vault_search_max_total_chars() -> usize {
+    12_000
+}
+
+fn default_vault_search_max_file_bytes() -> u64 {
+    1_048_576
 }
 
 /// Built-in Open-Meteo (non-commercial) API profiles for [`crate::tools::weather`]. Override or extend via `.fcp/config.toml` `[apis.*]`.
@@ -765,6 +800,11 @@ impl Default for AppConfig {
             memory_query_oversample_cap: default_memory_query_oversample_cap(),
             memory_query_oversample_multiplier: default_memory_query_oversample_multiplier(),
             memory_query_oversample_min: default_memory_query_oversample_min(),
+            vault_search_max_files: default_vault_search_max_files(),
+            vault_search_max_snippets_per_file: default_vault_search_max_snippets_per_file(),
+            vault_search_snippet_radius_lines: default_vault_search_snippet_radius_lines(),
+            vault_search_max_total_chars: default_vault_search_max_total_chars(),
+            vault_search_max_file_bytes: default_vault_search_max_file_bytes(),
             web_bind_addr: default_web_bind_addr(),
             web_port: default_web_port(),
             web_open_browser: default_web_open_browser(),

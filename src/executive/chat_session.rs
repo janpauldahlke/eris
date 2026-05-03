@@ -274,6 +274,14 @@ pub async fn start_chat_session(
     gatekeeper.register(Arc::new(crate::tools::vault::VaultListTool {
         workspace_root: workspace_root.clone(),
     }));
+    gatekeeper.register(Arc::new(crate::tools::vault::VaultSearchTool {
+        workspace_root: workspace_root.clone(),
+        max_files: config.vault_search_max_files,
+        max_snippets_per_file: config.vault_search_max_snippets_per_file,
+        snippet_radius_lines: config.vault_search_snippet_radius_lines,
+        max_total_chars: config.vault_search_max_total_chars,
+        max_file_bytes: config.vault_search_max_file_bytes,
+    }));
     gatekeeper.register(Arc::new(crate::tools::agenda::AgendaPushTool {
         workspace_root: workspace_root.clone(),
     }));

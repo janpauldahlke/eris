@@ -46,6 +46,7 @@ notify = "6.1"
 base64 = "0.22"
 jsonwebtoken = "9"
 unicode-normalization = "0.1"
+regex = "1"
 axum = { version = "0.8", features = ["json", "macros"] }
 askama = { version = "0.14", features = ["blocks", "derive"] }
 askama_web = { version = "0.14", features = ["axum-0.8"] }
