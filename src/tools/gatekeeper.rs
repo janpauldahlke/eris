@@ -30,8 +30,8 @@ impl Gatekeeper {
     fn state_allows_tool(state: &AgentState, tool_name: &str) -> bool {
         match state {
             AgentState::Chat => !matches!(tool_name, "agenda:complete"),
-            AgentState::Reflect => matches!(tool_name, "memory:stage" | "memory:staged_list" | "memory:commit" | "memory:commit_all" | "memory:query" | "vault:read" | "vault:list" | "vault:search" | "agenda:push" | "agenda:list" | "agenda:remove" | "agenda:remind_at" | "web:artifact_query" | "system:health" | "clock:now" | "clock:timer" | "clock:alarm" | "weather:current" | "weather:forecast" | "wiki:summary" | "db:find_connections" | "mail:check" | "mail:read" | "mail:digest" | "calendar:list" | "calendar:get"),
-            AgentState::Idle => matches!(tool_name, "memory:stage" | "memory:staged_list" | "memory:commit" | "memory:commit_all" | "memory:query" | "vault:read" | "vault:write" | "vault:list" | "vault:search" | "agenda:list" | "agenda:complete" | "agenda:remove" | "agenda:remind_at" | "web:fetch" | "news:today" | "web:artifact_query" | "system:health" | "clock:now" | "clock:timer" | "clock:alarm" | "weather:current" | "weather:forecast" | "wiki:summary" | "db:find_connections" | "mail:check" | "mail:read" | "mail:digest" | "mail:write" | "mail:delete" | "mail:move" | "calendar:list" | "calendar:get" | "calendar:create" | "calendar:update" | "calendar:delete"),
+            AgentState::Reflect => matches!(tool_name, "memory:stage" | "memory:staged_list" | "memory:commit" | "memory:commit_all" | "memory:query" | "vault:read" | "vault:list" | "vault:search" | "agenda:push" | "agenda:list" | "agenda:remove" | "agenda:remind_at" | "web:artifact_query" | "system:health" | "clock:now" | "clock:timer" | "clock:alarm" | "weather:current" | "weather:forecast" | "wiki:summary" | "db:find_connections" | "mail:check" | "mail:read" | "mail:digest" | "calendar:list" | "calendar:get" | "moltbook:status" | "moltbook:home" | "moltbook:feed" | "moltbook:comments" | "moltbook:dm"),
+            AgentState::Idle => matches!(tool_name, "memory:stage" | "memory:staged_list" | "memory:commit" | "memory:commit_all" | "memory:query" | "vault:read" | "vault:write" | "vault:list" | "vault:search" | "agenda:list" | "agenda:complete" | "agenda:remove" | "agenda:remind_at" | "web:fetch" | "news:today" | "web:artifact_query" | "system:health" | "clock:now" | "clock:timer" | "clock:alarm" | "weather:current" | "weather:forecast" | "wiki:summary" | "db:find_connections" | "mail:check" | "mail:read" | "mail:digest" | "mail:write" | "mail:delete" | "mail:move" | "calendar:list" | "calendar:get" | "calendar:create" | "calendar:update" | "calendar:delete" | "moltbook:register" | "moltbook:status" | "moltbook:home" | "moltbook:feed" | "moltbook:comments" | "moltbook:comment" | "moltbook:vote" | "moltbook:post" | "moltbook:verify" | "moltbook:notifications_read" | "moltbook:dm"),
             AgentState::Recover => true,
         }
     }
@@ -323,6 +323,17 @@ mod tests {
             "calendar:create",
             "calendar:update",
             "calendar:delete",
+            "moltbook:register",
+            "moltbook:status",
+            "moltbook:home",
+            "moltbook:feed",
+            "moltbook:comments",
+            "moltbook:comment",
+            "moltbook:vote",
+            "moltbook:post",
+            "moltbook:verify",
+            "moltbook:notifications_read",
+            "moltbook:dm",
         ];
 
         for tool in known_tools {

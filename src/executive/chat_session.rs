@@ -263,6 +263,71 @@ pub async fn start_chat_session(
         .min(web_chunk_chars.saturating_mul(6))
         .max(web_chunk_chars);
 
+    if config.moltbook.enabled {
+        match crate::tools::moltbook::MoltbookClient::unauthenticated(
+            &config.moltbook,
+            config.web_fetch_timeout_secs,
+            config.web_fetch_max_bytes,
+        ) {
+            Ok(register_client) => {
+                gatekeeper.register(Arc::new(crate::tools::moltbook::MoltbookRegisterTool {
+                    client: Arc::new(register_client),
+                }));
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Moltbook register tool not available");
+            }
+        }
+
+        match crate::tools::moltbook::MoltbookClient::authenticated(
+            &config.moltbook,
+            config.web_fetch_timeout_secs,
+            config.web_fetch_max_bytes,
+        )
+        .await
+        {
+            Ok(client) => {
+                let client = Arc::new(client);
+                gatekeeper.register(Arc::new(crate::tools::moltbook::MoltbookStatusTool {
+                    client: client.clone(),
+                }));
+                gatekeeper.register(Arc::new(crate::tools::moltbook::MoltbookHomeTool {
+                    client: client.clone(),
+                }));
+                gatekeeper.register(Arc::new(crate::tools::moltbook::MoltbookFeedTool {
+                    client: client.clone(),
+                }));
+                gatekeeper.register(Arc::new(crate::tools::moltbook::MoltbookCommentsTool {
+                    client: client.clone(),
+                }));
+                gatekeeper.register(Arc::new(crate::tools::moltbook::MoltbookCommentTool {
+                    client: client.clone(),
+                }));
+                gatekeeper.register(Arc::new(crate::tools::moltbook::MoltbookVoteTool {
+                    client: client.clone(),
+                }));
+                gatekeeper.register(Arc::new(crate::tools::moltbook::MoltbookPostTool {
+                    client: client.clone(),
+                }));
+                gatekeeper.register(Arc::new(crate::tools::moltbook::MoltbookVerifyTool {
+                    client: client.clone(),
+                }));
+                gatekeeper.register(Arc::new(crate::tools::moltbook::MoltbookNotificationsReadTool {
+                    client: client.clone(),
+                }));
+                gatekeeper.register(Arc::new(crate::tools::moltbook::MoltbookDmTool {
+                    client,
+                }));
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Moltbook authenticated tools not registered; configure credentials to enable them"
+                );
+            }
+        }
+    }
+
     gatekeeper.register(Arc::new(crate::tools::vault::VaultReadTool {
         workspace_root: workspace_root.clone(),
         read_limit,

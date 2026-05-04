@@ -46,6 +46,50 @@ impl Default for DiscordConfig {
     }
 }
 
+/// Optional Moltbook integration for the AI-agent social network.
+///
+/// Credentials must come from the process environment or an operator-owned file, not from
+/// checked-in TOML. Authenticated requests are pinned to the default `www.moltbook.com` API
+/// origin by the Moltbook client.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct MoltbookConfig {
+    /// When true, register the native `moltbook:*` tools during chat startup.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Environment variable that contains the bearer token.
+    #[serde(default = "default_moltbook_api_key_env")]
+    pub api_key_env: String,
+    /// Optional JSON credentials file, e.g. `~/.config/moltbook/credentials.json`.
+    #[serde(default)]
+    pub api_key_file: Option<PathBuf>,
+    /// Optional expected agent name; useful for operator-facing status messages.
+    #[serde(default)]
+    pub agent_name: Option<String>,
+    /// API base URL. Production must remain `https://www.moltbook.com/api/v1`.
+    #[serde(default = "default_moltbook_base_url")]
+    pub base_url: String,
+}
+
+fn default_moltbook_api_key_env() -> String {
+    "MOLTBOOK_API_KEY".into()
+}
+
+fn default_moltbook_base_url() -> String {
+    "https://www.moltbook.com/api/v1".into()
+}
+
+impl Default for MoltbookConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_key_env: default_moltbook_api_key_env(),
+            api_key_file: None,
+            agent_name: None,
+            base_url: default_moltbook_base_url(),
+        }
+    }
+}
+
 /// Optional Google Workspace credentials (Gmail + Calendar APIs via domain-wide delegation). When `enabled`, both paths must be set; Admin Console must allow `https://mail.google.com/` and `https://www.googleapis.com/auth/calendar` for the service account client id.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Default)]
 pub struct GoogleConfig {
@@ -310,6 +354,9 @@ pub struct AppConfig {
     /// Optional Discord bot sidecar (same session as web/TUI).
     #[serde(default)]
     pub discord: DiscordConfig,
+    /// Optional Moltbook social-network tools.
+    #[serde(default)]
+    pub moltbook: MoltbookConfig,
     /// When true, keep full JSON parameter schemas in the LLM view for tool definitions (larger prompt). When false and [`Self::optimize_context`] is true, [`crate::orchestrator::context::build_llm_view`] strips `parameters` in that block only; [`crate::orchestrator::core::Orchestrator::chat_stack`] stays full. Independently, the orchestrator forces full schemas for one recovery LLM pass after a Gatekeeper schema fault ([`crate::orchestrator::core::Orchestrator::force_full_tool_schemas_in_llm_view`]).
     #[serde(default = "default_optimize_context_full_tool_schemas")]
     pub optimize_context_full_tool_schemas: bool,
@@ -833,6 +880,7 @@ impl Default for AppConfig {
             optimize_context_tool_overrides: HashMap::new(),
             google: GoogleConfig::default(),
             discord: DiscordConfig::default(),
+            moltbook: MoltbookConfig::default(),
 
             optimize_context_full_tool_schemas: default_optimize_context_full_tool_schemas(),
             optimize_context_omit_resolved_tool_recovery:
