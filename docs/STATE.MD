@@ -149,3 +149,6 @@
 - [x] feature: todays news by category
 - [x] fix: show condensatoin tail on loglevel debug
 - [x] feature: enhance system health tool by GPU
+
+04/05/2026
+- [x] fix firefox gtk errors for eris chat --web
