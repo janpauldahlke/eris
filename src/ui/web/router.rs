@@ -1,11 +1,11 @@
 //! Axum router for web chat.
 
-use axum::routing::{get, post};
 use axum::Router;
+use axum::routing::{get, post};
 
+use super::WebAppState;
 use super::handlers;
 use super::sse;
-use super::WebAppState;
 
 pub fn web_chat_router(state: WebAppState) -> Router {
     Router::new()

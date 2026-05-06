@@ -93,7 +93,8 @@ fn resolve_anchor(base: &Url, href: &str) -> Option<Url> {
     let Ok(joined) = base.join(h) else {
         return None;
     };
-    if joined.fragment().is_some() && joined.path() == base.path() && joined.query() == base.query() {
+    if joined.fragment().is_some() && joined.path() == base.path() && joined.query() == base.query()
+    {
         return None;
     }
     Some(joined)
@@ -196,11 +197,7 @@ pub fn extract_ranked_page_links(html: &str, page_url: &str) -> Vec<WebOutboundL
         if !seen.insert(key) {
             continue;
         }
-        let anchor_text = if text.is_empty() {
-            None
-        } else {
-            Some(text)
-        };
+        let anchor_text = if text.is_empty() { None } else { Some(text) };
         ranked.push(WebOutboundLink {
             url: url.to_string(),
             anchor_text,
@@ -233,7 +230,8 @@ mod tests {
         let links = extract_ranked_page_links(html, "https://news.example.org/");
         let urls: Vec<&str> = links.iter().map(|l| l.url.as_str()).collect();
         assert!(
-            urls.iter().any(|u| u.contains("/2024/world/sea-level-report")),
+            urls.iter()
+                .any(|u| u.contains("/2024/world/sea-level-report")),
             "expected article path in ranked links: {:?}",
             urls
         );
@@ -256,8 +254,7 @@ mod tests {
 
     #[test]
     fn dimension_filename_filtered_even_without_common_ext() {
-        let html =
-            r#"<a href="https://x.test/cdn/abc-300x200.webp">x</a><a href="/article/slug">Title here</a>"#;
+        let html = r#"<a href="https://x.test/cdn/abc-300x200.webp">x</a><a href="/article/slug">Title here</a>"#;
         let links = extract_ranked_page_links(html, "https://x.test/");
         assert!(links.iter().all(|l| !l.url.contains("300x200")));
         assert!(links.iter().any(|l| l.url.contains("/article/slug")));
@@ -265,7 +262,8 @@ mod tests {
 
     #[test]
     fn resolves_root_relative_path_like_taz_heise() {
-        let html = r##"<a href="/Francesca-Albanese-ueber-ihre-Arbeit/!6170795/" class="teaser">x</a>"##;
+        let html =
+            r##"<a href="/Francesca-Albanese-ueber-ihre-Arbeit/!6170795/" class="teaser">x</a>"##;
         let links = extract_ranked_page_links(html, "https://www.taz.de/zeitung/");
         assert_eq!(links.len(), 1);
         assert_eq!(
@@ -274,8 +272,15 @@ mod tests {
         );
         let html_heise = r##"<a href="/bestenlisten/testbericht/slug/9kd8dgw?wt_mc=x" title="Long headline for keyboard">y</a>"##;
         let h = extract_ranked_page_links(html_heise, "https://www.heise.de/newsticker/");
-        assert!(h.iter().any(|l| l.url.starts_with("https://www.heise.de/bestenlisten/")));
-        assert!(h[0].anchor_text.as_deref().is_some_and(|t| t.contains("Long headline")));
+        assert!(
+            h.iter()
+                .any(|l| l.url.starts_with("https://www.heise.de/bestenlisten/"))
+        );
+        assert!(
+            h[0].anchor_text
+                .as_deref()
+                .is_some_and(|t| t.contains("Long headline"))
+        );
     }
 
     #[test]

@@ -1,9 +1,9 @@
 use crate::config::AppConfig;
 use crate::executive::error::{FcpError, Result};
-use std::path::Path;
-use tokio::fs;
 use inquire::{Select, Text};
 use ollama_rs::Ollama;
+use std::path::Path;
+use tokio::fs;
 
 /// Values fixed before interactive ignition (e.g. first-run welder).
 #[derive(Debug, Clone)]
@@ -19,65 +19,78 @@ impl Default for IgnitionOptions {
     }
 }
 
-pub async fn run_ignition_sequence(workspace_root: &Path, options: IgnitionOptions) -> Result<AppConfig> {
+pub async fn run_ignition_sequence(
+    workspace_root: &Path,
+    options: IgnitionOptions,
+) -> Result<AppConfig> {
     // 1. Fetch available models first to keep async cleanly separated
     let host = "http://localhost".to_string();
     let port = 11434;
     let client = Ollama::new(host, port);
-    
+
     let local_models = client.list_local_models().await.ok().unwrap_or_default();
     let model_names: Vec<String> = local_models.into_iter().map(|m| m.name).collect();
 
     // 2. Interactive Prompts (blocking task)
-    let (agent_name, user_name, model_name) = tokio::task::spawn_blocking(move || -> Result<(String, String, String)> {
-        let agent_name = Text::new("Agent Name:")
-            .with_default("ERIS")
-            .prompt()
-            .map_err(|e| match e {
-                inquire::InquireError::OperationCanceled | inquire::InquireError::OperationInterrupted => {
-                    FcpError::Cancellation("Ignition cancelled by user".into())
-                }
-                _ => FcpError::Config(format!("Prompt error: {}", e)),
-            })?;
-
-        let user_name = Text::new("Your name (optional):")
-            .with_default("")
-            .prompt()
-            .map_err(|e| match e {
-                inquire::InquireError::OperationCanceled | inquire::InquireError::OperationInterrupted => {
-                    FcpError::Cancellation("Ignition cancelled by user".into())
-                }
-                _ => FcpError::Config(format!("Prompt error: {}", e)),
-            })?;
-        let user_name = user_name.trim().to_string();
-
-        let model_name = if !model_names.is_empty() {
-            // Find if default qwen2.5:14b is in the list
-            let default_idx = model_names.iter().position(|m| m.contains("qwen2.5:14b")).unwrap_or(0);
-            
-            Select::new("Ollama Model:", model_names.clone())
-                .with_starting_cursor(default_idx)
+    let (agent_name, user_name, model_name) =
+        tokio::task::spawn_blocking(move || -> Result<(String, String, String)> {
+            let agent_name = Text::new("Agent Name:")
+                .with_default("ERIS")
                 .prompt()
                 .map_err(|e| match e {
-                    inquire::InquireError::OperationCanceled | inquire::InquireError::OperationInterrupted => {
+                    inquire::InquireError::OperationCanceled
+                    | inquire::InquireError::OperationInterrupted => {
                         FcpError::Cancellation("Ignition cancelled by user".into())
                     }
                     _ => FcpError::Config(format!("Prompt error: {}", e)),
-                })?
-        } else {
-            Text::new("Ollama Model:")
-                .with_default("qwen2.5:14b")
+                })?;
+
+            let user_name = Text::new("Your name (optional):")
+                .with_default("")
                 .prompt()
                 .map_err(|e| match e {
-                    inquire::InquireError::OperationCanceled | inquire::InquireError::OperationInterrupted => {
+                    inquire::InquireError::OperationCanceled
+                    | inquire::InquireError::OperationInterrupted => {
                         FcpError::Cancellation("Ignition cancelled by user".into())
                     }
                     _ => FcpError::Config(format!("Prompt error: {}", e)),
-                })?
-        };
+                })?;
+            let user_name = user_name.trim().to_string();
 
-        Ok((agent_name, user_name, model_name))
-    }).await.map_err(|e| FcpError::Config(format!("Spawn blocking failed: {}", e)))??;
+            let model_name = if !model_names.is_empty() {
+                // Find if default qwen2.5:14b is in the list
+                let default_idx = model_names
+                    .iter()
+                    .position(|m| m.contains("qwen2.5:14b"))
+                    .unwrap_or(0);
+
+                Select::new("Ollama Model:", model_names.clone())
+                    .with_starting_cursor(default_idx)
+                    .prompt()
+                    .map_err(|e| match e {
+                        inquire::InquireError::OperationCanceled
+                        | inquire::InquireError::OperationInterrupted => {
+                            FcpError::Cancellation("Ignition cancelled by user".into())
+                        }
+                        _ => FcpError::Config(format!("Prompt error: {}", e)),
+                    })?
+            } else {
+                Text::new("Ollama Model:")
+                    .with_default("qwen2.5:14b")
+                    .prompt()
+                    .map_err(|e| match e {
+                        inquire::InquireError::OperationCanceled
+                        | inquire::InquireError::OperationInterrupted => {
+                            FcpError::Cancellation("Ignition cancelled by user".into())
+                        }
+                        _ => FcpError::Config(format!("Prompt error: {}", e)),
+                    })?
+            };
+
+            Ok((agent_name, user_name, model_name))
+        })
+        .await
+        .map_err(|e| FcpError::Config(format!("Spawn blocking failed: {}", e)))??;
 
     // 3. The Scaffold (v2 Zettelkasten roots)
     let dirs_to_create = [
@@ -102,23 +115,20 @@ pub async fn run_ignition_sequence(workspace_root: &Path, options: IgnitionOptio
         agent_name
     );
     if !user_name.is_empty() {
-        identity_content.push_str(&format!(
-            "\nUser Name is: {} (your main user!)",
-            user_name
-        ));
+        identity_content.push_str(&format!("\nUser Name is: {} (your main user!)", user_name));
     }
     fs::write(&identity_path, &identity_content).await?;
 
-    fs::metadata(&identity_path).await.map_err(|e| {
-        FcpError::WorkspaceFault {
+    fs::metadata(&identity_path)
+        .await
+        .map_err(|e| FcpError::WorkspaceFault {
             workspace: workspace_root.display().to_string(),
             reason: format!(
                 "Identity.md missing after write (verify failed): {}: {}",
                 identity_path.display(),
                 e
             ),
-        }
-    })?;
+        })?;
 
     // 5. The Seal
     let mut config = AppConfig {
@@ -128,8 +138,9 @@ pub async fn run_ignition_sequence(workspace_root: &Path, options: IgnitionOptio
         ..Default::default()
     };
     config.qdrant_collection_v2 = format!("fcp_vault_v2_{}", config.workspace);
-    
-    let config_toml = toml::to_string(&config).map_err(|e| FcpError::Config(format!("Failed to serialize config: {}", e)))?;
+
+    let config_toml = toml::to_string(&config)
+        .map_err(|e| FcpError::Config(format!("Failed to serialize config: {}", e)))?;
     let config_path = crate::vault_layout::config_toml(workspace_root);
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent).await?;

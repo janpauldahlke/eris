@@ -3,8 +3,8 @@
 mod markers;
 
 pub use markers::{
-    is_recovery_system_content, DUPLICATE_TOOL_BATCH_PREFIX, FUCKUP_OVERRIDE_PREFIX,
-    SYSTEM_RECOVERY_PREFIX,
+    DUPLICATE_TOOL_BATCH_PREFIX, FUCKUP_OVERRIDE_PREFIX, SYSTEM_RECOVERY_PREFIX,
+    is_recovery_system_content,
 };
 
 use crate::engine::Message;
@@ -13,7 +13,8 @@ use super::stack_lines::try_parse_tool_success_line;
 use super::window::is_jit_system_message;
 
 /// Single-line system stub replacing omitted recovery transcript in the LLM view.
-pub const OMIT_RESOLVED_TOOL_RECOVERY_PLACEHOLDER: &str = "[FCP] Resolved tool-recovery attempts omitted from LLM view; see telemetry.";
+pub const OMIT_RESOLVED_TOOL_RECOVERY_PLACEHOLDER: &str =
+    "[FCP] Resolved tool-recovery attempts omitted from LLM view; see telemetry.";
 
 fn is_tool_success_message(m: &Message) -> bool {
     m.role == "system" && try_parse_tool_success_line(&m.content).is_some()
@@ -177,8 +178,7 @@ mod tests {
         let out = apply_omit_resolved_tool_recovery(&stack);
         assert_eq!(out.len(), stack.len());
         assert!(
-            !out
-                .iter()
+            !out.iter()
                 .any(|m| m.content == OMIT_RESOLVED_TOOL_RECOVERY_PLACEHOLDER)
         );
     }

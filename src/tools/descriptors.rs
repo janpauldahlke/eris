@@ -39,8 +39,9 @@ impl ToolDescriptorRegistry {
         let mut by_tool = HashMap::new();
 
         for raw in DESCRIPTOR_TOMLS {
-            let descriptor: ToolDescriptor = toml::from_str(raw)
-                .map_err(|e| FcpError::Config(format!("Failed parsing embedded descriptor: {}", e)))?;
+            let descriptor: ToolDescriptor = toml::from_str(raw).map_err(|e| {
+                FcpError::Config(format!("Failed parsing embedded descriptor: {}", e))
+            })?;
             Self::validate_descriptor(&descriptor)?;
             let tool_name = descriptor.tool_name.clone();
             if by_tool.insert(tool_name.clone(), descriptor).is_some() {
@@ -56,10 +57,14 @@ impl ToolDescriptorRegistry {
 
     fn validate_descriptor(desc: &ToolDescriptor) -> Result<()> {
         if desc.descriptor_version == 0 {
-            return Err(FcpError::Config("descriptor_version must be >= 1".to_string()));
+            return Err(FcpError::Config(
+                "descriptor_version must be >= 1".to_string(),
+            ));
         }
         if desc.tool_name.trim().is_empty() || desc.short_description.trim().is_empty() {
-            return Err(FcpError::Config("tool_name and short_description are required".to_string()));
+            return Err(FcpError::Config(
+                "tool_name and short_description are required".to_string(),
+            ));
         }
         Ok(())
     }
@@ -100,4 +105,3 @@ impl ToolDescriptorRegistry {
         Ok(())
     }
 }
-

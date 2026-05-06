@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 
 use crate::executive::error::{FcpError, Result};
 use crate::tools::clock::{
-    load_alarms, save_alarms, AlarmRecord, MAX_LABEL_CHARS, MAX_TIMER_MINUTES,
+    AlarmRecord, MAX_LABEL_CHARS, MAX_TIMER_MINUTES, load_alarms, save_alarms,
 };
 use crate::tools::traits::Tool;
 
@@ -55,7 +55,9 @@ impl Tool for ClockTimerTool {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| FcpError::Config("system clock before UNIX epoch".into()))?;
-        let fire_at = now.as_secs().saturating_add(u64::from(args.minutes).saturating_mul(60));
+        let fire_at = now
+            .as_secs()
+            .saturating_add(u64::from(args.minutes).saturating_mul(60));
         let id = uuid::Uuid::new_v4().to_string();
         alarms.push(AlarmRecord {
             id,

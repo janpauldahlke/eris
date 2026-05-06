@@ -1,14 +1,34 @@
-use std::path::{Component, Path};
 use crate::executive::error::{FcpError, Result};
+use std::path::{Component, Path};
 
 pub fn validate_path_is_mutable(path_str: &str) -> Result<()> {
     let path = Path::new(path_str);
     for component in path.components() {
         match component {
-            Component::ParentDir => return Err(FcpError::ToolFault { tool_name: "gatekeeper".to_string(), reason: "Path Traversal Denied".to_string() }),
-            Component::Normal(p) if p == "00_Core" => return Err(FcpError::ToolFault { tool_name: "gatekeeper".to_string(), reason: "00_Core is Immutable".to_string() }),
-            Component::Normal(p) if p == "00_Invariants" => return Err(FcpError::ToolFault { tool_name: "gatekeeper".to_string(), reason: "00_Invariants is Immutable — user-maintained only".to_string() }),
-            Component::RootDir | Component::Prefix(_) => return Err(FcpError::ToolFault { tool_name: "gatekeeper".to_string(), reason: "Absolute paths outside workspace denied".to_string() }),
+            Component::ParentDir => {
+                return Err(FcpError::ToolFault {
+                    tool_name: "gatekeeper".to_string(),
+                    reason: "Path Traversal Denied".to_string(),
+                });
+            }
+            Component::Normal(p) if p == "00_Core" => {
+                return Err(FcpError::ToolFault {
+                    tool_name: "gatekeeper".to_string(),
+                    reason: "00_Core is Immutable".to_string(),
+                });
+            }
+            Component::Normal(p) if p == "00_Invariants" => {
+                return Err(FcpError::ToolFault {
+                    tool_name: "gatekeeper".to_string(),
+                    reason: "00_Invariants is Immutable — user-maintained only".to_string(),
+                });
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(FcpError::ToolFault {
+                    tool_name: "gatekeeper".to_string(),
+                    reason: "Absolute paths outside workspace denied".to_string(),
+                });
+            }
             _ => {}
         }
     }

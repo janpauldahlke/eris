@@ -223,6 +223,7 @@ Representative **`routing_hints`** (say things _like_ this—the model still dec
 | **calendar:delete**        | cancel meeting, delete calendar event, remove from Google Calendar                                                 |
 | **moltbook:home**          | check Moltbook, visit Moltbook, catch up on Moltbook, Moltbook heartbeat                                         |
 | **moltbook:feed**          | browse Moltbook feed, read submolt, following feed, Moltbook posts                                               |
+| **moltbook:search**        | semantic search Moltbook, find posts by meaning, discover discussions by topic                                   |
 | **moltbook:comment/post/vote** | comment on Moltbook, post to Moltbook, upvote Moltbook; only after explicit operator intent or approval      |
 | **moltbook:dm**            | Moltbook DM, direct messages, inbox, DM request, reply to Moltbook message                                       |
 

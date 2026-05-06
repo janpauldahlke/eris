@@ -34,36 +34,37 @@ impl Tool for VaultReadTool {
     }
 
     async fn execute(&self, args: Value) -> Result<String> {
-        let args: VaultReadArgs = serde_json::from_value(args)
-            .map_err(FcpError::ParseFault)?;
+        let args: VaultReadArgs = serde_json::from_value(args).map_err(FcpError::ParseFault)?;
 
         // Gatekeeper path firewall is optional for read, but we should prevent absolute traversal
         let target_path = self.workspace_root.join(&args.relative_path);
         if !target_path.starts_with(&self.workspace_root) {
-             return Err(FcpError::ToolFault { 
-                 tool_name: self.name().into(), 
-                 reason: "Path Traversal Denied".into() 
-             });
+            return Err(FcpError::ToolFault {
+                tool_name: self.name().into(),
+                reason: "Path Traversal Denied".into(),
+            });
         }
 
-        let mut content = fs::read_to_string(&target_path).await
+        let mut content = fs::read_to_string(&target_path)
+            .await
             .map_err(FcpError::Io)?;
 
         let max_bytes = self.read_limit * 4;
-        
+
         if content.len() > max_bytes {
-            let headers: Vec<&str> = content.lines()
+            let headers: Vec<&str> = content
+                .lines()
                 .filter(|line| line.trim_start().starts_with('#'))
                 .collect();
-                
+
             let map = headers.join("\n");
-            
+
             let mut limit = max_bytes;
             while limit > 0 && !content.is_char_boundary(limit) {
                 limit -= 1;
             }
             content.truncate(limit);
-            
+
             content.push_str(&format!(
                 "\n\n[SYSTEM WARNING: CONTENT TRUNCATED TO {} TOKENS. Use memory:query to search it semantically. FILE MAP:\n{}]",
                 self.read_limit, map
@@ -86,7 +87,10 @@ mod tests {
         let file_path = dir.path().join("normal.md");
         fs::write(&file_path, "Hello, Vault!").await.unwrap();
 
-        let tool = VaultReadTool { workspace_root: dir.path().to_path_buf(), read_limit: 3000 };
+        let tool = VaultReadTool {
+            workspace_root: dir.path().to_path_buf(),
+            read_limit: 3000,
+        };
         let args = serde_json::json!({ "relative_path": "normal.md" });
 
         let result = tool.execute(args).await?;
@@ -98,15 +102,18 @@ mod tests {
     async fn test_vault_read_exceeds_tokens() -> Result<()> {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("massive.md");
-        
+
         let mut massive_content = String::from("# Header 1\n");
         massive_content.push_str(&"A".repeat(12001)); // > 3000 tokens (12000 chars)
         massive_content.push_str("\n## Header 2\n");
         massive_content.push_str(&"B".repeat(10));
-        
+
         fs::write(&file_path, massive_content).await.unwrap();
 
-        let tool = VaultReadTool { workspace_root: dir.path().to_path_buf(), read_limit: 3000 };
+        let tool = VaultReadTool {
+            workspace_root: dir.path().to_path_buf(),
+            read_limit: 3000,
+        };
         let args = serde_json::json!({ "relative_path": "massive.md" });
 
         let result = tool.execute(args).await?;

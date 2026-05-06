@@ -4,13 +4,13 @@ use crate::memory::ephemeral::EphemeralMemory;
 use crate::orchestrator::context::ContextAssembler;
 use crate::orchestrator::context::ContextViewSettings;
 use crate::orchestrator::state::AgentState;
-use crate::presentation::{AgentStateUpdate, SessionEvent};
 use crate::orchestrator::tool_router::ToolRouter;
+use crate::presentation::{AgentStateUpdate, SessionEvent};
 use crate::tools::Gatekeeper;
 use crate::tools::ToolDescriptorRegistry;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Marker string in `thought` / `message_to_user` when the last user line was empty (debuggable in logs and TUI).
 pub const EMPTY_USER_MESSAGE_TAG: &str = "SY FNORD";
@@ -122,9 +122,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                 total_ms: self.last_total_ms,
                 top_tool_match: self.last_top_tool_match.clone(),
             };
-            let _ = tx
-                .send(SessionEvent::StateUpdate(update))
-                .await;
+            let _ = tx.send(SessionEvent::StateUpdate(update)).await;
         }
     }
 

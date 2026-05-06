@@ -53,8 +53,7 @@ impl Tool for MailMoveTool {
     }
 
     async fn execute(&self, args: Value) -> Result<String> {
-        let parsed: MailMoveArgs =
-            serde_json::from_value(args).map_err(FcpError::ParseFault)?;
+        let parsed: MailMoveArgs = serde_json::from_value(args).map_err(FcpError::ParseFault)?;
         let mid = parsed.message_id.trim();
         if mid.is_empty() {
             return Err(FcpError::SchemaViolation(
@@ -63,9 +62,7 @@ impl Tool for MailMoveTool {
         }
         let target = parsed.target.trim();
         if target.is_empty() {
-            return Err(FcpError::SchemaViolation(
-                "target must be non-empty".into(),
-            ));
+            return Err(FcpError::SchemaViolation("target must be non-empty".into()));
         }
 
         let (add_ids, remove_ids) = if target.eq_ignore_ascii_case("spam") {
@@ -114,11 +111,12 @@ async fn resolve_or_create_user_label(client: &GmailClient, name: &str) -> Resul
             let lab_name = lab.get("name").and_then(|n| n.as_str());
             let id = lab.get("id").and_then(|i| i.as_str());
             if lab_name.is_some_and(|n| n.eq_ignore_ascii_case(name)) {
-                return id.ok_or_else(|| FcpError::ToolFault {
-                    tool_name: "mail:move".into(),
-                    reason: "label missing id in Gmail response".into(),
-                })
-                .map(String::from);
+                return id
+                    .ok_or_else(|| FcpError::ToolFault {
+                        tool_name: "mail:move".into(),
+                        reason: "label missing id in Gmail response".into(),
+                    })
+                    .map(String::from);
             }
         }
     }

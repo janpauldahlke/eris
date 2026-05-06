@@ -60,12 +60,11 @@ pub fn llm_json_parse_recovery_message(err: &serde_json::Error) -> String {
 
 /// Same as [`llm_json_parse_recovery_message`] plus a capped single-line excerpt of the raw model output (for the recovery LLM pass only).
 pub fn llm_json_parse_recovery_message_with_excerpt(err: &serde_json::Error, raw: &str) -> String {
-    let preview = capped_single_line_protocol_preview(raw, LLM_JSON_PARSE_RECOVERY_PREVIEW_MAX_CHARS);
+    let preview =
+        capped_single_line_protocol_preview(raw, LLM_JSON_PARSE_RECOVERY_PREVIEW_MAX_CHARS);
     format!(
         "{err}\n\n{}\n{}\n\n[FCP: protocol_preview]\n{}",
-        FCP_JSON_REPAIR_MARKER,
-        LLM_JSON_PARSE_RECOVERY_HINT_BODY,
-        preview
+        FCP_JSON_REPAIR_MARKER, LLM_JSON_PARSE_RECOVERY_HINT_BODY, preview
     )
 }
 

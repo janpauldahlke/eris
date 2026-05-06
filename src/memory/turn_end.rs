@@ -4,7 +4,7 @@
 use unicode_normalization::UnicodeNormalization;
 
 use crate::config::AppConfig;
-use crate::memory::ephemeral::{is_web_artifact_staging, EphemeralMemory};
+use crate::memory::ephemeral::{EphemeralMemory, is_web_artifact_staging};
 use crate::memory::types::EphemeralTier;
 use crate::orchestrator::context::ROLLING_SUMMARY_TITLE;
 
@@ -48,11 +48,11 @@ fn should_skip_entry(title: &str, tags: &[String], canonical_key: &str) -> bool 
 }
 
 /// True if user message words match this row strongly enough (deterministic, no embeddings).
-fn user_covers_canonical_key(user_words: &std::collections::HashSet<String>, canonical_key: &str) -> bool {
-    let tokens: Vec<&str> = canonical_key
-        .split('_')
-        .filter(|t| t.len() >= 3)
-        .collect();
+fn user_covers_canonical_key(
+    user_words: &std::collections::HashSet<String>,
+    canonical_key: &str,
+) -> bool {
+    let tokens: Vec<&str> = canonical_key.split('_').filter(|t| t.len() >= 3).collect();
     if tokens.is_empty() {
         return false;
     }
@@ -232,12 +232,7 @@ mod tests {
         };
         memory.cache.insert("sid-1".into(), entry).await;
 
-        let stats = apply_user_turn_mentions(
-            &memory,
-            "I still love piano and hagbard",
-            &cfg,
-        )
-        .await;
+        let stats = apply_user_turn_mentions(&memory, "I still love piano and hagbard", &cfg).await;
         assert_eq!(stats.entries_matched, 1);
 
         let updated = memory.get_by_id("sid-1").await.expect("row");

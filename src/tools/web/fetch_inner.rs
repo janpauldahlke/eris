@@ -9,22 +9,20 @@ use crate::tools::web::artifact::{WebArtifact, WebOutboundLink};
 use crate::tools::web::link_extract::extract_ranked_page_links;
 use crate::tools::web::markdown_focus::focus_article_text;
 use htmd::HtmlToMarkdown;
-use reqwest::header::{
-    HeaderMap, HeaderName, HeaderValue, ACCEPT, ACCEPT_LANGUAGE, REFERER, USER_AGENT,
-};
 use reqwest::Client;
+use reqwest::header::{
+    ACCEPT, ACCEPT_LANGUAGE, HeaderMap, HeaderName, HeaderValue, REFERER, USER_AGENT,
+};
 use serde::Serialize;
-use std::time::Duration;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Default Chrome-style UA; used if config / `HeaderValue::from_str` rejects the operator string.
-pub(crate) const FALLBACK_WEB_FETCH_UA: &str =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+pub(crate) const FALLBACK_WEB_FETCH_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 pub(crate) fn build_web_fetch_client(timeout_secs: u64, user_agent: &str) -> Client {
-    let ua = HeaderValue::from_str(user_agent.trim()).unwrap_or_else(|_| {
-        HeaderValue::from_static(FALLBACK_WEB_FETCH_UA)
-    });
+    let ua = HeaderValue::from_str(user_agent.trim())
+        .unwrap_or_else(|_| HeaderValue::from_static(FALLBACK_WEB_FETCH_UA));
 
     let mut headers = HeaderMap::new();
     headers.insert(USER_AGENT, ua);
@@ -163,10 +161,7 @@ pub(crate) async fn run_web_fetch(
     };
 
     if !response.status().is_success() {
-        let reason = response
-            .status()
-            .canonical_reason()
-            .unwrap_or("Unknown");
+        let reason = response.status().canonical_reason().unwrap_or("Unknown");
         return Ok(WebFetchRunOutcome::Plain(format!(
             "HTTP Error {}: {}",
             response.status().as_u16(),
@@ -176,7 +171,12 @@ pub(crate) async fn run_web_fetch(
 
     let html = match response.text().await {
         Ok(t) => t,
-        Err(e) => return Ok(WebFetchRunOutcome::Plain(format!("Error reading response body: {}", e))),
+        Err(e) => {
+            return Ok(WebFetchRunOutcome::Plain(format!(
+                "Error reading response body: {}",
+                e
+            )));
+        }
     };
 
     let converter = HtmlToMarkdown::builder()

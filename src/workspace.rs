@@ -61,11 +61,7 @@ pub async fn init_workspace(
     let core_dir = workspace_dir.join("00_Invariants");
     tokio::fs::create_dir_all(&core_dir).await?;
 
-    for sub in [
-        "10_Topology",
-        "20_Discourse",
-        "30_Synthesis",
-    ] {
+    for sub in ["10_Topology", "20_Discourse", "30_Synthesis"] {
         tokio::fs::create_dir_all(workspace_dir.join(sub)).await?;
     }
 
@@ -130,10 +126,7 @@ mod tests {
         assert!(seal_file.exists(), "seal file should exist");
 
         let seal_content = tokio::fs::read_to_string(&seal_file).await.unwrap();
-        assert_eq!(
-            model_from_seal_text(&seal_content).as_deref(),
-            Some(model)
-        );
+        assert_eq!(model_from_seal_text(&seal_content).as_deref(), Some(model));
     }
 
     #[tokio::test]

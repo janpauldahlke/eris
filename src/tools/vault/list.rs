@@ -32,8 +32,7 @@ impl Tool for VaultListTool {
     }
 
     async fn execute(&self, args: Value) -> Result<String> {
-        let args: VaultListArgs = serde_json::from_value(args)
-            .map_err(FcpError::ParseFault)?;
+        let args: VaultListArgs = serde_json::from_value(args).map_err(FcpError::ParseFault)?;
 
         let dir_normalized = args.directory.trim().replace('\\', "/");
         let dir_trimmed = dir_normalized.trim_end_matches('/');
@@ -45,9 +44,9 @@ impl Tool for VaultListTool {
         };
 
         if !target_dir.starts_with(&self.workspace_root) {
-            return Err(FcpError::ToolFault { 
-                tool_name: self.name().into(), 
-                reason: "Path Traversal Denied".into() 
+            return Err(FcpError::ToolFault {
+                tool_name: self.name().into(),
+                reason: "Path Traversal Denied".into(),
             });
         }
 
@@ -74,7 +73,10 @@ impl Tool for VaultListTool {
         }
 
         files.sort();
-        Ok(format!("SUCCESS: Directory contents:\n{}", files.join("\n")))
+        Ok(format!(
+            "SUCCESS: Directory contents:\n{}",
+            files.join("\n")
+        ))
     }
 }
 
@@ -89,11 +91,13 @@ mod tests {
         let dir = tempdir().unwrap();
         let target = dir.path().join("90_Drops");
         fs::create_dir(&target).await.unwrap();
-        
+
         File::create(target.join("a.md")).await.unwrap();
         File::create(target.join("b.md")).await.unwrap();
 
-        let tool = VaultListTool { workspace_root: dir.path().to_path_buf() };
+        let tool = VaultListTool {
+            workspace_root: dir.path().to_path_buf(),
+        };
         let args = serde_json::json!({ "directory": "90_Drops" });
 
         let result = tool.execute(args).await?;

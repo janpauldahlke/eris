@@ -5,12 +5,12 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::executive::error::{FcpError, Result};
 use crate::generated::gws_types::calendar::Event;
 use crate::tools::calendar::common::format_event_one_line;
-use crate::tools::context_view_hint::{ToolContextViewHint, API_TOOL_SNIPPET_CHARS};
+use crate::tools::context_view_hint::{API_TOOL_SNIPPET_CHARS, ToolContextViewHint};
 use crate::tools::traits::Tool;
 use crate::util::CalendarClient;
 

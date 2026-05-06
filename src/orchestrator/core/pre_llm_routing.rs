@@ -1,7 +1,7 @@
 use crate::engine::LlmEngine;
 use crate::orchestrator::tool_router::ToolRouter;
-use crate::telemetry::routing_codes;
 use crate::presentation::SYSTEM_ALARM_PREFIX;
+use crate::telemetry::routing_codes;
 use std::time::Instant;
 
 use super::Orchestrator;
@@ -13,18 +13,33 @@ impl<E: LlmEngine> Orchestrator<E> {
         let turn_seq = self.turn_seq;
 
         if user_input.starts_with(SYSTEM_ALARM_PREFIX) {
-            self.last_router_ms = 0;
-            self.last_top_tool_match = None;
-            tracing::info!(
-                category = routing_codes::CATEGORY_ROUTING,
-                issue = routing_codes::ISSUE_PRELLM_CONV_ALARM,
-                outcome = routing_codes::OUTCOME_CONVERSATIONAL,
-                turn_seq,
-                tools_needed = false,
-                router_match_count = 0usize,
-                "system alarm prefix; conversational mode"
-            );
-            return (false, Vec::new());
+            let alarm_payload = user_input
+                .strip_prefix(SYSTEM_ALARM_PREFIX)
+                .unwrap_or(user_input);
+            if alarm_payload.to_ascii_lowercase().contains("moltbook") {
+                tracing::info!(
+                    category = routing_codes::CATEGORY_ROUTING,
+                    issue = routing_codes::ISSUE_PRELLM_ALARM_TOOL_ELIGIBLE,
+                    outcome = routing_codes::outcome_from_pre_llm_tuple(true, 0),
+                    turn_seq,
+                    tools_needed = true,
+                    router_match_count = 0usize,
+                    "system alarm prefix with Moltbook label; semantic tool routing enabled"
+                );
+            } else {
+                self.last_router_ms = 0;
+                self.last_top_tool_match = None;
+                tracing::info!(
+                    category = routing_codes::CATEGORY_ROUTING,
+                    issue = routing_codes::ISSUE_PRELLM_CONV_ALARM,
+                    outcome = routing_codes::OUTCOME_CONVERSATIONAL,
+                    turn_seq,
+                    tools_needed = false,
+                    router_match_count = 0usize,
+                    "system alarm prefix; conversational mode"
+                );
+                return (false, Vec::new());
+            }
         }
 
         if ToolRouter::short_input_guard_conversational_only(user_input) {

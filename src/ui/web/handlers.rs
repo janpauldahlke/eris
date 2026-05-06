@@ -2,11 +2,11 @@
 
 use askama::Template;
 use askama_web::WebTemplate;
+use axum::Json;
 use axum::body::Body;
 use axum::extract::State;
-use axum::http::{header, StatusCode};
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 
 use crate::presentation::UserAction;
 
@@ -23,7 +23,10 @@ pub async fn chat_shell() -> ChatShell {
 pub async fn chat_js() -> Response {
     match Response::builder()
         .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "application/javascript; charset=utf-8")
+        .header(
+            header::CONTENT_TYPE,
+            "application/javascript; charset=utf-8",
+        )
         .body(Body::from(include_str!("assets/chat.js")))
     {
         Ok(r) => r,
@@ -40,7 +43,10 @@ pub async fn post_action(
 ) -> impl IntoResponse {
     match state.user_action_tx.try_send(action) {
         Ok(()) => {
-            tracing::debug!(event = "fcp.web.api.action_accepted", "POST /api/action delivered");
+            tracing::debug!(
+                event = "fcp.web.api.action_accepted",
+                "POST /api/action delivered"
+            );
             StatusCode::NO_CONTENT
         }
         Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {

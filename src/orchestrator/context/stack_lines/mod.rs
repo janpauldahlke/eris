@@ -3,6 +3,6 @@
 mod tool_success;
 
 pub use tool_success::{
-    format_tool_success_line, parse_system_line, try_parse_tool_success_line, ParsedSystemLine,
-    ToolSuccessLine, TOOL_SUCCESS_INFIX, TOOL_SUCCESS_PREFIX,
+    ParsedSystemLine, TOOL_SUCCESS_INFIX, TOOL_SUCCESS_PREFIX, ToolSuccessLine,
+    format_tool_success_line, parse_system_line, try_parse_tool_success_line,
 };

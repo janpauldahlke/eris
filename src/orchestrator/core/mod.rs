@@ -11,8 +11,8 @@ mod tool_dispatch;
 mod transitions;
 mod turn_entry;
 
-pub use orchestrator::Orchestrator;
 pub use orchestrator::EMPTY_USER_MESSAGE_TAG;
+pub use orchestrator::Orchestrator;
 pub(crate) use orchestrator::{
     PromotionSuppressedDuringStep, RECOVERY_BUDGET_EXHAUSTED_DECK_LINE,
     TOOL_ROUND_CAP_SYSTEM_GUIDANCE, TOOL_ROUND_CAP_USER_FOOTNOTE,

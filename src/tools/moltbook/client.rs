@@ -43,7 +43,11 @@ pub struct MoltbookClient {
 }
 
 impl MoltbookClient {
-    pub fn unauthenticated(config: &MoltbookConfig, timeout_secs: u64, max_response_bytes: usize) -> Result<Self> {
+    pub fn unauthenticated(
+        config: &MoltbookConfig,
+        timeout_secs: u64,
+        max_response_bytes: usize,
+    ) -> Result<Self> {
         let base_url = parse_and_validate_prod_base_url(&config.base_url)?;
         let client = build_http_client(timeout_secs)?;
         Ok(Self {
@@ -144,9 +148,12 @@ impl MoltbookClient {
             headers.insert(AUTHORIZATION, header);
         }
         if body.is_some() {
-            headers.insert(CONTENT_TYPE, "application/json".parse().map_err(|_| {
-                FcpError::Config("failed to build Moltbook content-type header".into())
-            })?);
+            headers.insert(
+                CONTENT_TYPE,
+                "application/json".parse().map_err(|_| {
+                    FcpError::Config("failed to build Moltbook content-type header".into())
+                })?,
+            );
         }
 
         tracing::debug!(
@@ -218,7 +225,8 @@ pub enum AuthMode {
 
 pub fn clean_path_segment(label: &str, raw: &str) -> Result<String> {
     let trimmed = raw.trim();
-    if trimmed.is_empty() || trimmed.contains('/') || trimmed.contains('?') || trimmed.contains('#') {
+    if trimmed.is_empty() || trimmed.contains('/') || trimmed.contains('?') || trimmed.contains('#')
+    {
         return Err(FcpError::SchemaViolation(format!(
             "{label} must be a non-empty path segment"
         )));
@@ -226,7 +234,11 @@ pub fn clean_path_segment(label: &str, raw: &str) -> Result<String> {
     Ok(trimmed.to_string())
 }
 
-pub fn tool_result(tool: &str, response: MoltbookResponse, next_step_hint: impl Into<String>) -> Result<String> {
+pub fn tool_result(
+    tool: &str,
+    response: MoltbookResponse,
+    next_step_hint: impl Into<String>,
+) -> Result<String> {
     let mut out = serde_json::Map::new();
     out.insert("tool".into(), Value::String(tool.to_string()));
     out.insert("data".into(), response.body);
@@ -234,7 +246,10 @@ pub fn tool_result(tool: &str, response: MoltbookResponse, next_step_hint: impl 
         "rate_limit".into(),
         serde_json::to_value(response.rate_limit).map_err(FcpError::ParseFault)?,
     );
-    out.insert("next_step_hint".into(), Value::String(next_step_hint.into()));
+    out.insert(
+        "next_step_hint".into(),
+        Value::String(next_step_hint.into()),
+    );
     serde_json::to_string(&Value::Object(out)).map_err(FcpError::ParseFault)
 }
 
@@ -252,7 +267,11 @@ pub fn validate_content_len(label: &str, value: &str, min: usize, max: usize) ->
 fn build_http_client(timeout_secs: u64) -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(timeout_secs.max(1)))
-        .user_agent(concat!("eris/", env!("CARGO_PKG_VERSION"), " moltbook-tool"))
+        .user_agent(concat!(
+            "eris/",
+            env!("CARGO_PKG_VERSION"),
+            " moltbook-tool"
+        ))
         .build()
         .map_err(|e| {
             tracing::error!(error = %e, "failed building Moltbook HTTP client");
@@ -279,8 +298,7 @@ fn ensure_prod_api_url(url: &Url) -> Result<()> {
         return Ok(());
     }
     Err(FcpError::Config(
-        "Moltbook authenticated requests are pinned to https://www.moltbook.com/api/v1"
-            .into(),
+        "Moltbook authenticated requests are pinned to https://www.moltbook.com/api/v1".into(),
     ))
 }
 
@@ -302,7 +320,8 @@ async fn resolve_api_key(config: &MoltbookConfig) -> Result<String> {
                 resolved.display()
             ))
         })?;
-        let creds: MoltbookCredentials = serde_json::from_slice(&bytes).map_err(FcpError::ParseFault)?;
+        let creds: MoltbookCredentials =
+            serde_json::from_slice(&bytes).map_err(FcpError::ParseFault)?;
         let trimmed = creds.api_key.trim();
         if !trimmed.is_empty() {
             return Ok(trimmed.to_string());
@@ -373,7 +392,13 @@ fn map_http_error(status: StatusCode, body: &str, rate_limit: &MoltbookRateLimit
 fn summarize_error_body(body: &str) -> String {
     if let Ok(value) = serde_json::from_str::<Value>(body) {
         let mut parts = BTreeMap::new();
-        for key in ["error", "message", "hint", "retry_after_seconds", "retry_after_minutes"] {
+        for key in [
+            "error",
+            "message",
+            "hint",
+            "retry_after_seconds",
+            "retry_after_minutes",
+        ] {
             if let Some(v) = value.get(key) {
                 parts.insert(key, v.to_string());
             }

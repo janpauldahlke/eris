@@ -33,8 +33,10 @@ pub async fn run_welder_before_chat(
     let report = report::gather(config).await;
     let cli = cli.clone();
     let root = workspace_root.to_path_buf();
-    let hint = tokio::task::spawn_blocking(move || prompts::run_interactive_sequence(&report, &root, &cli))
-        .await
-        .map_err(|e| FcpError::Config(format!("Welder task join: {e}")))?;
+    let hint = tokio::task::spawn_blocking(move || {
+        prompts::run_interactive_sequence(&report, &root, &cli)
+    })
+    .await
+    .map_err(|e| FcpError::Config(format!("Welder task join: {e}")))?;
     hint
 }

@@ -1,14 +1,14 @@
-pub mod push;
-pub mod list;
 pub mod complete;
-pub mod remove;
+pub mod list;
+pub mod push;
 pub mod remind_at;
+pub mod remove;
 
-pub use push::AgendaPushTool;
-pub use list::AgendaListTool;
 pub use complete::AgendaCompleteTool;
-pub use remove::AgendaRemoveTool;
+pub use list::AgendaListTool;
+pub use push::AgendaPushTool;
 pub use remind_at::AgendaRemindAtTool;
+pub use remove::AgendaRemoveTool;
 
 use serde::{Deserialize, Serialize};
 

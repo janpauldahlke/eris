@@ -1,9 +1,9 @@
 use crate::engine::LlmEngine;
 use crate::executive::error::{FcpError, Result};
 use crate::orchestrator::llm_support::post_tool_guidance::{
-    recover_override_message_for_tool_failure, POST_TOOL_USER_REPLY_GUIDANCE,
+    POST_TOOL_USER_REPLY_GUIDANCE, recover_override_message_for_tool_failure,
 };
-use crate::orchestrator::r#loop::recovery_policy::{classify_tool_failure, ToolFailureAction};
+use crate::orchestrator::r#loop::recovery_policy::{ToolFailureAction, classify_tool_failure};
 use crate::orchestrator::r#loop::tool_batch::ToolBatchDecision;
 use crate::orchestrator::state::{AgentState, ToolCall, ToolIntentStatus, ToolIntentTicket};
 use crate::presentation::SessionEvent;
@@ -81,7 +81,9 @@ impl<E: LlmEngine> Orchestrator<E> {
             let tool_name = tool_call.name;
             let args = tool_call.args;
             let intent_id = Self::tool_fingerprint(&tool_name, &args);
-            if let Some(existing) = execution_ledger.get(&intent_id)
+            let repeatable = self.gatekeeper.tool_allows_repeat(&tool_name);
+            if !repeatable
+                && let Some(existing) = execution_ledger.get(&intent_id)
                 && matches!(
                     existing.status,
                     ToolIntentStatus::Pending | ToolIntentStatus::Success
@@ -103,9 +105,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                 });
                 if let Some(tx) = &self.presentation_tx {
                     let telemetry = format!("[tool] {} · duplicate suppressed", tool_name);
-                    let _ = tx
-                        .send(SessionEvent::SystemError(telemetry))
-                        .await;
+                    let _ = tx.send(SessionEvent::SystemError(telemetry)).await;
                 }
                 continue;
             }
@@ -140,8 +140,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                 .gatekeeper
                 .execute_tool(&current_state, &tool_name, args.clone())
                 .await;
-            *tool_ms_acc =
-                (*tool_ms_acc).saturating_add(tool_started.elapsed().as_millis() as u64);
+            *tool_ms_acc = (*tool_ms_acc).saturating_add(tool_started.elapsed().as_millis() as u64);
             match result {
                 Ok(result) => {
                     if let Some(ticket) = execution_ledger.get_mut(&intent_id) {
@@ -172,9 +171,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                     });
                     if let Some(tx) = &self.presentation_tx {
                         let telemetry = format!("[tool] {} · success", tool_name);
-                        let _ = tx
-                            .send(SessionEvent::SystemError(telemetry))
-                            .await;
+                        let _ = tx.send(SessionEvent::SystemError(telemetry)).await;
                     }
                     self.broadcast_state().await;
                 }
@@ -189,10 +186,8 @@ impl<E: LlmEngine> Orchestrator<E> {
                     if let Some(ticket) = execution_ledger.get_mut(&intent_id) {
                         ticket.last_error = Some(e.to_string());
                     }
-                    let failure_action = classify_tool_failure(
-                        &e,
-                        schema_recovery_attempted.contains(&tool_name),
-                    );
+                    let failure_action =
+                        classify_tool_failure(&e, schema_recovery_attempted.contains(&tool_name));
                     match failure_action {
                         ToolFailureAction::TargetedSchemaRetry => {
                             schema_recovery_attempted.insert(tool_name.clone());
@@ -258,7 +253,9 @@ impl<E: LlmEngine> Orchestrator<E> {
             && fatal_fail_count == 0
             && suppressed_duplicate_count > 0
         {
-            tracing::info!("All tool intents in batch were duplicate-suppressed; forcing user-facing reply via recover");
+            tracing::info!(
+                "All tool intents in batch were duplicate-suppressed; forcing user-facing reply via recover"
+            );
             let msg = "[SYSTEM OVERRIDE] All requested tool calls in this batch were suppressed as duplicates (already executed earlier). Do NOT repeat those tool calls again. Respond to the user now with status Idle and a non-empty message_to_user confirming the outcome. tool_calls MUST be [].".to_string();
             // IMPORTANT: route through Recover so retry is bounded by `max_recovery_attempts`.
             return Ok(ToolBatchDecision::Recover { message: msg });
@@ -340,13 +337,22 @@ mod clock_before_db_tests {
         let out = stable_prioritize_clock_now_before_db(tools);
         assert_eq!(
             out.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
-            vec!["clock:now", "memory:query", "vault:read", "db:find_connections"]
+            vec![
+                "clock:now",
+                "memory:query",
+                "vault:read",
+                "db:find_connections"
+            ]
         );
     }
 
     #[test]
     fn unchanged_when_clock_already_first() {
-        let tools = vec![tc("clock:now"), tc("memory:query"), tc("db:find_connections")];
+        let tools = vec![
+            tc("clock:now"),
+            tc("memory:query"),
+            tc("db:find_connections"),
+        ];
         let out = stable_prioritize_clock_now_before_db(tools);
         assert_eq!(
             out.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),

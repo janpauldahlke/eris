@@ -41,7 +41,9 @@ impl ApiHttpClient {
             .get(profile_id)
             .ok_or_else(|| FcpError::Config(format!("unknown API profile: {profile_id}")))?;
         if !profile.enabled {
-            return Err(FcpError::Config(format!("API profile disabled: {profile_id}")));
+            return Err(FcpError::Config(format!(
+                "API profile disabled: {profile_id}"
+            )));
         }
 
         let base_url_str = apply_template(&profile.base_url, params)?;
@@ -61,9 +63,8 @@ impl ApiHttpClient {
             let name = HeaderName::from_bytes(name_s.as_bytes()).map_err(|_| {
                 FcpError::Config(format!("invalid HTTP header name in API profile: {name_s}"))
             })?;
-            let value = HeaderValue::from_str(&val_s).map_err(|_| {
-                FcpError::Config("invalid HTTP header value in API profile".into())
-            })?;
+            let value = HeaderValue::from_str(&val_s)
+                .map_err(|_| FcpError::Config("invalid HTTP header value in API profile".into()))?;
             headers.insert(name, value);
         }
 
@@ -199,10 +200,7 @@ mod tests {
         let mut params = HashMap::new();
         params.insert("term".into(), "hello".into());
 
-        let body = client
-            .get_templated("test", &params)
-            .await
-            .expect("ok");
+        let body = client.get_templated("test", &params).await.expect("ok");
         assert_eq!(body, r#"{"ok":true}"#);
     }
 

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sysinfo::{Disks, System};
 
 use crate::config::AppConfig;
@@ -152,14 +152,28 @@ mod tests {
         };
         let args = serde_json::json!({});
 
-        let result = tool.execute(args).await.expect("system health tool should succeed");
-        let parsed: serde_json::Value = serde_json::from_str(&result).expect("result should be valid JSON");
+        let result = tool
+            .execute(args)
+            .await
+            .expect("system health tool should succeed");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&result).expect("result should be valid JSON");
 
         assert!(parsed.get("report_hint").is_some());
         assert!(parsed.get("fcp").is_some());
-        assert!(parsed.get("fcp").and_then(|x| x.get("chat_model")).is_some());
+        assert!(
+            parsed
+                .get("fcp")
+                .and_then(|x| x.get("chat_model"))
+                .is_some()
+        );
         assert!(parsed.get("cpu").and_then(|x| x.get("usage_pct")).is_some());
-        assert!(parsed.get("memory").and_then(|x| x.get("used_pct")).is_some());
+        assert!(
+            parsed
+                .get("memory")
+                .and_then(|x| x.get("used_pct"))
+                .is_some()
+        );
         assert!(parsed.get("ollama").is_some());
         let gpu = parsed.get("gpu").expect("gpu section");
         let nsmi = gpu.get("nvidia_smi").expect("gpu.nvidia_smi");
@@ -170,7 +184,10 @@ mod tests {
             );
             assert!(nsmi.get("available").is_some());
         } else {
-            assert!(nsmi.get("skipped").is_some(), "nvidia_smi skipped by default in unit tests");
+            assert!(
+                nsmi.get("skipped").is_some(),
+                "nvidia_smi skipped by default in unit tests"
+            );
         }
         assert!(parsed.get("host").is_some());
         assert!(parsed.get("disks").is_some());

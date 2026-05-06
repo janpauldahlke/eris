@@ -1,17 +1,19 @@
+use crate::config::AppConfig;
 use crate::executive::chat_session::StartedChatSession;
 use crate::executive::cli::{Cli, Commands};
 use crate::executive::error::{FcpError, Result};
 use crate::executive::setup_welder::IgnitionWorkspaceHint;
-use crate::config::AppConfig;
-use tokio_util::sync::CancellationToken;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
 async fn log_peripheral_shutdown(session: &mut StartedChatSession, config: &AppConfig) {
     let eris_owned_ollama = session.peripheral_lifecycle.started_ollama();
     tracing::info!("Tearing down peripheral daemons started by this session…");
     let stopped = session.peripheral_lifecycle.shutdown_async().await;
     if stopped.is_empty() {
-        tracing::info!("No managed peripheral child processes were stopped (Ollama/Qdrant were already running or not started by Eris).");
+        tracing::info!(
+            "No managed peripheral child processes were stopped (Ollama/Qdrant were already running or not started by Eris)."
+        );
     } else {
         tracing::info!(stopped = %stopped.join(", "), "Stopped managed peripheral child processes");
     }
@@ -23,15 +25,21 @@ async fn log_peripheral_shutdown(session: &mut StartedChatSession, config: &AppC
         );
         crate::executive::peripherals::unload_ollama_models_cli_best_effort(config).await;
     } else if config.unload_ollama_models_on_chat_exit && eris_owned_ollama {
-        tracing::debug!("Skipping `ollama stop`; managed Ollama server for this session was already torn down");
+        tracing::debug!(
+            "Skipping `ollama stop`; managed Ollama server for this session was already torn down"
+        );
     }
 }
 
-pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: CancellationToken) -> Result<()> {
+pub async fn execute_command(
+    cli: Cli,
+    config: Arc<AppConfig>,
+    cancel_token: CancellationToken,
+) -> Result<()> {
     match cli.command {
         Commands::Chat { web: _ } => {
-            use crate::executive::chat_session::{start_chat_session, ChatViewMode};
-            use crate::ui::terminal::{restore_terminal, setup_terminal, TuiApp};
+            use crate::executive::chat_session::{ChatViewMode, start_chat_session};
+            use crate::ui::terminal::{TuiApp, restore_terminal, setup_terminal};
             use tokio::sync::mpsc;
 
             let workspace_root = config.active_vault();
@@ -43,7 +51,12 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
 
             let seal_path = crate::vault_layout::seal(&workspace_root);
             let ignition_hint: IgnitionWorkspaceHint = if !seal_path.exists() {
-                crate::executive::setup_welder::run_welder_before_chat(&cli, config.as_ref(), &workspace_root).await?
+                crate::executive::setup_welder::run_welder_before_chat(
+                    &cli,
+                    config.as_ref(),
+                    &workspace_root,
+                )
+                .await?
             } else {
                 IgnitionWorkspaceHint::from_cli(&cli, &workspace_root)
             };
@@ -59,9 +72,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                 );
             }
             let mut discord_mux = if config.discord_sidecar_should_run() {
-                let (out_tx, out_rx) = mpsc::channel(
-                    config.discord.outbound_queue_capacity.max(1),
-                );
+                let (out_tx, out_rx) = mpsc::channel(config.discord.outbound_queue_capacity.max(1));
                 let (typing_tx, typing_rx) = mpsc::channel(8);
                 Some((out_tx, out_rx, typing_tx, typing_rx))
             } else {
@@ -82,10 +93,11 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                     .await;
 
                     let mut session = session_result?;
-                    let web_result = if let Some((dtx, drx, _typing_tx, typing_rx)) = discord_mux.take()
+                    let web_result = if let Some((dtx, drx, _typing_tx, typing_rx)) =
+                        discord_mux.take()
                     {
                         use crate::presentation::multiplex::{
-                            spawn_presentation_multiplex, PresentationMultiplexTargets,
+                            PresentationMultiplexTargets, spawn_presentation_multiplex,
                         };
                         use tokio::sync::broadcast;
 
@@ -179,7 +191,7 @@ pub async fn execute_command(cli: Cli, config: Arc<AppConfig>, cancel_token: Can
                     let result = if let Some((dtx, drx, _typing_tx, typing_rx)) = discord_mux.take()
                     {
                         use crate::presentation::multiplex::{
-                            spawn_presentation_multiplex, PresentationMultiplexTargets,
+                            PresentationMultiplexTargets, spawn_presentation_multiplex,
                         };
 
                         let (tui_tx, tui_rx) = mpsc::channel(256);
@@ -283,7 +295,7 @@ mod tests {
             test_config(),
             CancellationToken::new(),
         ));
-        
+
         assert!(result.is_err());
         match result.unwrap_err() {
             FcpError::Config(msg) => {
@@ -305,8 +317,10 @@ mod tests {
 
         cancel_token.cancelled().await;
         assert!(cancel_token.is_cancelled());
-        
-        let cmd = Commands::Run { prompt: "test".to_string() };
+
+        let cmd = Commands::Run {
+            prompt: "test".to_string(),
+        };
         let result = execute_command(test_cli(cmd), test_config(), cancel_token).await;
         assert!(result.is_ok());
     }
@@ -317,8 +331,8 @@ mod tests {
     #[tokio::test]
     async fn relay_submit_then_system_inject_orders_after_tool() {
         use std::collections::VecDeque;
-        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
         use async_trait::async_trait;
         use tokio::sync::mpsc;
@@ -327,9 +341,9 @@ mod tests {
         use crate::memory::ephemeral::EphemeralMemory;
         use crate::orchestrator::core::Orchestrator;
         use crate::orchestrator::state::AgentState;
+        use crate::presentation::{SYSTEM_ALARM_PREFIX, UserAction};
         use crate::tools::gatekeeper::Gatekeeper;
         use crate::tools::system::SystemHealthTool;
-        use crate::presentation::{UserAction, SYSTEM_ALARM_PREFIX};
 
         #[derive(Clone)]
         struct SeqEngine {
@@ -366,7 +380,8 @@ mod tests {
                     .to_string(),
                 r#"{"status":"Idle","tool_calls":[],"message_to_user":"done first turn"}"#
                     .to_string(),
-                r#"{"status":"Idle","tool_calls":[],"message_to_user":"alarm handled"}"#.to_string(),
+                r#"{"status":"Idle","tool_calls":[],"message_to_user":"alarm handled"}"#
+                    .to_string(),
             ]),
             calls: calls.clone(),
         };
@@ -439,9 +454,7 @@ mod tests {
                     }
                 }
                 UserAction::SubmitIngress(ing) => {
-                    let content = ing
-                        .for_model
-                        .unwrap_or_else(|| ing.display.clone());
+                    let content = ing.for_model.unwrap_or_else(|| ing.display.clone());
                     let trimmed = content.trim().to_string();
                     if !trimmed.is_empty() {
                         pending.push_back(trimmed);

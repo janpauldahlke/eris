@@ -2,11 +2,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine;
-use reqwest::header::{HeaderValue, CONTENT_LENGTH};
+use reqwest::header::{CONTENT_LENGTH, HeaderValue};
 
+use super::auth::GoogleAuth;
 use crate::config::GoogleConfig;
 use crate::executive::error::{FcpError, Result};
-use super::auth::GoogleAuth;
 
 const GMAIL_BASE: &str = "https://gmail.googleapis.com/gmail/v1/users/me";
 /// Gmail system label id for unread state.
@@ -34,11 +34,7 @@ impl GmailClient {
         Ok(Self { auth, http })
     }
 
-    pub async fn list_messages(
-        &self,
-        query: Option<&str>,
-        max_results: u32,
-    ) -> Result<String> {
+    pub async fn list_messages(&self, query: Option<&str>, max_results: u32) -> Result<String> {
         let token = self.auth.access_token().await?;
         let mut url = format!("{GMAIL_BASE}/messages?maxResults={max_results}");
         if let Some(q) = query {
@@ -206,12 +202,7 @@ impl GmailClient {
     /// POST with an empty body. Google's HTTPS front ends return **411** if `Content-Length` is
     /// missing on POST; reqwest may omit it for "no body" unless we set it explicitly (see
     /// [reqwest#2240](https://github.com/seanmonstar/reqwest/issues/2240)).
-    async fn gmail_post_empty(
-        &self,
-        url: &str,
-        token: &str,
-        tool_name: &str,
-    ) -> Result<String> {
+    async fn gmail_post_empty(&self, url: &str, token: &str, tool_name: &str) -> Result<String> {
         let resp = self
             .http
             .post(url)
@@ -261,8 +252,12 @@ impl GmailClient {
             "Gmail API error"
         );
         let reason = match status.as_u16() {
-            401 => "Gmail authentication failed — check service account credentials and domain-wide delegation",
-            403 => "Gmail authorization denied — service account may lack required scopes or delegation",
+            401 => {
+                "Gmail authentication failed — check service account credentials and domain-wide delegation"
+            }
+            403 => {
+                "Gmail authorization denied — service account may lack required scopes or delegation"
+            }
             404 => "Gmail resource not found — message ID may be invalid",
             429 => "Gmail rate limit exceeded — please wait before retrying",
             _ => "Gmail API returned an error",
@@ -300,10 +295,16 @@ async fn handle_gmail_response(resp: reqwest::Response, tool_name: &str) -> Resu
     );
 
     let reason = match status.as_u16() {
-        401 => "Gmail authentication failed — check service account credentials and domain-wide delegation",
-        403 => "Gmail authorization denied — service account may lack required scopes or delegation",
+        401 => {
+            "Gmail authentication failed — check service account credentials and domain-wide delegation"
+        }
+        403 => {
+            "Gmail authorization denied — service account may lack required scopes or delegation"
+        }
         404 => "Gmail resource not found — message ID may be invalid",
-        411 => "Gmail returned 411 Length Required — POST body/Content-Length mismatch (unexpected after client fix)",
+        411 => {
+            "Gmail returned 411 Length Required — POST body/Content-Length mismatch (unexpected after client fix)"
+        }
         429 => "Gmail rate limit exceeded — please wait before retrying",
         _ => "Gmail API returned an error",
     };
@@ -320,7 +321,8 @@ fn build_rfc2822(
     cc: Option<&str>,
     bcc: Option<&str>,
 ) -> String {
-    let mut msg = format!("To: {to}\r\nSubject: {subject}\r\nContent-Type: text/plain; charset=utf-8\r\n");
+    let mut msg =
+        format!("To: {to}\r\nSubject: {subject}\r\nContent-Type: text/plain; charset=utf-8\r\n");
     if let Some(cc_val) = cc {
         msg.push_str(&format!("Cc: {cc_val}\r\n"));
     }

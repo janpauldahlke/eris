@@ -1,12 +1,12 @@
-use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::executive::error::{FcpError, Result};
-use crate::memory::ephemeral::{is_web_artifact_staging, CacheValue, EphemeralMemory};
+use crate::memory::ephemeral::{CacheValue, EphemeralMemory, is_web_artifact_staging};
 use crate::memory::semantic::SemanticBrain;
 use crate::memory::types::{EpistemicStatus, VaultKind};
 use crate::tools::traits::Tool;
@@ -47,17 +47,19 @@ pub async fn write_revisioned_vault_entry(
     match entry.kind {
         VaultKind::Synthesis => {
             // Revisioned zettel: 30_Synthesis/<node_id>/rXXXX.md
-            let node_dir = workspace_root
-                .join(target_dir_name)
-                .join(&entry.node_id);
-            tokio::fs::create_dir_all(&node_dir).await.map_err(FcpError::Io)?;
+            let node_dir = workspace_root.join(target_dir_name).join(&entry.node_id);
+            tokio::fs::create_dir_all(&node_dir)
+                .await
+                .map_err(FcpError::Io)?;
 
             let rev = next_revision_number(&node_dir).await;
             let filename = format!("r{:04}.md", rev);
             let path = node_dir.join(&filename);
 
             let frontmatter = build_frontmatter(entry, now, rev, true);
-            tokio::fs::write(&path, frontmatter).await.map_err(FcpError::Io)?;
+            tokio::fs::write(&path, frontmatter)
+                .await
+                .map_err(FcpError::Io)?;
 
             // Mark previous head as non-current
             if rev > 1 {
@@ -77,7 +79,9 @@ pub async fn write_revisioned_vault_entry(
         VaultKind::Topology | VaultKind::Discourse => {
             // Non-revisioned: flat file in target dir
             let dir = workspace_root.join(target_dir_name);
-            tokio::fs::create_dir_all(&dir).await.map_err(FcpError::Io)?;
+            tokio::fs::create_dir_all(&dir)
+                .await
+                .map_err(FcpError::Io)?;
 
             let sanitized = entry
                 .title
@@ -86,7 +90,9 @@ pub async fn write_revisioned_vault_entry(
             let path = dir.join(&filename);
 
             let frontmatter = build_frontmatter(entry, now, 1, false);
-            tokio::fs::write(&path, frontmatter).await.map_err(FcpError::Io)?;
+            tokio::fs::write(&path, frontmatter)
+                .await
+                .map_err(FcpError::Io)?;
 
             let vault_key = format!("{}/{}", target_dir_name, filename);
             tracing::info!(
@@ -148,7 +154,9 @@ async fn mark_previous_revisions_non_current(node_dir: &std::path::Path, current
         while let Ok(Some(entry)) = entries.next_entry().await {
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
-            if let Some(num_str) = name_str.strip_prefix('r').and_then(|s| s.strip_suffix(".md"))
+            if let Some(num_str) = name_str
+                .strip_prefix('r')
+                .and_then(|s| s.strip_suffix(".md"))
                 && let Ok(n) = num_str.parse::<u32>()
                 && n < current_rev
             {
@@ -179,35 +187,31 @@ impl Tool for MemoryCommitTool {
     }
 
     async fn execute(&self, args: Value) -> Result<String> {
-        let args: MemoryCommitArgs =
-            serde_json::from_value(args).map_err(FcpError::ParseFault)?;
+        let args: MemoryCommitArgs = serde_json::from_value(args).map_err(FcpError::ParseFault)?;
 
-        let (entry, lookup_ref) = if let Some(staged_id) =
-            args.staged_id.as_deref().filter(|s| !s.trim().is_empty())
-        {
-            let entry = self.ephemeral.get_by_id(staged_id).await.ok_or_else(|| {
-                FcpError::ToolFault {
+        let (entry, lookup_ref) =
+            if let Some(staged_id) = args.staged_id.as_deref().filter(|s| !s.trim().is_empty()) {
+                let entry = self.ephemeral.get_by_id(staged_id).await.ok_or_else(|| {
+                    FcpError::ToolFault {
+                        tool_name: self.name().into(),
+                        reason: format!("No staged memory found for staged_id: {}", staged_id),
+                    }
+                })?;
+                (entry, staged_id.to_string())
+            } else if let Some(title) = args.title.as_deref().filter(|s| !s.trim().is_empty()) {
+                let entry = self.ephemeral.get_by_title(title).await.ok_or_else(|| {
+                    FcpError::ToolFault {
+                        tool_name: self.name().into(),
+                        reason: format!("No staged memory found for title: {}", title),
+                    }
+                })?;
+                (entry, title.to_string())
+            } else {
+                return Err(FcpError::ToolFault {
                     tool_name: self.name().into(),
-                    reason: format!("No staged memory found for staged_id: {}", staged_id),
-                }
-            })?;
-            (entry, staged_id.to_string())
-        } else if let Some(title) =
-            args.title.as_deref().filter(|s| !s.trim().is_empty())
-        {
-            let entry = self.ephemeral.get_by_title(title).await.ok_or_else(|| {
-                FcpError::ToolFault {
-                    tool_name: self.name().into(),
-                    reason: format!("No staged memory found for title: {}", title),
-                }
-            })?;
-            (entry, title.to_string())
-        } else {
-            return Err(FcpError::ToolFault {
-                tool_name: self.name().into(),
-                reason: "Either staged_id or title is required".to_string(),
-            });
-        };
+                    reason: "Either staged_id or title is required".to_string(),
+                });
+            };
 
         if is_web_artifact_staging(&entry.tags, &entry.title) {
             self.ephemeral.cache.invalidate(&entry.staged_id).await;
@@ -324,11 +328,10 @@ mod tests {
         assert!(key2.contains("r0002.md"));
 
         // r0001 should now have is_current: false
-        let r1_content = tokio::fs::read_to_string(
-            workspace_root.join("30_Synthesis/node-evolve/r0001.md"),
-        )
-        .await
-        .unwrap();
+        let r1_content =
+            tokio::fs::read_to_string(workspace_root.join("30_Synthesis/node-evolve/r0001.md"))
+                .await
+                .unwrap();
         assert!(r1_content.contains("is_current: false"));
     }
 
@@ -367,6 +370,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(vault_key, "10_Topology/discord_config.md");
-        assert!(workspace_root.join("10_Topology/discord_config.md").exists());
+        assert!(
+            workspace_root
+                .join("10_Topology/discord_config.md")
+                .exists()
+        );
     }
 }

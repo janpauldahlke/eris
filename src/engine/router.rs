@@ -1,7 +1,7 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RouterState {
     Content,
-    MatchThink(usize),    // Tracks matched bytes of "<think>"
+    MatchThink(usize), // Tracks matched bytes of "<think>"
     Thought,
     MatchEndThink(usize), // Tracks matched bytes of "</think>"
 }
@@ -52,9 +52,11 @@ impl ReasoningRouter {
                         self.content_buffer.push(byte);
                         if matched + 1 == think_tag.len() {
                             self.state = RouterState::Thought;
-                            self.content_buffer.truncate(self.content_buffer.len() - think_tag.len());
+                            self.content_buffer
+                                .truncate(self.content_buffer.len() - think_tag.len());
                             if !self.content_buffer.is_empty() {
-                                let content = String::from_utf8_lossy(&self.content_buffer).into_owned();
+                                let content =
+                                    String::from_utf8_lossy(&self.content_buffer).into_owned();
                                 events.push(FsmEvent::Content(content));
                                 self.content_buffer.clear();
                             }
@@ -78,9 +80,11 @@ impl ReasoningRouter {
                         self.content_buffer.push(byte);
                         if matched + 1 == end_think_tag.len() {
                             self.state = RouterState::Content;
-                            self.content_buffer.truncate(self.content_buffer.len() - end_think_tag.len());
+                            self.content_buffer
+                                .truncate(self.content_buffer.len() - end_think_tag.len());
                             if !self.content_buffer.is_empty() {
-                                let thought = String::from_utf8_lossy(&self.content_buffer).into_owned();
+                                let thought =
+                                    String::from_utf8_lossy(&self.content_buffer).into_owned();
                                 events.push(FsmEvent::Thought(thought));
                                 self.content_buffer.clear();
                             }
@@ -145,9 +149,12 @@ mod tests {
     fn test_router_disabled_bypasses_fsm() {
         let mut router = ReasoningRouter::new(false);
         let events = router.process_chunk("Hello <think>world</think>!");
-        
+
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0], FsmEvent::Content("Hello <think>world</think>!".to_string()));
+        assert_eq!(
+            events[0],
+            FsmEvent::Content("Hello <think>world</think>!".to_string())
+        );
     }
 
     #[test]

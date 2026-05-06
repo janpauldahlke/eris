@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use reqwest::header::CONTENT_TYPE;
 
-use crate::executive::error::{FcpError, Result};
 use super::auth::GoogleAuth;
+use crate::executive::error::{FcpError, Result};
 
 const CALENDAR_BASE: &str = "https://www.googleapis.com/calendar/v3";
 
@@ -88,7 +88,8 @@ impl CalendarClient {
         let cal = encode_path_segment(calendar_id);
         let ev = encode_path_segment(event_id);
         let url = format!("{CALENDAR_BASE}/calendars/{cal}/events/{ev}");
-        self.calendar_patch_json(&url, &token, body, tool_name).await
+        self.calendar_patch_json(&url, &token, body, tool_name)
+            .await
     }
 
     pub async fn delete_event(
@@ -238,8 +239,12 @@ async fn handle_calendar_response(resp: reqwest::Response, tool_name: &str) -> R
 
 fn calendar_error_reason(status: u16) -> &'static str {
     match status {
-        401 => "Calendar authentication failed — check service account credentials and domain-wide delegation (include https://www.googleapis.com/auth/calendar)",
-        403 => "Calendar authorization denied — verify Calendar API is enabled and scopes are delegated",
+        401 => {
+            "Calendar authentication failed — check service account credentials and domain-wide delegation (include https://www.googleapis.com/auth/calendar)"
+        }
+        403 => {
+            "Calendar authorization denied — verify Calendar API is enabled and scopes are delegated"
+        }
         404 => "Calendar or event not found — check calendar_id and event_id",
         429 => "Calendar rate limit exceeded — wait before retrying",
         _ => "Google Calendar API returned an error",

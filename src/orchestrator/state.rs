@@ -83,7 +83,11 @@ impl LlmResponse {
         self.status.unwrap_or_else(|| {
             if !self.tool_calls.is_empty() {
                 LoopAction::Reflect
-            } else if self.message_to_user.as_ref().is_some_and(|m| !m.trim().is_empty()) {
+            } else if self
+                .message_to_user
+                .as_ref()
+                .is_some_and(|m| !m.trim().is_empty())
+            {
                 LoopAction::Idle
             } else {
                 LoopAction::Task
@@ -142,7 +146,7 @@ mod tests {
         assert_eq!(response.status(), LoopAction::Task);
         assert_eq!(response.tool_calls.len(), 1);
         assert_eq!(response.tool_calls[0].name, "vault:write");
-        
+
         let expected_args = serde_json::json!({
             "path": "test.md"
         });

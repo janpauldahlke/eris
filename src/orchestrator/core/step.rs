@@ -27,9 +27,8 @@ impl<E: LlmEngine> Orchestrator<E> {
     /// generation per user turn unless interrupted.
     #[allow(clippy::never_loop)]
     pub async fn step(&mut self, _user_input: Option<String>) -> Result<()> {
-        let _promotion_hold = PromotionSuppressedDuringStep::arm(
-            self.promotion_suppressed_during_step.clone(),
-        );
+        let _promotion_hold =
+            PromotionSuppressedDuringStep::arm(self.promotion_suppressed_during_step.clone());
         self.turn_seq = self.turn_seq.saturating_add(1);
         let turn_seq = self.turn_seq;
         // No `info_span!().entered()` here: `EnteredSpan` is not `Send` and `step()` awaits
@@ -66,7 +65,10 @@ impl<E: LlmEngine> Orchestrator<E> {
             return self.handle_empty_user_turn().await;
         }
 
-        if self.maybe_run_deterministic_agenda_complete(step_start).await? {
+        if self
+            .maybe_run_deterministic_agenda_complete(step_start)
+            .await?
+        {
             return Ok(());
         }
 
@@ -75,6 +77,10 @@ impl<E: LlmEngine> Orchestrator<E> {
         let mut execution_ledger: HashMap<String, ToolIntentTicket> = HashMap::new();
         let mut schema_recovery_attempted: HashSet<String> = HashSet::new();
         let mut targeted_tools: HashSet<String> = HashSet::new();
+        // Once true, keep appending `00_Invariants/Moltbook.md` for every inner LLM round in
+        // this `step()`, so later recovery/tool rounds do not drop the overlay after JIT or
+        // `targeted_tools` shift mid-loop.
+        let mut moltbook_overlay_latched = false;
 
         // ── Tool-enabled loop (full schemas) ─────────────────────────
         loop {
@@ -87,17 +93,14 @@ impl<E: LlmEngine> Orchestrator<E> {
                 );
                 let notice = format!(
                     "[fcp] Recovery budget exhausted ({} of {} recovery passes this turn). The assistant is idle — send a new message or simplify the request.",
-                    self.recovery_count,
-                    self.max_recovery_attempts,
+                    self.recovery_count, self.max_recovery_attempts,
                 );
                 self.state = AgentState::Idle;
                 self.recovery_count = 0;
                 self.tool_rounds = 0;
                 self.activity_line = None;
                 if let Some(tx) = &self.presentation_tx {
-                    let _ = tx
-                        .send(SessionEvent::SystemError(notice))
-                        .await;
+                    let _ = tx.send(SessionEvent::SystemError(notice)).await;
                 }
                 if self.presentation_tx.is_some() {
                     self.emit_assistant_deck_line(RECOVERY_BUDGET_EXHAUSTED_DECK_LINE)
@@ -119,19 +122,14 @@ impl<E: LlmEngine> Orchestrator<E> {
                     );
                     let notice = format!(
                         "[fcp] Per-turn tool budget exhausted ({} successful tool runs; max {}). Forcing one final reply without tools — say **continue** if you need more.",
-                        self.tool_rounds,
-                        self.max_tool_rounds
+                        self.tool_rounds, self.max_tool_rounds
                     );
                     if let Some(tx) = &self.presentation_tx {
-                        let _ = tx
-                            .send(SessionEvent::SystemError(notice))
-                            .await;
+                        let _ = tx.send(SessionEvent::SystemError(notice)).await;
                     }
                     let guidance = format!(
                         "{}\n\n(Current turn: {} successful tool executions; configured maximum per user turn is {}.)",
-                        TOOL_ROUND_CAP_SYSTEM_GUIDANCE,
-                        self.tool_rounds,
-                        self.max_tool_rounds
+                        TOOL_ROUND_CAP_SYSTEM_GUIDANCE, self.tool_rounds, self.max_tool_rounds
                     );
                     self.chat_stack.push(crate::engine::Message {
                         role: "system".to_string(),
@@ -149,10 +147,24 @@ impl<E: LlmEngine> Orchestrator<E> {
                 && tools_needed
                 && targeted_tools.is_empty()
                 && !self.force_full_tool_schemas_in_llm_view;
+            let moltbook_overlay_base = self
+                .last_user_content()
+                .to_ascii_lowercase()
+                .contains("moltbook")
+                || pre_llm_matched_tools
+                    .iter()
+                    .any(|name| name.starts_with("moltbook:"))
+                || targeted_tools
+                    .iter()
+                    .any(|name| name.starts_with("moltbook:"));
+            if moltbook_overlay_base {
+                moltbook_overlay_latched = true;
+            }
+            let moltbook_overlay = moltbook_overlay_latched;
 
             let system_prompt = if !tools_needed {
                 self.context_assembler
-                    .assemble_conversational(&self.state, &self.ephemeral)
+                    .assemble_conversational(&self.state, &self.ephemeral, moltbook_overlay)
                     .await?
             } else if !targeted_tools.is_empty() {
                 let tool_names = targeted_tools.iter().cloned().collect::<Vec<_>>();
@@ -162,6 +174,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                         &self.ephemeral,
                         &self.gatekeeper,
                         &tool_names,
+                        moltbook_overlay,
                     )
                     .await?
             } else if slim_assembly {
@@ -191,11 +204,17 @@ impl<E: LlmEngine> Orchestrator<E> {
                         &self.gatekeeper,
                         descriptors,
                         &offered,
+                        moltbook_overlay,
                     )
                     .await?
             } else {
                 self.context_assembler
-                    .assemble(&self.state, &self.ephemeral, &self.gatekeeper)
+                    .assemble(
+                        &self.state,
+                        &self.ephemeral,
+                        &self.gatekeeper,
+                        moltbook_overlay,
+                    )
                     .await?
             };
             tracing::debug!(prompt_len = system_prompt.len(), "System prompt assembled");
@@ -224,8 +243,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                     .config
                     .optimize_context_proactive_condensation_ratio
                     .clamp(0.05, 1.0);
-                let threshold_line =
-                    (self.num_ctx as f32 * active_ratio * ratio).max(1.0) as usize;
+                let threshold_line = (self.num_ctx as f32 * active_ratio * ratio).max(1.0) as usize;
                 if est > threshold_line {
                     tracing::info!(
                         target: "fcp.context_view",
@@ -241,7 +259,10 @@ impl<E: LlmEngine> Orchestrator<E> {
                 }
             }
 
-            tracing::info!(chat_stack_len = self.chat_stack.len(), "Sending to LLM engine");
+            tracing::info!(
+                chat_stack_len = self.chat_stack.len(),
+                "Sending to LLM engine"
+            );
 
             // 3. Engine Generation (build view before select! so the interrupt branch can borrow `self.interrupt_rx`.)
             let view_settings = self.llm_view_settings();
@@ -292,7 +313,12 @@ impl<E: LlmEngine> Orchestrator<E> {
 
             let response = match response_result {
                 Ok(res) => {
-                    tracing::info!(prompt_tokens = res.prompt_tokens, generated_tokens = res.generated_tokens, content_len = res.content.len(), "LLM response received");
+                    tracing::info!(
+                        prompt_tokens = res.prompt_tokens,
+                        generated_tokens = res.generated_tokens,
+                        content_len = res.content.len(),
+                        "LLM response received"
+                    );
                     tracing::debug!(raw_content = %res.content, "LLM raw output");
                     res
                 }

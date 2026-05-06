@@ -2,7 +2,7 @@ use crate::engine::LlmEngine;
 #[cfg(test)]
 use crate::executive::error::FcpError;
 #[cfg(test)]
-use crate::orchestrator::r#loop::recovery_policy::{classify_tool_failure, ToolFailureAction};
+use crate::orchestrator::r#loop::recovery_policy::{ToolFailureAction, classify_tool_failure};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -80,11 +80,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             .find(|c: char| c.is_whitespace() || c == ']')
             .unwrap_or(rest.len());
         let id = rest.get(..end)?.trim();
-        if id.is_empty() {
-            None
-        } else {
-            Some(id)
-        }
+        if id.is_empty() { None } else { Some(id) }
     }
 
     /// Looks for a prior user line (excluding the latest user message) containing `AGENDA_CONFIRM`.
@@ -140,10 +136,13 @@ impl<E: LlmEngine> Orchestrator<E> {
             if first.role == "system" {
                 first.content = prompt;
             } else {
-                chat_stack.insert(0, crate::engine::Message {
-                    role: "system".to_string(),
-                    content: prompt,
-                });
+                chat_stack.insert(
+                    0,
+                    crate::engine::Message {
+                        role: "system".to_string(),
+                        content: prompt,
+                    },
+                );
             }
         } else {
             chat_stack.push(crate::engine::Message {

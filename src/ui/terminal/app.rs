@@ -1,14 +1,16 @@
-use tokio::sync::{mpsc, watch};
 use crate::engine::token_metrics::LlmTokenSnapshot;
-use crate::executive::error::{Result, FcpError};
-use crate::presentation::{AlarmPayload, AgentStateUpdate, InputSource, SessionEvent, UserAction, UserIngress};
+use crate::executive::error::{FcpError, Result};
+use crate::presentation::{
+    AgentStateUpdate, AlarmPayload, InputSource, SessionEvent, UserAction, UserIngress,
+};
 use crossterm::event::{Event as CrosstermEvent, EventStream, KeyCode};
-use tokio_stream::StreamExt;
-use std::time::Duration;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use std::io::Stdout;
+use std::time::Duration;
 use std::time::Instant;
+use tokio::sync::{mpsc, watch};
+use tokio_stream::StreamExt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActivePane {
@@ -210,10 +212,7 @@ impl TuiApp {
                     self.chat_follow_latest = true;
                     let normalized = trimmed.to_lowercase();
                     let now = Instant::now();
-                    let queued = self
-                        .state
-                        .queued_inputs
-                        .max(self.pending_inputs);
+                    let queued = self.state.queued_inputs.max(self.pending_inputs);
                     let busy = self.state.state != crate::orchestrator::state::AgentState::Idle
                         || queued > 0;
                     if busy {
@@ -221,14 +220,18 @@ impl TuiApp {
                             && *last_text == normalized
                             && now.duration_since(*last_time) <= Duration::from_secs(3)
                         {
-                            self.system_messages.push("[ui] Duplicate input suppressed while busy".to_string());
+                            self.system_messages
+                                .push("[ui] Duplicate input suppressed while busy".to_string());
                             return;
                         }
                         if self.pending_inputs >= 3 {
                             self.system_messages.push("[ui] Queue full (3). Keeping latest, dropping oldest queued input.".to_string());
                             self.pending_inputs = 2;
                         }
-                        self.system_messages.push(format!("[ui] Assistant busy. Message queued ({} pending).", self.pending_inputs + 1));
+                        self.system_messages.push(format!(
+                            "[ui] Assistant busy. Message queued ({} pending).",
+                            self.pending_inputs + 1
+                        ));
                     }
                     self.last_submit = Some((normalized, now));
                     self.pending_inputs += 1;
@@ -245,7 +248,8 @@ impl TuiApp {
             }
             KeyCode::Esc => {
                 let _ = self.action_tx.send(UserAction::CancelCurrentTurn).await;
-                self.system_messages.push("[ui] Cancel requested (Esc)".to_string());
+                self.system_messages
+                    .push("[ui] Cancel requested (Esc)".to_string());
             }
             KeyCode::Char(c) => {
                 self.input.push(c);
@@ -261,46 +265,50 @@ impl TuiApp {
                     ActivePane::CommandDeck => ActivePane::Main,
                 };
             }
-            KeyCode::Up | KeyCode::PageUp => {
-                match self.active_pane {
-                    ActivePane::Main => {
-                        self.chat_follow_latest = false;
-                        self.chat_scroll = self.chat_scroll.saturating_sub(1);
-                        tracing::debug!(
-                            event = "UI_SCROLL_MAIN_UP",
-                            follow_latest = self.chat_follow_latest,
-                            chat_scroll = self.chat_scroll,
-                            "Main deck scrolled up"
-                        );
-                    }
-                    ActivePane::Telemetry => self.telemetry_scroll = self.telemetry_scroll.saturating_sub(1),
-                    ActivePane::SystemErrors => self.system_errors_scroll = self.system_errors_scroll.saturating_sub(1),
-                    ActivePane::CommandDeck => {
-                        self.command_deck_follow_latest = false;
-                        self.command_deck_scroll = self.command_deck_scroll.saturating_sub(1);
-                    }
+            KeyCode::Up | KeyCode::PageUp => match self.active_pane {
+                ActivePane::Main => {
+                    self.chat_follow_latest = false;
+                    self.chat_scroll = self.chat_scroll.saturating_sub(1);
+                    tracing::debug!(
+                        event = "UI_SCROLL_MAIN_UP",
+                        follow_latest = self.chat_follow_latest,
+                        chat_scroll = self.chat_scroll,
+                        "Main deck scrolled up"
+                    );
                 }
-            }
-            KeyCode::Down | KeyCode::PageDown => {
-                match self.active_pane {
-                    ActivePane::Main => {
-                        self.chat_follow_latest = false;
-                        self.chat_scroll = self.chat_scroll.saturating_add(1);
-                        tracing::debug!(
-                            event = "UI_SCROLL_MAIN_DOWN",
-                            follow_latest = self.chat_follow_latest,
-                            chat_scroll = self.chat_scroll,
-                            "Main deck scrolled down"
-                        );
-                    }
-                    ActivePane::Telemetry => self.telemetry_scroll = self.telemetry_scroll.saturating_add(1),
-                    ActivePane::SystemErrors => self.system_errors_scroll = self.system_errors_scroll.saturating_add(1),
-                    ActivePane::CommandDeck => {
-                        self.command_deck_follow_latest = false;
-                        self.command_deck_scroll = self.command_deck_scroll.saturating_add(1);
-                    }
+                ActivePane::Telemetry => {
+                    self.telemetry_scroll = self.telemetry_scroll.saturating_sub(1)
                 }
-            }
+                ActivePane::SystemErrors => {
+                    self.system_errors_scroll = self.system_errors_scroll.saturating_sub(1)
+                }
+                ActivePane::CommandDeck => {
+                    self.command_deck_follow_latest = false;
+                    self.command_deck_scroll = self.command_deck_scroll.saturating_sub(1);
+                }
+            },
+            KeyCode::Down | KeyCode::PageDown => match self.active_pane {
+                ActivePane::Main => {
+                    self.chat_follow_latest = false;
+                    self.chat_scroll = self.chat_scroll.saturating_add(1);
+                    tracing::debug!(
+                        event = "UI_SCROLL_MAIN_DOWN",
+                        follow_latest = self.chat_follow_latest,
+                        chat_scroll = self.chat_scroll,
+                        "Main deck scrolled down"
+                    );
+                }
+                ActivePane::Telemetry => {
+                    self.telemetry_scroll = self.telemetry_scroll.saturating_add(1)
+                }
+                ActivePane::SystemErrors => {
+                    self.system_errors_scroll = self.system_errors_scroll.saturating_add(1)
+                }
+                ActivePane::CommandDeck => {
+                    self.command_deck_follow_latest = false;
+                    self.command_deck_scroll = self.command_deck_scroll.saturating_add(1);
+                }
+            },
             KeyCode::End => {
                 match self.active_pane {
                     ActivePane::Main => self.chat_follow_latest = true,

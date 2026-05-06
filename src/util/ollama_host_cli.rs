@@ -4,9 +4,15 @@
 //! surface the Ollama GUI, and headless agents lack Ollama entirely.
 
 fn ci_like_environment() -> bool {
-    ["CI", "GITHUB_ACTIONS", "JENKINS_URL", "GITLAB_CI", "BUILD_BUILDID"]
-        .into_iter()
-        .any(|key| std::env::var(key).is_ok())
+    [
+        "CI",
+        "GITHUB_ACTIONS",
+        "JENKINS_URL",
+        "GITLAB_CI",
+        "BUILD_BUILDID",
+    ]
+    .into_iter()
+    .any(|key| std::env::var(key).is_ok())
 }
 
 /// Returns true if Eris may run the host `ollama` executable (e.g. `ollama ps`, `ollama stop`).

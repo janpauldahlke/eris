@@ -154,4 +154,4 @@
 - [x] fix firefox gtk errors for eris chat --web
 - [/] reddit integration -> unablke to register on reddit since the capture hell
 - [x] moltbook integration
-- 
+- [x] moltoobk autonomy skill implemented

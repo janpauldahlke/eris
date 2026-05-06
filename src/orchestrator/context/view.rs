@@ -7,7 +7,9 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::engine::Message;
-use crate::orchestrator::llm_support::json_envelope::{parse_llm_response_protocol, split_leading_json_object};
+use crate::orchestrator::llm_support::json_envelope::{
+    parse_llm_response_protocol, split_leading_json_object,
+};
 use crate::tools::ToolContextViewHint;
 
 use super::resolved_tool_recovery::apply_omit_resolved_tool_recovery;
@@ -62,8 +64,8 @@ pub fn slim_tool_definitions_inner(inner_json: &str) -> Result<(String, SlimTool
         }
         slim.push(item);
     }
-    let pretty = serde_json::to_string_pretty(&slim)
-        .map_err(|e| format!("tool defs serialize: {e}"))?;
+    let pretty =
+        serde_json::to_string_pretty(&slim).map_err(|e| format!("tool defs serialize: {e}"))?;
     let count = names.len();
     let names_joined = names.join(", ");
     let names_for_log = cap_log_string(&names_joined, LOG_TOOL_NAMES_MAX_CHARS);
@@ -83,7 +85,9 @@ pub fn slim_tool_definitions_inner(inner_json: &str) -> Result<(String, SlimTool
     ))
 }
 
-fn try_slim_tool_definitions_in_system_content(content: &str) -> Option<(String, SlimToolDefsMeta)> {
+fn try_slim_tool_definitions_in_system_content(
+    content: &str,
+) -> Option<(String, SlimToolDefsMeta)> {
     if !content.contains(FCP_TOOL_DEFS_BEGIN) || !content.contains(FCP_TOOL_DEFS_END) {
         return None;
     }
@@ -211,11 +215,7 @@ fn compact_assistant_json(content: &str) -> Option<String> {
         out.push_str("Invoked tools: ");
         out.push_str(&names.join(", "));
     }
-    if out.is_empty() {
-        None
-    } else {
-        Some(out)
-    }
+    if out.is_empty() { None } else { Some(out) }
 }
 
 fn approx_stack_chars(messages: &[Message]) -> usize {
@@ -273,7 +273,8 @@ pub fn build_llm_view(messages: &[Message], settings: &ContextViewSettings) -> V
 
         if m.role == "system"
             && !settings.full_tool_schemas_in_llm_view
-            && let Some((new_content, meta)) = try_slim_tool_definitions_in_system_content(&m.content)
+            && let Some((new_content, meta)) =
+                try_slim_tool_definitions_in_system_content(&m.content)
         {
             let before_len = m.content.len();
             let after_len = new_content.len();
@@ -306,8 +307,13 @@ pub fn build_llm_view(messages: &[Message], settings: &ContextViewSettings) -> V
                 .get(tool_name)
                 .copied()
                 .unwrap_or(ToolContextViewHint::Default);
-            let new_content =
-                rewrite_tool_line(&m.content, tool_name, body, hint, settings.default_snippet_chars);
+            let new_content = rewrite_tool_line(
+                &m.content,
+                tool_name,
+                body,
+                hint,
+                settings.default_snippet_chars,
+            );
             if new_content != m.content {
                 rewritten += 1;
             }
@@ -342,7 +348,9 @@ mod tests {
     use crate::orchestrator::context::resolved_tool_recovery::OMIT_RESOLVED_TOOL_RECOVERY_PLACEHOLDER;
     use crate::orchestrator::context::stack_lines::format_tool_success_line;
 
-    fn hint_map(names: &[(&str, ToolContextViewHint)]) -> Arc<HashMap<String, ToolContextViewHint>> {
+    fn hint_map(
+        names: &[(&str, ToolContextViewHint)],
+    ) -> Arc<HashMap<String, ToolContextViewHint>> {
         Arc::new(
             names
                 .iter()
@@ -597,6 +605,11 @@ mod tests {
         );
         let tool_line = v.iter().find(|m| m.content.contains("[tool] t:1 ok"));
         assert!(tool_line.is_some());
-        assert!(tool_line.expect("tool line").content.contains("… [truncated]"));
+        assert!(
+            tool_line
+                .expect("tool line")
+                .content
+                .contains("… [truncated]")
+        );
     }
 }

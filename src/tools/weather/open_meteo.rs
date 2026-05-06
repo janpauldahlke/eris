@@ -3,10 +3,10 @@
 use std::collections::HashMap;
 
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::util::ApiHttpClient;
 use crate::executive::error::{FcpError, Result};
+use crate::util::ApiHttpClient;
 
 pub const PROFILE_GEOCODE: &str = "open_meteo_geocode";
 pub const PROFILE_GEOCODE_CC: &str = "open_meteo_geocode_cc";
@@ -31,7 +31,10 @@ struct GeocodeHit {
 
 pub fn map_api_err(tool_name: &'static str, e: FcpError) -> FcpError {
     match e {
-        FcpError::ToolFault { tool_name: tn, reason } if tn == "api_client" => FcpError::ToolFault {
+        FcpError::ToolFault {
+            tool_name: tn,
+            reason,
+        } if tn == "api_client" => FcpError::ToolFault {
             tool_name: tool_name.to_string(),
             reason,
         },

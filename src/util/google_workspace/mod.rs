@@ -31,11 +31,8 @@ pub async fn workspace_auth(config: &GoogleConfig) -> Result<Option<Arc<GoogleAu
     let user = config.impersonate_user.as_deref().ok_or_else(|| {
         FcpError::Config("google.enabled=true but impersonate_user is missing".into())
     })?;
-    let auth = GoogleAuth::from_service_account_key(
-        key_path.as_path(),
-        user,
-        GOOGLE_WORKSPACE_API_SCOPES,
-    )
-    .await?;
+    let auth =
+        GoogleAuth::from_service_account_key(key_path.as_path(), user, GOOGLE_WORKSPACE_API_SCOPES)
+            .await?;
     Ok(Some(Arc::new(auth)))
 }

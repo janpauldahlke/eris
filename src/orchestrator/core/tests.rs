@@ -7,10 +7,10 @@ use crate::orchestrator::context::ContextViewSettings;
 use crate::orchestrator::state::{AgentState, LoopDirective};
 use crate::presentation::SessionEvent;
 use crate::tools::Gatekeeper;
-use std::path::Path;
 use async_trait::async_trait;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::sync::mpsc;
 
 #[derive(Clone)]
@@ -355,15 +355,20 @@ fn test_tool_fingerprint_canonicalizes_object_key_order() {
 #[test]
 fn test_schema_or_parse_error_detection() {
     let schema_err = crate::executive::error::FcpError::SchemaViolation("bad args".to_string());
-    let parse_err =
-        crate::executive::error::FcpError::ParseFault(serde_json::Error::io(std::io::Error::other(
-            "bad json",
-        )));
+    let parse_err = crate::executive::error::FcpError::ParseFault(serde_json::Error::io(
+        std::io::Error::other("bad json"),
+    ));
     let net_err = crate::executive::error::FcpError::NetworkFault("offline".to_string());
 
-    assert!(Orchestrator::<MockEngine>::is_schema_or_parse_tool_error(&schema_err));
-    assert!(Orchestrator::<MockEngine>::is_schema_or_parse_tool_error(&parse_err));
-    assert!(!Orchestrator::<MockEngine>::is_schema_or_parse_tool_error(&net_err));
+    assert!(Orchestrator::<MockEngine>::is_schema_or_parse_tool_error(
+        &schema_err
+    ));
+    assert!(Orchestrator::<MockEngine>::is_schema_or_parse_tool_error(
+        &parse_err
+    ));
+    assert!(!Orchestrator::<MockEngine>::is_schema_or_parse_tool_error(
+        &net_err
+    ));
 }
 
 #[tokio::test]
@@ -560,7 +565,9 @@ async fn test_async_guillotine_interrupts_generation() {
         .await
         .unwrap();
     let agenda_content = r#"[{"id": "1234", "created_at": 123456, "description": "Test agenda task", "status": "pending"}]"#;
-    tokio::fs::write(&agenda_path, agenda_content).await.unwrap();
+    tokio::fs::write(&agenda_path, agenda_content)
+        .await
+        .unwrap();
 
     let (tx, rx) = tokio::sync::watch::channel(());
     let (id_tx, id_rx) = tokio::sync::watch::channel(Arc::from("test identity"));
@@ -612,8 +619,16 @@ async fn test_async_guillotine_interrupts_generation() {
     assert!(orchestrator.saved_chat_state.is_some());
     assert_eq!(orchestrator.saved_chat_state.unwrap()[1].content, "hello");
     assert_eq!(orchestrator.chat_stack.len(), 1);
-    assert!(orchestrator.chat_stack[0].content.contains("Test agenda task"));
-    assert!(orchestrator.chat_stack[0].content.contains("agenda:complete"));
+    assert!(
+        orchestrator.chat_stack[0]
+            .content
+            .contains("Test agenda task")
+    );
+    assert!(
+        orchestrator.chat_stack[0]
+            .content
+            .contains("agenda:complete")
+    );
 }
 
 #[tokio::test]
@@ -633,19 +648,12 @@ async fn test_duplicate_only_batch_halts_without_extra_generation() {
             _stream_tx: Option<mpsc::UnboundedSender<String>>,
         ) -> Result<EngineResponse> {
             let idx = self.calls.fetch_add(1, Ordering::SeqCst);
-            let content = self
-                .responses
-                .get(idx)
-                .cloned()
-                .unwrap_or_else(|| {
-                    self.responses
-                        .last()
-                        .cloned()
-                        .unwrap_or_else(|| {
-                            "{\"status\":\"Idle\",\"message_to_user\":\"done\",\"tool_calls\":[]}"
-                                .to_string()
-                        })
-                });
+            let content = self.responses.get(idx).cloned().unwrap_or_else(|| {
+                self.responses.last().cloned().unwrap_or_else(|| {
+                    "{\"status\":\"Idle\",\"message_to_user\":\"done\",\"tool_calls\":[]}"
+                        .to_string()
+                })
+            });
             Ok(EngineResponse {
                 content,
                 prompt_tokens: 0,
@@ -773,14 +781,16 @@ fn test_agenda_confirm_task_id_before_current_turn_skips_latest_user() {
 
 #[test]
 fn test_user_text_means_agenda_done_ack() {
-    assert!(Orchestrator::<MockEngine>::user_text_means_agenda_done_ack("done"));
+    assert!(Orchestrator::<MockEngine>::user_text_means_agenda_done_ack(
+        "done"
+    ));
     assert!(Orchestrator::<MockEngine>::user_text_means_agenda_done_ack(
         "  FINISHED  "
     ));
-    assert!(Orchestrator::<MockEngine>::user_text_means_agenda_done_ack("all done"));
-    assert!(!Orchestrator::<MockEngine>::user_text_means_agenda_done_ack(
-        "tell me a story"
+    assert!(Orchestrator::<MockEngine>::user_text_means_agenda_done_ack(
+        "all done"
     ));
+    assert!(!Orchestrator::<MockEngine>::user_text_means_agenda_done_ack("tell me a story"));
 }
 
 async fn orchestrator_with_presentation(

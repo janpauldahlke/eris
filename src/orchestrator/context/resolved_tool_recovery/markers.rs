@@ -23,7 +23,9 @@ mod tests {
         assert!(is_recovery_system_content(
             "[SYSTEM OVERRIDE: FUCKUP DETECTED] Invalid LLM Output: x"
         ));
-        assert!(is_recovery_system_content("[SYSTEM RECOVERY] Tool schema fault"));
+        assert!(is_recovery_system_content(
+            "[SYSTEM RECOVERY] Tool schema fault"
+        ));
         assert!(is_recovery_system_content(
             "[SYSTEM OVERRIDE] All requested tool calls in this batch were suppressed"
         ));
@@ -38,6 +40,8 @@ mod tests {
             "[FCP POST-TOOL — USER REPLY]\n...\n[/FCP POST-TOOL — USER REPLY]"
         ));
         assert!(!is_recovery_system_content("Tool 't' succeeded: ok"));
-        assert!(!is_recovery_system_content("[SYSTEM OVERRIDE] something else"));
+        assert!(!is_recovery_system_content(
+            "[SYSTEM OVERRIDE] something else"
+        ));
     }
 }

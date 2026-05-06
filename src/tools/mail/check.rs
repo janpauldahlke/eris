@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::executive::error::{FcpError, Result};
 use crate::generated::gws_types::gmail::ListMessagesResponse;
-use crate::tools::context_view_hint::{ToolContextViewHint, API_TOOL_SNIPPET_CHARS};
+use crate::tools::context_view_hint::{API_TOOL_SNIPPET_CHARS, ToolContextViewHint};
 use crate::tools::mail::common::format_metadata_line;
 use crate::tools::traits::Tool;
 use crate::util::GmailClient;
@@ -47,8 +47,7 @@ impl Tool for MailCheckTool {
     }
 
     async fn execute(&self, args: Value) -> Result<String> {
-        let parsed: MailCheckArgs =
-            serde_json::from_value(args).map_err(FcpError::ParseFault)?;
+        let parsed: MailCheckArgs = serde_json::from_value(args).map_err(FcpError::ParseFault)?;
         let max = parsed.max_results.unwrap_or(10).min(50);
         let query = parsed.query.as_deref();
 
@@ -65,7 +64,9 @@ impl Tool for MailCheckTool {
         if messages.is_empty() {
             return Ok(format!(
                 "[mail:check] No messages found{}.",
-                query.map(|q| format!(" for query \"{q}\"")).unwrap_or_default()
+                query
+                    .map(|q| format!(" for query \"{q}\""))
+                    .unwrap_or_default()
             ));
         }
 
@@ -73,7 +74,9 @@ impl Tool for MailCheckTool {
         let estimate = list.result_size_estimate.unwrap_or(count as u32);
         let mut out = format!(
             "[mail:check] Showing {count} of ~{estimate} messages{} (subject/from/date from metadata):\n\n",
-            query.map(|q| format!(" matching \"{q}\"")).unwrap_or_default()
+            query
+                .map(|q| format!(" matching \"{q}\""))
+                .unwrap_or_default()
         );
 
         for msg in messages {

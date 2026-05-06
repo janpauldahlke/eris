@@ -5,7 +5,7 @@ use serde_json::json;
 use std::collections::HashSet;
 use std::time::Instant;
 
-use super::{Orchestrator, EMPTY_USER_MESSAGE_TAG};
+use super::{EMPTY_USER_MESSAGE_TAG, Orchestrator};
 
 const EMPTY_USER_SHRUGS: &[&str] = &["¯\\_(ツ)_/¯", "(・_・)", "(╯°□°）╯︵ ┻━┻"];
 
@@ -19,7 +19,8 @@ impl<E: LlmEngine> Orchestrator<E> {
         if !Self::user_text_means_agenda_done_ack(user_line) {
             return Ok(false);
         }
-        let Some(task_id) = Self::agenda_confirm_task_id_before_current_turn(&self.chat_stack) else {
+        let Some(task_id) = Self::agenda_confirm_task_id_before_current_turn(&self.chat_stack)
+        else {
             return Ok(false);
         };
 

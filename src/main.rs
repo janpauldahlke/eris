@@ -8,24 +8,24 @@ use std::process::ExitCode;
 use clap::Parser;
 use tokio_util::sync::CancellationToken;
 
+use crate::config::AppConfig;
 use crate::executive::cli::Cli;
 use crate::executive::router::execute_command;
-use crate::config::AppConfig;
 
-pub mod executive;
-pub mod telemetry;
-pub mod vault_layout;
 pub mod config;
-pub mod workspace;
 pub mod engine;
-pub mod memory;
-pub mod tools;
+pub mod executive;
+pub mod generated;
 pub mod ingest;
-pub mod util;
+pub mod memory;
 pub mod orchestrator;
 pub mod presentation;
+pub mod telemetry;
+pub mod tools;
 pub mod ui;
-pub mod generated;
+pub mod util;
+pub mod vault_layout;
+pub mod workspace;
 
 #[tokio::main]
 async fn main() -> ExitCode {

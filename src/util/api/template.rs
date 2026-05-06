@@ -8,9 +8,9 @@ pub fn apply_template(input: &str, params: &HashMap<String, String>) -> Result<S
     let mut rest = input;
     while let Some(start) = rest.find('{') {
         out.push_str(&rest[..start]);
-        rest = rest.get(start + 1..).ok_or_else(|| {
-            FcpError::Config("invalid template: truncated after '{'".into())
-        })?;
+        rest = rest
+            .get(start + 1..)
+            .ok_or_else(|| FcpError::Config("invalid template: truncated after '{'".into()))?;
         let end = rest
             .find('}')
             .ok_or_else(|| FcpError::Config("unclosed template placeholder".into()))?;

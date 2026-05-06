@@ -7,13 +7,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
 use tokio::sync::mpsc;
 
+use super::AgendaTask;
 use crate::executive::error::{FcpError, Result};
 use crate::tools::clock::{
-    load_alarms, next_wall_alarm_fire_local, remove_alarm_by_id, save_alarms, AlarmRecord,
-    MAX_TIMER_MINUTES,
+    AlarmRecord, MAX_TIMER_MINUTES, load_alarms, next_wall_alarm_fire_local, remove_alarm_by_id,
+    save_alarms,
 };
 use crate::tools::traits::Tool;
-use super::AgendaTask;
 
 #[derive(Deserialize, JsonSchema)]
 pub struct AgendaRemindAtArgs {
@@ -47,8 +47,16 @@ impl Tool for AgendaRemindAtTool {
         schemars::schema_for!(AgendaRemindAtArgs)
     }
 
+    /// Same description often repeats across rounds while chaining Moltbook actions.
+    /// The tool replaces the prior alarm for that pending task; suppressing duplicates
+    /// looked like a missed reschedule and could trigger duplicate-only recovery batches.
+    fn allow_repeat_in_turn(&self) -> bool {
+        true
+    }
+
     async fn execute(&self, args: Value) -> Result<String> {
-        let args: AgendaRemindAtArgs = serde_json::from_value(args).map_err(FcpError::ParseFault)?;
+        let args: AgendaRemindAtArgs =
+            serde_json::from_value(args).map_err(FcpError::ParseFault)?;
 
         let tid = args
             .task_id
@@ -86,15 +94,20 @@ impl Tool for AgendaRemindAtTool {
                 }
                 Schedule::Minutes(m)
             }
-            (None, Some(h), Some(mi)) => Schedule::Wall { hour: h, minute: mi },
+            (None, Some(h), Some(mi)) => Schedule::Wall {
+                hour: h,
+                minute: mi,
+            },
             (None, None, None) => {
                 return Err(FcpError::SchemaViolation(
-                    "Provide either minutes (relative) or hour and minute (wall clock).".to_string(),
+                    "Provide either minutes (relative) or hour and minute (wall clock)."
+                        .to_string(),
                 ));
             }
             _ => {
                 return Err(FcpError::SchemaViolation(
-                    "Provide either minutes (relative) or hour+minute (wall), not both.".to_string(),
+                    "Provide either minutes (relative) or hour+minute (wall), not both."
+                        .to_string(),
                 ));
             }
         };
@@ -102,7 +115,9 @@ impl Tool for AgendaRemindAtTool {
         let agenda_path = crate::vault_layout::agenda_json(&self.workspace_root);
         let mut tasks: Vec<AgendaTask> = Vec::new();
         if agenda_path.exists() {
-            let content = fs::read_to_string(&agenda_path).await.map_err(FcpError::Io)?;
+            let content = fs::read_to_string(&agenda_path)
+                .await
+                .map_err(FcpError::Io)?;
             if !content.trim().is_empty() {
                 tasks = serde_json::from_str(&content).map_err(FcpError::ParseFault)?;
             }
@@ -128,7 +143,9 @@ impl Tool for AgendaRemindAtTool {
             task_id = id;
         } else {
             let d = desc.ok_or_else(|| {
-                FcpError::SchemaViolation("Provide exactly one of task_id or description.".to_string())
+                FcpError::SchemaViolation(
+                    "Provide exactly one of task_id or description.".to_string(),
+                )
             })?;
             if d.len() > 200 {
                 return Err(FcpError::SchemaViolation(
@@ -167,7 +184,8 @@ impl Tool for AgendaRemindAtTool {
                 let now = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .map_err(|_| FcpError::Config("system clock before UNIX epoch".into()))?;
-                now.as_secs().saturating_add(u64::from(m).saturating_mul(60))
+                now.as_secs()
+                    .saturating_add(u64::from(m).saturating_mul(60))
             }
             Schedule::Wall { hour, minute } => {
                 let fire_dt = next_wall_alarm_fire_local(hour, minute)?;
@@ -185,13 +203,14 @@ impl Tool for AgendaRemindAtTool {
         });
         save_alarms(&alarms_path, &alarms).await?;
 
-        let pos = tasks
-            .iter()
-            .position(|t| t.id == task_id)
-            .ok_or_else(|| FcpError::ToolFault {
-                tool_name: self.name().into(),
-                reason: "Agenda task row missing after schedule".into(),
-            })?;
+        let pos =
+            tasks
+                .iter()
+                .position(|t| t.id == task_id)
+                .ok_or_else(|| FcpError::ToolFault {
+                    tool_name: self.name().into(),
+                    reason: "Agenda task row missing after schedule".into(),
+                })?;
         tasks[pos].alarm_id = Some(alarm_uuid.clone());
 
         let new_content =
@@ -199,7 +218,9 @@ impl Tool for AgendaRemindAtTool {
         fs::create_dir_all(crate::vault_layout::tools_dir(&self.workspace_root))
             .await
             .map_err(FcpError::Io)?;
-        fs::write(&agenda_path, new_content).await.map_err(FcpError::Io)?;
+        fs::write(&agenda_path, new_content)
+            .await
+            .map_err(FcpError::Io)?;
 
         let _ = self.reschedule_tx.send(());
 

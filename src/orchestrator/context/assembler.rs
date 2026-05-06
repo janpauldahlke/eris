@@ -28,6 +28,38 @@ fn runtime_state_json_contract_focus(state: &AgentState) -> &'static str {
     }
 }
 
+/// Appended after `00_Invariants/Moltbook.md` when the Moltbook overlay is active.
+/// Keeps protocol/tool-key reminders out of the vault file.
+const MOLTBOOK_OVERLAY_APPENDIX: &str = r#"
+
+### Moltbook session helpers (strict)
+
+1. **Time budget**: On each browse-cycle wake-up, call `clock:now` before concluding whether the session expired; compare using that RFC3339 line against the expiry HH:MM in the reminder label — avoid relying on mental clock arithmetic alone.
+
+2. **Assistant reply shape**: Emit exactly **one** JSON object (`{` … `}`) per assistant message — no markdown code fences, no prose before `{` or after `}`. User-visible narration stays inside `message_to_user`.
+
+3. **tool_calls schema traps** (slim JIT hides parameter detail — keys must match exactly):
+   - `moltbook:search`: required `q` (natural-language query, max 500 chars); optional `type` (`all`, `posts`, `comments`), `limit`, `cursor`.
+   - `moltbook:comment`: required `post_id`, `content`; optional `parent_id`.
+   - `moltbook:vote`: required `target` (`post` or `comment`), `id`, `direction` (`upvote` or `downvote`).
+   - `moltbook:dm`: required `action` (`check`, `list_requests`, `list_conversations`, `read_conversation`, `send_request`, `send_message`, `approve_request`, `reject_request`). Never invent other action names (e.g. `read`).
+   - `moltbook:verify`: required `verification_code`, `answer`. Arithmetic answers must be numeric with two decimals when the API asks for decimals.
+
+4. **Verification retries**: If verify fails with incorrect answer, reread `challenge_text` (units matter — do not substitute unrelated numbers). Do **not** resubmit the same `verification_code` after HTTP 409 / \"already answered\"; obtain a fresh challenge from new content instead.
+
+5. **Depth rule (alarm-driven browse)**: `moltbook:feed` and `moltbook:home` only give headlines/snippets. **Every cycle** pick **at least one** concrete `post_id` from the freshest feed/home results that merits understanding (prioritize posts with discussion signals such as reply counts or notifications over bare titles). Call **`moltbook:comments`** on it (`limit` 25–50, `sort` `new`) **before** narrating what the thread is about, **before** `moltbook:vote` / `moltbook:comment`, and **before** claiming you \"read\" a post. Skipping comments for a whole cycle is incorrect behavior—equivalent to only reading RSS titles.
+
+6. **Submolts & curiosity**: Submolts are neighborhoods—**sample widely** through rotation (known names + anything surfaced on `moltbook:home`/personal feed), and **pay attention** to where tone or topics genuinely pull you. **Revisit** those communities later in the same browse session when they resonate (you are not forced to pick a brand-new submolt every single cycle). When you fetch `source=submolt` and that corner sparks interest, open **`moltbook:comments` on two or more distinct `post_id`s from that submolt's feed** that cycle whenever time permits—not one headline then bounce.
+
+7. **Semantic search**: During browse sessions, use **`moltbook:search`** from time to time with a **specific** natural-language `q` (questions or short topic phrases beat single vague words). Rank hits by **`similarity`**, then open **`moltbook:comments`** on chosen `post_id`s before voting or commenting.
+
+8. **Welcoming newcomers**: When `moltbook:home`, feed, or search surfaces an introduction, obvious first post, or \"new here\" energy, **`moltbook:comments` first**; a **brief, genuine welcome** via `moltbook:comment` is encouraged when it truly fits—no copy-paste spam, respect comment cooldowns and verification, escalate to the human if unsure.
+
+### Ideas you liked
+
+Use `memory:stage` with tags `[\"moltbook\"]` for threads or insights worth keeping; call `memory:commit` or `memory:commit_all` when the human wants vault persistence.
+"#;
+
 /// How tool definitions are embedded in the system prompt.
 enum ToolPromptTooling {
     Full,
@@ -58,7 +90,38 @@ impl ContextAssembler {
         (*self.identity.borrow()).as_ref().to_string()
     }
 
-    fn identity_plus_staged_sidebar(&self, identity: String, ephemeral: &EphemeralMemory) -> String {
+    async fn identity_with_optional_moltbook_overlay(
+        &self,
+        include_moltbook: bool,
+    ) -> Result<String> {
+        let mut identity = self.identity_text();
+        if !include_moltbook {
+            return Ok(identity);
+        }
+
+        match tokio::fs::read_to_string(self.core_dir.join("Moltbook.md")).await {
+            Ok(overlay) if !overlay.trim().is_empty() => {
+                identity.push_str("\n\n");
+                identity.push_str(overlay.trim());
+                identity.push_str(MOLTBOOK_OVERLAY_APPENDIX);
+            }
+            Ok(_) => {
+                tracing::warn!("Moltbook prompt overlay is empty; continuing with base identity");
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                tracing::warn!("Moltbook prompt overlay missing; continuing with base identity");
+            }
+            Err(e) => return Err(e.into()),
+        }
+
+        Ok(identity)
+    }
+
+    fn identity_plus_staged_sidebar(
+        &self,
+        identity: String,
+        ephemeral: &EphemeralMemory,
+    ) -> String {
         let block = crate::memory::turn_end::format_staged_digest_for_prompt(
             ephemeral,
             self.staged_memory_prompt_max_chars,
@@ -72,8 +135,16 @@ impl ContextAssembler {
 
     /// Reads Identity.md and formats the Ephemeral cache into a single string.
     /// CRITICAL: `ephemeral.cache` is an async moka cache. You must iterate it safely.
-    pub async fn assemble(&self, state: &AgentState, ephemeral: &EphemeralMemory, gatekeeper: &Gatekeeper) -> Result<String> {
-        let identity_content = self.identity_text();
+    pub async fn assemble(
+        &self,
+        state: &AgentState,
+        ephemeral: &EphemeralMemory,
+        gatekeeper: &Gatekeeper,
+        include_moltbook_overlay: bool,
+    ) -> Result<String> {
+        let identity_content = self
+            .identity_with_optional_moltbook_overlay(include_moltbook_overlay)
+            .await?;
         let identity_block = self.identity_plus_staged_sidebar(identity_content, ephemeral);
         let allowed_tools = gatekeeper.get_allowed_tools(state);
         Self::build_tool_prompt(
@@ -93,15 +164,16 @@ impl ContextAssembler {
         gatekeeper: &Gatekeeper,
         descriptors: Option<&ToolDescriptorRegistry>,
         offered_tool_names: &[String],
+        include_moltbook_overlay: bool,
     ) -> Result<String> {
-        let identity_content = self.identity_text();
+        let identity_content = self
+            .identity_with_optional_moltbook_overlay(include_moltbook_overlay)
+            .await?;
         let identity_block = self.identity_plus_staged_sidebar(identity_content, ephemeral);
         let allowed = gatekeeper.get_allowed_tools(state);
         let filtered = filter_tools_by_offered_order(allowed, offered_tool_names);
-        let tool_rows: Vec<(String, String)> = filtered
-            .iter()
-            .filter_map(tool_row_from_entry)
-            .collect();
+        let tool_rows: Vec<(String, String)> =
+            filtered.iter().filter_map(tool_row_from_entry).collect();
         let phrase_map = super::compendium::build_phrase_compendium(descriptors, &tool_rows);
         let mut slim_tools = filtered;
         strip_parameters_from_tool_values(&mut slim_tools);
@@ -124,8 +196,11 @@ impl ContextAssembler {
         ephemeral: &EphemeralMemory,
         gatekeeper: &Gatekeeper,
         selected_tools: &[String],
+        include_moltbook_overlay: bool,
     ) -> Result<String> {
-        let identity_content = self.identity_text();
+        let identity_content = self
+            .identity_with_optional_moltbook_overlay(include_moltbook_overlay)
+            .await?;
         let identity_block = self.identity_plus_staged_sidebar(identity_content, ephemeral);
 
         let allowed_tools = gatekeeper
@@ -161,9 +236,12 @@ impl ContextAssembler {
         tooling: ToolPromptTooling,
         state: &AgentState,
     ) -> Result<String> {
-        tracing::info!(tool_count = allowed_tools.len(), "Tools included in assembled prompt");
-        let tools_schema_string = serde_json::to_string_pretty(&allowed_tools)
-            .unwrap_or_else(|_| "[]".to_string());
+        tracing::info!(
+            tool_count = allowed_tools.len(),
+            "Tools included in assembled prompt"
+        );
+        let tools_schema_string =
+            serde_json::to_string_pretty(&allowed_tools).unwrap_or_else(|_| "[]".to_string());
 
         let tools_block = format!(
             "{begin}\n{tools}\n{end}",
@@ -248,7 +326,10 @@ impl ContextAssembler {
             tools = tools_block
         );
 
-        Ok(append_session_reference_time_if_needed(system_prompt, &allowed_tools))
+        Ok(append_session_reference_time_if_needed(
+            system_prompt,
+            &allowed_tools,
+        ))
     }
 
     /// Builds a tool-free conversational prompt.
@@ -258,8 +339,11 @@ impl ContextAssembler {
         &self,
         state: &AgentState,
         ephemeral: &EphemeralMemory,
+        include_moltbook_overlay: bool,
     ) -> Result<String> {
-        let identity_content = self.identity_text();
+        let identity_content = self
+            .identity_with_optional_moltbook_overlay(include_moltbook_overlay)
+            .await?;
         let identity_block = self.identity_plus_staged_sidebar(identity_content, ephemeral);
         let state_focus = runtime_state_json_contract_focus(state);
 
@@ -291,9 +375,10 @@ impl ContextAssembler {
 }
 
 fn tools_need_session_reference_time(tools: &[serde_json::Value]) -> bool {
-    tools.iter().filter_map(tool_name_from_entry).any(|n| {
-        n == "db:find_connections" || n.starts_with("calendar:")
-    })
+    tools
+        .iter()
+        .filter_map(tool_name_from_entry)
+        .any(|n| n == "db:find_connections" || n.starts_with("calendar:"))
 }
 
 fn append_session_reference_time_if_needed(
@@ -377,7 +462,7 @@ mod tests {
         let state = AgentState::Idle;
         let gatekeeper = crate::tools::gatekeeper::Gatekeeper::new();
         let assembled = assembler
-            .assemble(&state, &ephemeral, &gatekeeper)
+            .assemble(&state, &ephemeral, &gatekeeper, false)
             .await
             .expect("assemble");
 
@@ -398,7 +483,7 @@ mod tests {
         let state = AgentState::Recover;
         let gatekeeper = crate::tools::gatekeeper::Gatekeeper::new();
         let assembled = assembler
-            .assemble(&state, &ephemeral, &gatekeeper)
+            .assemble(&state, &ephemeral, &gatekeeper, false)
             .await
             .expect("assemble");
         assert!(
@@ -422,7 +507,7 @@ mod tests {
         let gatekeeper = crate::tools::gatekeeper::Gatekeeper::new();
 
         let assembled_v1 = assembler
-            .assemble(&state, &ephemeral, &gatekeeper)
+            .assemble(&state, &ephemeral, &gatekeeper, false)
             .await
             .expect("assemble v1");
         assert!(assembled_v1.contains("I am version 1."));
@@ -431,11 +516,51 @@ mod tests {
             .expect("send updated identity");
 
         let assembled_v2 = assembler
-            .assemble(&state, &ephemeral, &gatekeeper)
+            .assemble(&state, &ephemeral, &gatekeeper, false)
             .await
             .expect("assemble v2");
         assert!(assembled_v2.contains("I am version 2."));
         assert_ne!(assembled_v1, assembled_v2);
+    }
+
+    #[tokio::test]
+    async fn test_moltbook_overlay_is_opt_in() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let workspace = "test_workspace";
+        let core_dir = dir.path().join(workspace).join("00_Invariants");
+        tokio::fs::create_dir_all(&core_dir)
+            .await
+            .expect("create core dir");
+        tokio::fs::write(core_dir.join("Moltbook.md"), "Moltbook-only session rules")
+            .await
+            .expect("write moltbook overlay");
+        let (_tx, rx) = tokio::sync::watch::channel(Arc::from("Base identity"));
+        let assembler = ContextAssembler::new(dir.path(), workspace, rx, 3500);
+        let ephemeral = EphemeralMemory::new(workspace.to_string());
+        let state = AgentState::Idle;
+        let gatekeeper = crate::tools::gatekeeper::Gatekeeper::new();
+
+        let base = assembler
+            .assemble(&state, &ephemeral, &gatekeeper, false)
+            .await
+            .expect("assemble base");
+        assert!(base.contains("Base identity"));
+        assert!(!base.contains("Moltbook-only session rules"));
+
+        let with_overlay = assembler
+            .assemble(&state, &ephemeral, &gatekeeper, true)
+            .await
+            .expect("assemble with overlay");
+        assert!(with_overlay.contains("Base identity"));
+        assert!(with_overlay.contains("Moltbook-only session rules"));
+        assert!(
+            with_overlay.contains("Depth rule"),
+            "Moltbook overlay should append strict protocol appendix"
+        );
+        assert!(
+            with_overlay.contains("Submolts & curiosity"),
+            "Moltbook appendix should cover submolt exploration depth"
+        );
     }
 
     #[tokio::test]
@@ -451,7 +576,7 @@ mod tests {
             config: Arc::new(crate::config::AppConfig::default()),
         }));
         let assembled = assembler
-            .assemble_slim_tool_map(&state, &ephemeral, &gatekeeper, None, &[])
+            .assemble_slim_tool_map(&state, &ephemeral, &gatekeeper, None, &[], false)
             .await
             .expect("assemble_slim");
         assert!(
@@ -470,7 +595,8 @@ mod tests {
 
     #[test]
     fn tools_need_session_reference_time_db_and_calendar_prefix() {
-        let db = serde_json::json!({"function": {"name": "db:find_connections", "description": ""}});
+        let db =
+            serde_json::json!({"function": {"name": "db:find_connections", "description": ""}});
         let cal = serde_json::json!({"function": {"name": "calendar:list", "description": ""}});
         let vault = serde_json::json!({"function": {"name": "vault:read", "description": ""}});
         assert!(super::tools_need_session_reference_time(&[db.clone()]));
@@ -481,7 +607,8 @@ mod tests {
 
     #[test]
     fn append_session_reference_time_inserts_block_for_calendar_tool() {
-        let tools = vec![serde_json::json!({"function": {"name": "calendar:create", "description": ""}})];
+        let tools =
+            vec![serde_json::json!({"function": {"name": "calendar:create", "description": ""}})];
         let out = super::append_session_reference_time_if_needed("PREAMBLE".into(), &tools);
         assert!(out.contains("[SESSION_REFERENCE_TIME]"));
         assert!(out.contains("calendar:list"));

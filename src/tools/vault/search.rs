@@ -87,8 +87,7 @@ impl Tool for VaultSearchTool {
             .replace('\\', "/");
         let dir_trimmed = dir_normalized.trim_end_matches('/');
 
-        let workspace_canon =
-            std::fs::canonicalize(&self.workspace_root).map_err(FcpError::Io)?;
+        let workspace_canon = std::fs::canonicalize(&self.workspace_root).map_err(FcpError::Io)?;
 
         let scope_root = if dir_trimmed.is_empty() || dir_trimmed == "." {
             workspace_canon.clone()
@@ -217,8 +216,7 @@ fn run_vault_search(params: SearchParams) -> Result<String> {
         scanned_files, matched_total, returned
     );
 
-    let notice_trunc =
-        "\n\n[vault:search: output truncated to configured max_total_chars; narrow with `directory`, fewer terms, or increase vault_search_max_total_chars in .fcp/config.toml.]";
+    let notice_trunc = "\n\n[vault:search: output truncated to configured max_total_chars; narrow with `directory`, fewer terms, or increase vault_search_max_total_chars in .fcp/config.toml.]";
 
     let mut full = body.clone();
     if !full.ends_with('\n') {
@@ -340,7 +338,12 @@ fn scan_file_substrings(
         }
     }
 
-    let excerpt = build_excerpt(&lines, &hit_line_nums, max_line, params.snippet_radius_lines);
+    let excerpt = build_excerpt(
+        &lines,
+        &hit_line_nums,
+        max_line,
+        params.snippet_radius_lines,
+    );
 
     Some(FileMatch {
         rel_path: rel_path.to_string(),
@@ -355,10 +358,7 @@ fn scan_file_regex(
     rel_path: &str,
     params: &SearchParams,
 ) -> Result<Option<FileMatch>> {
-    let re = match RegexBuilder::new(query)
-        .case_insensitive(true)
-        .build()
-    {
+    let re = match RegexBuilder::new(query).case_insensitive(true).build() {
         Ok(r) => r,
         Err(e) => {
             return Err(FcpError::ToolFault {
@@ -389,7 +389,12 @@ fn scan_file_regex(
 
     hit_line_nums.sort_unstable();
 
-    let excerpt = build_excerpt(&lines, &hit_line_nums, max_line, params.snippet_radius_lines);
+    let excerpt = build_excerpt(
+        &lines,
+        &hit_line_nums,
+        max_line,
+        params.snippet_radius_lines,
+    );
 
     Ok(Some(FileMatch {
         rel_path: rel_path.to_string(),
@@ -403,12 +408,7 @@ fn line_number_at_byte_pos(content: &str, byte_pos: usize) -> usize {
     1 + content[..end].bytes().filter(|&b| b == b'\n').count()
 }
 
-fn build_excerpt(
-    lines: &[&str],
-    hit_centers: &[usize],
-    max_line: usize,
-    radius: usize,
-) -> String {
+fn build_excerpt(lines: &[&str], hit_centers: &[usize], max_line: usize, radius: usize) -> String {
     let mut show_lines: BTreeSet<usize> = BTreeSet::new();
     for &center in hit_centers {
         let start = center.saturating_sub(radius).max(1);
@@ -452,7 +452,9 @@ mod tests {
         fs::write(dir.path().join("a/one.md"), "foo and foo again\n")
             .await
             .unwrap();
-        fs::write(dir.path().join("b/two.md"), "foo\n").await.unwrap();
+        fs::write(dir.path().join("b/two.md"), "foo\n")
+            .await
+            .unwrap();
 
         let t = tool(dir.path());
         let args = serde_json::json!({ "query": "foo" });
@@ -467,9 +469,12 @@ mod tests {
     #[tokio::test]
     async fn case_insensitive_default() -> Result<()> {
         let dir = tempdir().unwrap();
-        fs::write(dir.path().join("n.md"), "We discussed database migration here.\n")
-            .await
-            .unwrap();
+        fs::write(
+            dir.path().join("n.md"),
+            "We discussed database migration here.\n",
+        )
+        .await
+        .unwrap();
 
         let t = tool(dir.path());
         let args = serde_json::json!({ "query": "DATABASE" });
@@ -481,14 +486,15 @@ mod tests {
     #[tokio::test]
     async fn respects_directory_scope() -> Result<()> {
         let dir = tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("10_Topology")).await.unwrap();
-        fs::create_dir_all(dir.path().join("20_Other")).await.unwrap();
-        fs::write(
-            dir.path().join("10_Topology/a.md"),
-            "uniquemarker xyz\n",
-        )
-        .await
-        .unwrap();
+        fs::create_dir_all(dir.path().join("10_Topology"))
+            .await
+            .unwrap();
+        fs::create_dir_all(dir.path().join("20_Other"))
+            .await
+            .unwrap();
+        fs::write(dir.path().join("10_Topology/a.md"), "uniquemarker xyz\n")
+            .await
+            .unwrap();
         fs::write(dir.path().join("20_Other/b.md"), "uniquemarker xyz\n")
             .await
             .unwrap();

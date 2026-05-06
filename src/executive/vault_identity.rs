@@ -17,17 +17,11 @@ pub async fn read_identity_markdown_strict(
         Ok(content) if !content.trim().is_empty() => Ok(Arc::from(content)),
         Ok(_) => Err(FcpError::WorkspaceFault {
             workspace: workspace_label.to_string(),
-            reason: format!(
-                "identity file is empty: {}",
-                identity_path.display()
-            ),
+            reason: format!("identity file is empty: {}", identity_path.display()),
         }),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(FcpError::WorkspaceFault {
             workspace: workspace_label.to_string(),
-            reason: format!(
-                "missing identity file: {}",
-                identity_path.display()
-            ),
+            reason: format!("missing identity file: {}", identity_path.display()),
         }),
         Err(e) => Err(FcpError::Io(e)),
     }
@@ -35,7 +29,9 @@ pub async fn read_identity_markdown_strict(
 
 /// Reload after FS notification: on failure, caller keeps previous snapshot.
 pub async fn try_read_identity_for_reload(identity_path: &Path) -> Result<Arc<str>> {
-    let content = tokio::fs::read_to_string(identity_path).await.map_err(FcpError::Io)?;
+    let content = tokio::fs::read_to_string(identity_path)
+        .await
+        .map_err(FcpError::Io)?;
     if content.trim().is_empty() {
         return Err(FcpError::Config(format!(
             "identity file empty: {}",

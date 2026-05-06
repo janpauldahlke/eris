@@ -17,9 +17,9 @@ mod integration_tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    use crate::util::ApiHttpClient;
     use crate::config::{ApiProfile, AppConfig};
     use crate::tools::traits::Tool;
+    use crate::util::ApiHttpClient;
 
     use super::{WeatherCurrentTool, WeatherForecastTool};
 
@@ -68,10 +68,7 @@ mod integration_tests {
                 query: [
                     ("latitude".into(), "{lat}".into()),
                     ("longitude".into(), "{lon}".into()),
-                    (
-                        "current".into(),
-                        "temperature_2m,weather_code".into(),
-                    ),
+                    ("current".into(), "temperature_2m,weather_code".into()),
                     ("timezone".into(), "auto".into()),
                 ]
                 .into_iter()

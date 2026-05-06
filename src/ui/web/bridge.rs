@@ -2,7 +2,7 @@
 
 use tokio::sync::{broadcast, mpsc};
 
-use crate::presentation::{alarm_payload_to_user_action, SessionEvent, UserAction};
+use crate::presentation::{SessionEvent, UserAction, alarm_payload_to_user_action};
 
 /// Forwards every [`SessionEvent`] to `events_tx` and mirrors [`SessionEvent::SystemAlarm`] onto `user_action_tx`.
 pub fn spawn_presentation_bridge(
@@ -60,7 +60,9 @@ mod tests {
         let _jh = spawn_presentation_bridge(pres_rx, bc_tx, ua_tx);
 
         pres_tx
-            .send(SessionEvent::SystemAlarm(AlarmPayload::Plain("wake".into())))
+            .send(SessionEvent::SystemAlarm(AlarmPayload::Plain(
+                "wake".into(),
+            )))
             .await
             .expect("send alarm");
         drop(pres_tx);
@@ -72,7 +74,10 @@ mod tests {
         ));
 
         let ev = bc_sub.recv().await.expect("broadcast");
-        assert!(matches!(ev, SessionEvent::SystemAlarm(AlarmPayload::Plain(_))));
+        assert!(matches!(
+            ev,
+            SessionEvent::SystemAlarm(AlarmPayload::Plain(_))
+        ));
 
         let _ = _jh.await;
     }

@@ -76,9 +76,7 @@ pub async fn run_web_chat_with_broadcast(
 
     let addr_s = format!("{}:{}", config.web_bind_addr, config.web_port);
     let addr: SocketAddr = addr_s.parse().map_err(|e| {
-        FcpError::Config(format!(
-            "Invalid web_bind_addr / web_port ({addr_s}): {e}"
-        ))
+        FcpError::Config(format!("Invalid web_bind_addr / web_port ({addr_s}): {e}"))
     })?;
 
     let listener = tokio::net::TcpListener::bind(addr).await?;

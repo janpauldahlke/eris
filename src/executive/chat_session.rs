@@ -20,10 +20,10 @@ use crate::executive::setup_welder::IgnitionWorkspaceHint;
 use crate::memory::ephemeral::EphemeralMemory;
 use crate::orchestrator::core::Orchestrator;
 use crate::presentation::{
-    InputSource, SessionEvent, UserAction, UserIngress, SYSTEM_ALARM_PREFIX,
+    InputSource, SYSTEM_ALARM_PREFIX, SessionEvent, UserAction, UserIngress,
 };
-use crate::ui::discord::DiscordTypingCtl;
 use crate::tools::Gatekeeper;
+use crate::ui::discord::DiscordTypingCtl;
 use ollama_rs::Ollama;
 
 /// Which presentation surface runs for this process (one only; never both).
@@ -266,7 +266,7 @@ pub async fn start_chat_session(
     if config.moltbook.enabled {
         match crate::tools::moltbook::MoltbookClient::unauthenticated(
             &config.moltbook,
-            config.web_fetch_timeout_secs,
+            config.moltbook.timeout_secs,
             config.web_fetch_max_bytes,
         ) {
             Ok(register_client) => {
@@ -281,7 +281,7 @@ pub async fn start_chat_session(
 
         match crate::tools::moltbook::MoltbookClient::authenticated(
             &config.moltbook,
-            config.web_fetch_timeout_secs,
+            config.moltbook.timeout_secs,
             config.web_fetch_max_bytes,
         )
         .await
@@ -295,6 +295,9 @@ pub async fn start_chat_session(
                     client: client.clone(),
                 }));
                 gatekeeper.register(Arc::new(crate::tools::moltbook::MoltbookFeedTool {
+                    client: client.clone(),
+                }));
+                gatekeeper.register(Arc::new(crate::tools::moltbook::MoltbookSearchTool {
                     client: client.clone(),
                 }));
                 gatekeeper.register(Arc::new(crate::tools::moltbook::MoltbookCommentsTool {
@@ -312,12 +315,12 @@ pub async fn start_chat_session(
                 gatekeeper.register(Arc::new(crate::tools::moltbook::MoltbookVerifyTool {
                     client: client.clone(),
                 }));
-                gatekeeper.register(Arc::new(crate::tools::moltbook::MoltbookNotificationsReadTool {
-                    client: client.clone(),
-                }));
-                gatekeeper.register(Arc::new(crate::tools::moltbook::MoltbookDmTool {
-                    client,
-                }));
+                gatekeeper.register(Arc::new(
+                    crate::tools::moltbook::MoltbookNotificationsReadTool {
+                        client: client.clone(),
+                    },
+                ));
+                gatekeeper.register(Arc::new(crate::tools::moltbook::MoltbookDmTool { client }));
             }
             Err(e) => {
                 tracing::warn!(
@@ -431,9 +434,7 @@ pub async fn start_chat_session(
         api: api_http,
     }));
 
-    if let Some(auth) =
-        crate::util::google_workspace::workspace_auth(&config.google).await?
-    {
+    if let Some(auth) = crate::util::google_workspace::workspace_auth(&config.google).await? {
         let gmail = Arc::new(crate::util::GmailClient::from_auth(auth.clone())?);
         gatekeeper.register(Arc::new(crate::tools::mail::MailCheckTool {
             client: gmail.clone(),
@@ -593,7 +594,8 @@ pub async fn start_chat_session(
         promotion_suppressed_during_step.clone(),
     );
 
-    let context_view_hints = gatekeeper.merge_context_view_hints(&config.optimize_context_tool_overrides);
+    let context_view_hints =
+        gatekeeper.merge_context_view_hints(&config.optimize_context_tool_overrides);
     let context_view = crate::orchestrator::context::ContextViewSettings {
         enabled: config.optimize_context,
         default_snippet_chars: config.optimize_context_max_tool_snippet_chars,
@@ -701,24 +703,40 @@ pub async fn start_chat_session(
                             if trimmed.is_empty() {
                                 continue;
                             }
-                            let late_note = if seconds_late > 60 {
-                                format!(" (~{} min late)", seconds_late / 60)
+                            let is_moltbook =
+                                trimmed.to_ascii_lowercase().contains("moltbook");
+                            let content = if is_moltbook {
+                                format!(
+                                    "{}{}\n\n\
+                                    [MOLTBOOK_CYCLE task_id={} alarm_id={}]\n\
+                                    Follow the Moltbook Browse Session Protocol in your identity.\n\
+                                    Use clock:now to check the time budget. Include moltbook:search sometimes for discovery; welcome newcomers after reading threads.\n\
+                                    If expired, summarize and call agenda:remove with task_id above.",
+                                    SYSTEM_ALARM_PREFIX,
+                                    trimmed,
+                                    agenda_task_id,
+                                    alarm_record_id,
+                                )
                             } else {
-                                String::new()
+                                let late_note = if seconds_late > 60 {
+                                    format!(" (~{} min late)", seconds_late / 60)
+                                } else {
+                                    String::new()
+                                };
+                                format!(
+                                    "{}{}{}\n\n\
+            This is a linked agenda reminder — please answer explicitly:\n\
+            • Done — you finished this task now. Say clearly (e.g. \"done\" or \"finished\") so the assistant can mark it complete with agenda:complete.\n\
+            • Snooze — you still need a later nudge. Say when (e.g. \"in 10 minutes\" or \"at 15:00\") so the assistant can reschedule with agenda:remind_at using task_id below.\n\n\
+            [AGENDA_CONFIRM task_id={} alarm_id={} late_sec={}]",
+                                    SYSTEM_ALARM_PREFIX,
+                                    trimmed,
+                                    late_note,
+                                    agenda_task_id,
+                                    alarm_record_id,
+                                    seconds_late
+                                )
                             };
-                            let content = format!(
-                                "{}{}{}\n\n\
-This is a linked agenda reminder — please answer explicitly:\n\
-• Done — you finished this task now. Say clearly (e.g. \"done\" or \"finished\") so the assistant can mark it complete with agenda:complete.\n\
-• Snooze — you still need a later nudge. Say when (e.g. \"in 10 minutes\" or \"at 15:00\") so the assistant can reschedule with agenda:remind_at using task_id below.\n\n\
-[AGENDA_CONFIRM task_id={} alarm_id={} late_sec={}]",
-                                SYSTEM_ALARM_PREFIX,
-                                trimmed,
-                                late_note,
-                                agenda_task_id,
-                                alarm_record_id,
-                                seconds_late
-                            );
                             orchestrator.chat_stack.push(crate::engine::Message {
                                 role: "user".to_string(),
                                 content,
@@ -777,9 +795,7 @@ This is a linked agenda reminder — please answer explicitly:\n\
             while let Some(ing) = pending_inputs.pop_front() {
                 orchestrator.queued_inputs = pending_inputs.len();
                 orchestrator.broadcast_state().await;
-                let for_model = ing
-                    .for_model
-                    .unwrap_or_else(|| ing.display.clone());
+                let for_model = ing.for_model.unwrap_or_else(|| ing.display.clone());
                 tracing::info!(
                     msg_len = for_model.len(),
                     queued = pending_inputs.len(),

@@ -22,11 +22,7 @@ pub async fn sync_identity_user_line(workspace_root: &Path, user_name: &str) -> 
             return Ok(());
         }
         Err(e) => {
-            return Err(FcpError::Config(format!(
-                "read {}: {}",
-                path.display(),
-                e
-            )));
+            return Err(FcpError::Config(format!("read {}: {}", path.display(), e)));
         }
     };
 
@@ -39,23 +35,15 @@ pub async fn sync_identity_user_line(workspace_root: &Path, user_name: &str) -> 
         new_lines.push(line.clone());
         if !inserted && line.trim_start().starts_with("Agent Name:") {
             if !trimmed.is_empty() {
-                new_lines.push(format!(
-                    "User Name is: {} (your main user!)",
-                    trimmed
-                ));
+                new_lines.push(format!("User Name is: {} (your main user!)", trimmed));
             }
             inserted = true;
         }
     }
 
     if !trimmed.is_empty() && !inserted {
-        tracing::warn!(
-            "Identity.md has no 'Agent Name:' line; appending user name at end"
-        );
-        new_lines.push(format!(
-            "User Name is: {} (your main user!)",
-            trimmed
-        ));
+        tracing::warn!("Identity.md has no 'Agent Name:' line; appending user name at end");
+        new_lines.push(format!("User Name is: {} (your main user!)", trimmed));
     }
 
     let mut out = new_lines.join("\n");

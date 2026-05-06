@@ -4,8 +4,8 @@
 //! Serenity fills guild channels from `GUILD_CREATE` after the READY payload; scanning the cache
 //! in `ready` often sees an empty channel list.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serenity::async_trait;
 use serenity::model::channel::ChannelType;
@@ -13,7 +13,7 @@ use serenity::model::gateway::Ready;
 use serenity::model::id::{ChannelId, GuildId};
 use serenity::model::prelude::Message;
 use serenity::prelude::{Context, EventHandler};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 
 use crate::config::AppConfig;
 use crate::presentation::{InputSource, UserAction, UserIngress};
@@ -172,7 +172,10 @@ impl EventHandler for DiscordHandler {
                     "Dropped !cancel: user action channel full or closed"
                 );
             } else {
-                tracing::debug!(event = "fcp.discord.cancel_queued", "Queued CancelCurrentTurn from Discord");
+                tracing::debug!(
+                    event = "fcp.discord.cancel_queued",
+                    "Queued CancelCurrentTurn from Discord"
+                );
             }
             return;
         }

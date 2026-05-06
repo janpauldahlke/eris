@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use crate::executive::error::{FcpError, Result};
 use crate::tools::clock::{
-    load_alarms, next_wall_alarm_fire_local, save_alarms, AlarmRecord, MAX_LABEL_CHARS,
+    AlarmRecord, MAX_LABEL_CHARS, load_alarms, next_wall_alarm_fire_local, save_alarms,
 };
 use crate::tools::traits::Tool;
 use tokio::sync::mpsc;

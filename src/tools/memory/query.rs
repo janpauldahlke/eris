@@ -1,12 +1,12 @@
-use std::sync::Arc;
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
+use std::sync::Arc;
 
 use crate::executive::error::{FcpError, Result};
-use crate::tools::traits::Tool;
 use crate::memory::semantic::{MemoryQueryOptions, MemoryQuerySort, SemanticBrain};
+use crate::tools::traits::Tool;
 
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
@@ -66,8 +66,7 @@ impl Tool for MemoryQueryTool {
     }
 
     async fn execute(&self, args: Value) -> Result<String> {
-        let args: MemoryQueryArgs = serde_json::from_value(args)
-            .map_err(FcpError::ParseFault)?;
+        let args: MemoryQueryArgs = serde_json::from_value(args).map_err(FcpError::ParseFault)?;
 
         if args.query.trim().is_empty() {
             return Err(FcpError::ToolFault {
@@ -85,10 +84,7 @@ impl Tool for MemoryQueryTool {
         let top_k_max = self.top_k_max.max(1);
         let default_top_k = self.default_top_k.max(1).min(top_k_max);
 
-        let top_k = args
-            .top_k
-            .unwrap_or(default_top_k)
-            .clamp(1, top_k_max) as u64;
+        let top_k = args.top_k.unwrap_or(default_top_k).clamp(1, top_k_max) as u64;
 
         let min_floor = self.min_max_total_chars.max(1);
         let max_total_chars = args
@@ -96,7 +92,10 @@ impl Tool for MemoryQueryTool {
             .unwrap_or(self.default_max_total_chars)
             .max(min_floor) as usize;
 
-        let min_score = args.min_score.filter(|s| s.is_finite()).map(|s| s.clamp(0.0, 1.0));
+        let min_score = args
+            .min_score
+            .filter(|s| s.is_finite())
+            .map(|s| s.clamp(0.0, 1.0));
 
         let vault_path_prefix = args
             .vault_path_prefix
@@ -144,7 +143,10 @@ impl Tool for MemoryQueryTool {
         text.push_str(&outcome.markdown);
 
         if text.trim().is_empty() {
-            Ok(format!("No semantic memory found for query: {}", args.query))
+            Ok(format!(
+                "No semantic memory found for query: {}",
+                args.query
+            ))
         } else {
             Ok(text)
         }

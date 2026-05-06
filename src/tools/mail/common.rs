@@ -14,7 +14,10 @@ pub fn header_value_from_json(headers: &[Value], name: &str) -> Option<String> {
 
 pub fn format_metadata_line(v: &Value, fallback_id: &str, fallback_thread: &str) -> String {
     let id = v.get("id").and_then(|x| x.as_str()).unwrap_or(fallback_id);
-    let thread = v.get("threadId").and_then(|x| x.as_str()).unwrap_or(fallback_thread);
+    let thread = v
+        .get("threadId")
+        .and_then(|x| x.as_str())
+        .unwrap_or(fallback_thread);
     let snippet: String = v
         .get("snippet")
         .and_then(|s| s.as_str())
@@ -35,7 +38,8 @@ pub fn format_metadata_line(v: &Value, fallback_id: &str, fallback_thread: &str)
         .map(|headers| {
             (
                 header_value_from_json(headers, "Subject").unwrap_or_else(|| "(no subject)".into()),
-                header_value_from_json(headers, "From").unwrap_or_else(|| "(unknown sender)".into()),
+                header_value_from_json(headers, "From")
+                    .unwrap_or_else(|| "(unknown sender)".into()),
                 header_value_from_json(headers, "Date").unwrap_or_else(|| "".into()),
             )
         })

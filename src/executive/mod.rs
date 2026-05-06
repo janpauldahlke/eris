@@ -1,9 +1,9 @@
 pub mod chat_session;
 pub mod cli;
 pub mod error;
-pub mod router;
-pub mod ignition;
-pub mod setup_welder;
 pub mod identity_md;
+pub mod ignition;
 pub mod peripherals;
+pub mod router;
+pub mod setup_welder;
 pub mod vault_identity;

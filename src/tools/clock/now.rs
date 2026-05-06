@@ -47,7 +47,8 @@ impl Tool for ClockNowTool {
     }
 
     async fn execute(&self, args: Value) -> Result<String> {
-        let _: ClockNowArgs = serde_json::from_value(args).map_err(crate::executive::error::FcpError::ParseFault)?;
+        let _: ClockNowArgs =
+            serde_json::from_value(args).map_err(crate::executive::error::FcpError::ParseFault)?;
         let now = Local::now();
         let primary = now.format("%H:%M : %d/%m/%y").to_string();
         let tz = now.format("%Z").to_string();

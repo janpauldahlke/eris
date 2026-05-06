@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use crate::executive::error::{FcpError, Result};
 use crate::generated::gws_types::gmail::ListMessagesResponse;
-use crate::tools::context_view_hint::{ToolContextViewHint, API_TOOL_SNIPPET_CHARS};
+use crate::tools::context_view_hint::{API_TOOL_SNIPPET_CHARS, ToolContextViewHint};
 use crate::tools::mail::common::format_metadata_line;
 use crate::tools::traits::Tool;
 use crate::util::GmailClient;
@@ -60,8 +60,7 @@ impl Tool for MailDigestTool {
     }
 
     async fn execute(&self, args: Value) -> Result<String> {
-        let parsed: MailDigestArgs =
-            serde_json::from_value(args).map_err(FcpError::ParseFault)?;
+        let parsed: MailDigestArgs = serde_json::from_value(args).map_err(FcpError::ParseFault)?;
         let max = parsed
             .max_messages
             .unwrap_or(DEFAULT_MAX)

@@ -50,11 +50,7 @@ pub fn is_jit_system_message(m: &Message) -> bool {
 
 fn json_slice(s: &str) -> &str {
     if let (Some(start), Some(end)) = (s.find('{'), s.rfind('}')) {
-        if start <= end {
-            &s[start..=end]
-        } else {
-            s
-        }
+        if start <= end { &s[start..=end] } else { s }
     } else {
         s
     }
@@ -146,7 +142,9 @@ pub fn split_tail_fold_and_keep(tail: &[Message], budget: usize) -> (Vec<Message
     let mut kept_tail = kept;
 
     if old_part.is_empty() && tail.len() >= 2 {
-        let n_fold = (tail.len().saturating_sub(1)).min((tail.len() + 2) / 3).max(1);
+        let n_fold = (tail.len().saturating_sub(1))
+            .min((tail.len() + 2) / 3)
+            .max(1);
         old_part = tail[..n_fold].to_vec();
         kept_tail = tail[n_fold..].to_vec();
     }
@@ -166,7 +164,10 @@ pub struct CondensationPlan {
 }
 
 /// Build a condensation plan, or `None` if there is nothing worth folding (no LLM call).
-pub fn plan_sliding_condensation(stack: &[Message], num_ctx: usize) -> Result<Option<CondensationPlan>> {
+pub fn plan_sliding_condensation(
+    stack: &[Message],
+    num_ctx: usize,
+) -> Result<Option<CondensationPlan>> {
     let head = split_stack_head(stack)?;
     let tail = tail_after_head(stack, &head);
     if tail.is_empty() {
@@ -225,9 +226,7 @@ pub fn build_summarization_stack(
     if let Some(prev) = previous_rolling_json.filter(|s| !s.trim().is_empty()) {
         out.push(Message {
             role: "system".to_string(),
-            content: format!(
-                "[PRIOR_ROLLING_SUMMARY_JSON]\n{prev}\n[/PRIOR_ROLLING_SUMMARY_JSON]"
-            ),
+            content: format!("[PRIOR_ROLLING_SUMMARY_JSON]\n{prev}\n[/PRIOR_ROLLING_SUMMARY_JSON]"),
         });
     }
     for m in messages_to_fold {
