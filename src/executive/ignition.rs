@@ -29,7 +29,7 @@ pub async fn run_ignition_sequence(workspace_root: &Path, options: IgnitionOptio
     let model_names: Vec<String> = local_models.into_iter().map(|m| m.name).collect();
 
     // 2. Interactive Prompts (blocking task)
-    let (agent_name, user_name, model_name) = tokio::task::spawn_blocking(move || -> Result<(String, String, String)> {
+    let (agent_name, user_name, model_name, ollama_num_gpu, ollama_main_gpu, ollama_low_vram) = tokio::task::spawn_blocking(move || -> Result<(String, String, String, Option<u32>, Option<u32>, Option<bool>)> {
         let agent_name = Text::new("Agent Name:")
             .with_default("ERIS")
             .prompt()
@@ -76,7 +76,55 @@ pub async fn run_ignition_sequence(workspace_root: &Path, options: IgnitionOptio
                 })?
         };
 
-        Ok((agent_name, user_name, model_name))
+        let ollama_low_vram = Some(
+            inquire::Confirm::new("Enable Ollama low VRAM mode?")
+                .with_default(false)
+                .prompt()
+                .map_err(|e| match e {
+                    inquire::InquireError::OperationCanceled | inquire::InquireError::OperationInterrupted => {
+                        FcpError::Cancellation("Ignition cancelled by user".into())
+                    }
+                    _ => FcpError::Config(format!("Prompt error: {}", e)),
+                })?,
+        );
+
+        let num_gpu_raw = Text::new("Ollama num_gpu (GPU layers, blank = auto):")
+            .with_default("")
+            .prompt()
+            .map_err(|e| match e {
+                inquire::InquireError::OperationCanceled | inquire::InquireError::OperationInterrupted => {
+                    FcpError::Cancellation("Ignition cancelled by user".into())
+                }
+                _ => FcpError::Config(format!("Prompt error: {}", e)),
+            })?;
+        let num_gpu_raw = num_gpu_raw.trim();
+        let ollama_num_gpu = if num_gpu_raw.is_empty() {
+            None
+        } else {
+            Some(num_gpu_raw.parse::<u32>().map_err(|_| {
+                FcpError::Config("Invalid num_gpu: expected non-negative integer".into())
+            })?)
+        };
+
+        let main_gpu_raw = Text::new("Ollama main_gpu index (blank = default):")
+            .with_default("")
+            .prompt()
+            .map_err(|e| match e {
+                inquire::InquireError::OperationCanceled | inquire::InquireError::OperationInterrupted => {
+                    FcpError::Cancellation("Ignition cancelled by user".into())
+                }
+                _ => FcpError::Config(format!("Prompt error: {}", e)),
+            })?;
+        let main_gpu_raw = main_gpu_raw.trim();
+        let ollama_main_gpu = if main_gpu_raw.is_empty() {
+            None
+        } else {
+            Some(main_gpu_raw.parse::<u32>().map_err(|_| {
+                FcpError::Config("Invalid main_gpu: expected non-negative integer".into())
+            })?)
+        };
+
+        Ok((agent_name, user_name, model_name, ollama_num_gpu, ollama_main_gpu, ollama_low_vram))
     }).await.map_err(|e| FcpError::Config(format!("Spawn blocking failed: {}", e)))??;
 
     // 3. The Scaffold (v2 Zettelkasten roots)
@@ -124,6 +172,9 @@ pub async fn run_ignition_sequence(workspace_root: &Path, options: IgnitionOptio
     let mut config = AppConfig {
         model_name,
         user_name,
+        ollama_num_gpu,
+        ollama_main_gpu,
+        ollama_low_vram,
         workspace: options.workspace,
         ..Default::default()
     };

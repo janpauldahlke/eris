@@ -90,8 +90,18 @@ impl LlmEngine for OllamaClient {
 
         use ollama_rs::models::ModelOptions;
 
-        let gen_options = ModelOptions::default()
+        let mut gen_options = ModelOptions::default()
             .num_ctx(self.config.num_ctx as u64);
+        if let Some(num_gpu) = self.config.ollama_num_gpu {
+            gen_options = gen_options.num_gpu(num_gpu);
+        }
+        if self.config.ollama_main_gpu.is_some() || self.config.ollama_low_vram.is_some() {
+            tracing::warn!(
+                main_gpu = self.config.ollama_main_gpu,
+                low_vram = self.config.ollama_low_vram,
+                "Configured main_gpu/low_vram are not forwarded: ollama-rs ModelOptions does not expose them yet"
+            );
+        }
 
         let request = ChatMessageRequest::new(
             self.config.model_name.clone(),

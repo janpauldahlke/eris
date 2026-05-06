@@ -165,6 +165,12 @@ pub struct AppConfig {
     pub user_name: String,
     /// Context window size passed to Ollama as `num_ctx` / generation options.
     pub num_ctx: usize,
+    /// Optional Ollama GPU layer count override (`num_gpu`). `None` uses Ollama auto-placement.
+    pub ollama_num_gpu: Option<u32>,
+    /// Optional Ollama primary GPU index (`main_gpu`) for multi-GPU systems.
+    pub ollama_main_gpu: Option<u32>,
+    /// Optional Ollama low-VRAM mode toggle (`low_vram`). `None` leaves runtime default.
+    pub ollama_low_vram: Option<bool>,
     /// Max seconds to wait for a single LLM generation (connect + stream).
     pub generation_timeout_secs: u64,
     /// Forwarded to Ollama on each chat request as `.think(...)` in `OllamaClient::generate` (`ollama-rs` `ChatMessageRequest`). `false` (default) turns off the separate thinking/reasoning channel for models that support it—saves tokens and RAM versus `true`. TOML key name is historical; unrelated to `engine::router::ReasoningRouter`.
@@ -780,6 +786,9 @@ impl Default for AppConfig {
             model_name: "gemma4:26b".into(),
             user_name: String::new(),
             num_ctx: 16384,
+            ollama_num_gpu: None,
+            ollama_main_gpu: None,
+            ollama_low_vram: None,
             generation_timeout_secs: 120,
             enable_reasoning_fsm: false,
             condensation_threshold: 0.5,
