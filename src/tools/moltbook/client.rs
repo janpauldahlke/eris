@@ -187,6 +187,13 @@ impl MoltbookClient {
         if !status.is_success() {
             return Err(map_http_error(status, &text, &rate_limit));
         }
+        if text.contains(TRUNCATED_SUFFIX) {
+            return Err(FcpError::MoltbookResponseParse(format!(
+                "response exceeded max_response_bytes={} (UTF-8 truncated before JSON parse); \
+                 raise [moltbook].max_response_bytes in config or request fewer comments",
+                self.max_response_bytes
+            )));
+        }
         let body = parse_moltbook_success_json_body(&text)?;
         Ok(MoltbookResponse { body, rate_limit })
     }
@@ -361,11 +368,34 @@ fn header_to_string(headers: &HeaderMap, name: &str) -> Option<String> {
         .map(ToString::to_string)
 }
 
+/// HTTP 403 from Moltbook is used both for bad credentials and for workflow rules (e.g. DM state).
+/// Only map clearly non-auth cases to [`FcpError::ToolFault`] so the orchestrator does not halt.
+fn moltbook_forbidden_tool_fault_reason(body: &str) -> Option<String> {
+    let lower = body.to_lowercase();
+    if lower.contains("conversation is not active") {
+        Some(
+            "DM conversation not active — approve the request or use an active thread.".into(),
+        )
+    } else {
+        None
+    }
+}
+
 fn map_http_error(status: StatusCode, body: &str, rate_limit: &MoltbookRateLimit) -> FcpError {
     let reason = summarize_error_body(body);
     match status {
-        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+        StatusCode::UNAUTHORIZED => {
             FcpError::Config(format!("Moltbook authentication failed: {reason}"))
+        }
+        StatusCode::FORBIDDEN => {
+            if let Some(short) = moltbook_forbidden_tool_fault_reason(body) {
+                FcpError::ToolFault {
+                    tool_name: TOOL_NAME.into(),
+                    reason: short,
+                }
+            } else {
+                FcpError::Config(format!("Moltbook authentication failed: {reason}"))
+            }
         }
         StatusCode::TOO_MANY_REQUESTS => {
             let retry = rate_limit
@@ -497,5 +527,28 @@ mod tests {
     fn parse_moltbook_body_maps_unfixable_to_moltbook_response_parse() {
         let err = parse_moltbook_success_json_body("{not json").expect_err("unparseable");
         assert!(matches!(err, FcpError::MoltbookResponseParse(_)));
+    }
+
+    #[test]
+    fn forbidden_conversation_inactive_maps_to_tool_fault() {
+        let body = r#"{"error":"Forbidden","message":"Conversation is not active"}"#;
+        let err = map_http_error(StatusCode::FORBIDDEN, body, &MoltbookRateLimit::default());
+        match err {
+            FcpError::ToolFault { tool_name, reason } => {
+                assert_eq!(tool_name, "moltbook");
+                assert!(
+                    reason.contains("not active"),
+                    "reason={reason:?}"
+                );
+            }
+            other => panic!("expected ToolFault, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn forbidden_unknown_still_maps_to_config() {
+        let body = r#"{"error":"Forbidden","message":"Invalid credential"}"#;
+        let err = map_http_error(StatusCode::FORBIDDEN, body, &MoltbookRateLimit::default());
+        assert!(matches!(err, FcpError::Config(_)));
     }
 }

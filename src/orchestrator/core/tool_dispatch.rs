@@ -202,7 +202,8 @@ impl<E: LlmEngine> Orchestrator<E> {
                         round = self.tool_rounds,
                         "Tool succeeded"
                     );
-                    let bounded_result = Self::trim_chars(&result, Self::MAX_TOOL_RESULT_CHARS);
+                    let trim_budget = self.tool_success_trim_budget(&tool_name);
+                    let bounded_result = Self::trim_chars(&result, trim_budget);
                     let msg = crate::orchestrator::context::format_tool_success_line(
                         &tool_name,
                         &bounded_result,

@@ -187,7 +187,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                     )
                     .await?
             } else if slim_assembly {
-                let offered: Vec<String> = if pre_llm_matched_tools.is_empty() {
+                let mut offered: Vec<String> = if pre_llm_matched_tools.is_empty() {
                     vec![]
                 } else {
                     let cap = self.tool_map_offer_cap;
@@ -197,12 +197,25 @@ impl<E: LlmEngine> Orchestrator<E> {
                         pre_llm_matched_tools.iter().take(cap).cloned().collect()
                     }
                 };
+                // Slim mode filters to `offered` only; semantic routing can omit every `moltbook:*`
+                // while the Moltbook overlay still instructs browse behavior — union native tools.
+                if moltbook_overlay_latched && !offered.is_empty() {
+                    for name in self
+                        .gatekeeper
+                        .allowed_tool_names_with_prefix(&self.state, "moltbook:")
+                    {
+                        if !offered.contains(&name) {
+                            offered.push(name);
+                        }
+                    }
+                }
                 tracing::info!(
                     event = "fcp.tool_prompt.assembly",
                     mode = "slim_phrase_map",
                     offered_count = offered.len(),
                     router_hit_count = pre_llm_matched_tools.len(),
                     cap = self.tool_map_offer_cap,
+                    moltbook_overlay_latched,
                     "Slim tool prompt assembly"
                 );
                 let descriptors = self.descriptor_registry.as_deref();

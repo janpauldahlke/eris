@@ -72,6 +72,11 @@ pub struct MoltbookConfig {
     /// defaults to 30s instead of the shorter `web_fetch_timeout_secs`.
     #[serde(default = "default_moltbook_timeout_secs")]
     pub timeout_secs: u64,
+    /// Max UTF-8 bytes read per Moltbook JSON response before parse.
+    /// Separate from [`AppConfig::web_fetch_max_bytes`]: large `moltbook:comments` / DM payloads
+    /// often exceed typical web-scrape caps (~20KiB) without being maliciously huge.
+    #[serde(default = "default_moltbook_max_response_bytes")]
+    pub max_response_bytes: usize,
 }
 
 fn default_moltbook_api_key_env() -> String {
@@ -86,6 +91,10 @@ fn default_moltbook_timeout_secs() -> u64 {
     30
 }
 
+fn default_moltbook_max_response_bytes() -> usize {
+    1_048_576
+}
+
 impl Default for MoltbookConfig {
     fn default() -> Self {
         Self {
@@ -95,6 +104,7 @@ impl Default for MoltbookConfig {
             agent_name: None,
             base_url: default_moltbook_base_url(),
             timeout_secs: default_moltbook_timeout_secs(),
+            max_response_bytes: default_moltbook_max_response_bytes(),
         }
     }
 }

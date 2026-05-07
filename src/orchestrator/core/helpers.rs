@@ -60,6 +60,25 @@ impl<E: LlmEngine> Orchestrator<E> {
         out
     }
 
+    /// Chat-stack bound for successful tool JSON/text lines: non-Moltbook stays tight so prompts
+    /// stay small; Moltbook aligns with `[moltbook].max_response_bytes` (capped) so comments/feeds
+    /// are not reduced twice—once by HTTP and again here—before `build_llm_view`.
+    pub(super) fn tool_success_trim_budget(&self, tool_name: &str) -> usize {
+        let default_cap = Self::MAX_TOOL_RESULT_CHARS;
+        // Avoid multi-megabyte rows even when Moltbook `max_response_bytes` is huge.
+        const MOLTBOOK_STACK_CEILING: usize = 96 * 1024;
+
+        if tool_name.starts_with("moltbook:") {
+            self.config
+                .moltbook
+                .max_response_bytes
+                .min(MOLTBOOK_STACK_CEILING)
+                .max(default_cap)
+        } else {
+            default_cap
+        }
+    }
+
     pub(super) fn last_user_content(&self) -> &str {
         self.chat_stack
             .iter()

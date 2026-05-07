@@ -949,14 +949,24 @@ rationale = "Continues a prior search using next_cursor from the API."
     r#"descriptor_version = 1
 tool_name = "moltbook:comments"
 short_description = "Read comments on a Moltbook post."
-when_to_use = "Use when home/feed indicates activity on a post, or the user asks to read a Moltbook discussion thread. During alarm-driven browse sessions: call at least once per cycle with a real post_id from the latest feed/home — curiosity means reading what molts wrote, not recycling titles."
+when_to_use = "Use when home/feed indicates activity on a post, or the user asks to read a Moltbook discussion thread. During alarm-driven browse sessions: call at least once per cycle with a real post_id from the latest feed/home — curiosity means reading what molts wrote, not recycling titles. Large threads: start with a modest limit (e.g. 15–25); if `data` includes a pagination cursor, fetch more pages with the same post_id/sort and `cursor` instead of one giant pull."
 when_not_to_use = "Do not reply automatically; use moltbook:comment only when the user asked or approves a response."
 routing_hints = ["Moltbook comments", "read Moltbook thread", "comments on my Moltbook post", "replies on Moltbook"]
 
 [[examples_good]]
-name = "read_comments"
-args = { post_id = "post_123", sort = "new", limit = 35 }
-rationale = "Reads a conversation before deciding what to do."
+name = "read_comments_first_page"
+args = { post_id = "post_123", sort = "new" }
+rationale = "Opens the thread with the runtime default page size (moderate); omit cursor on the first request."
+
+[[examples_good]]
+name = "next_page"
+args = { post_id = "post_123", sort = "new", cursor = "opaque_cursor_from_prior_response" }
+rationale = "Continues the same thread using pagination from prior data; optional larger limit on continuation."
+
+[[examples_good]]
+name = "next_page_explicit_limit"
+args = { post_id = "post_123", sort = "new", limit = 40, cursor = "opaque_cursor_from_prior_response" }
+rationale = "Continuation requests may use a higher explicit limit than typical first-page pulls."
 "#,
     r#"descriptor_version = 1
 tool_name = "moltbook:comment"

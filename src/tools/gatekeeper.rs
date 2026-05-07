@@ -67,6 +67,7 @@ impl Gatekeeper {
                     | "moltbook:feed"
                     | "moltbook:search"
                     | "moltbook:comments"
+                    | "moltbook:verify"
                     | "moltbook:dm"
             ),
             AgentState::Idle => matches!(
@@ -180,6 +181,18 @@ impl Gatekeeper {
                 })
             })
             .collect()
+    }
+
+    /// Registered tool names allowed in `state` whose name starts with `prefix` (e.g. `"moltbook:"`).
+    pub fn allowed_tool_names_with_prefix(&self, state: &AgentState, prefix: &str) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .registry
+            .keys()
+            .filter(|name| name.starts_with(prefix) && Self::state_allows_tool(state, name))
+            .cloned()
+            .collect();
+        names.sort();
+        names
     }
 
     pub async fn execute_tool(

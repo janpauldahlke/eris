@@ -267,7 +267,7 @@ pub async fn start_chat_session(
         match crate::tools::moltbook::MoltbookClient::unauthenticated(
             &config.moltbook,
             config.moltbook.timeout_secs,
-            config.web_fetch_max_bytes,
+            config.moltbook.max_response_bytes,
         ) {
             Ok(register_client) => {
                 gatekeeper.register(Arc::new(crate::tools::moltbook::MoltbookRegisterTool {
@@ -282,7 +282,7 @@ pub async fn start_chat_session(
         match crate::tools::moltbook::MoltbookClient::authenticated(
             &config.moltbook,
             config.moltbook.timeout_secs,
-            config.web_fetch_max_bytes,
+            config.moltbook.max_response_bytes,
         )
         .await
         {

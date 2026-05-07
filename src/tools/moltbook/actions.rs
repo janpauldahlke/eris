@@ -83,8 +83,10 @@ pub struct CommentsArgs {
     pub post_id: String,
     #[serde(default)]
     pub sort: Option<String>,
+    /// Page size. Omitted → 20. First page (no `cursor`): clamped to ≤30. With `cursor`: up to 100 per continuation request.
     #[serde(default)]
     pub limit: Option<u32>,
+    /// Continuation token from the prior `moltbook:comments` response (`next_cursor` / pagination field in `data`), same post_id and sort.
     #[serde(default)]
     pub cursor: Option<String>,
 }
@@ -348,9 +350,7 @@ impl Tool for MoltbookHomeTool {
     }
 
     fn context_view_hint(&self) -> ToolContextViewHint {
-        ToolContextViewHint::Snippet {
-            max_chars: API_TOOL_SNIPPET_CHARS * 2,
-        }
+        ToolContextViewHint::Full
     }
 
     fn allow_repeat_in_turn(&self) -> bool {
@@ -383,9 +383,7 @@ impl Tool for MoltbookFeedTool {
     }
 
     fn context_view_hint(&self) -> ToolContextViewHint {
-        ToolContextViewHint::Snippet {
-            max_chars: API_TOOL_SNIPPET_CHARS * 2,
-        }
+        ToolContextViewHint::Full
     }
 
     fn allow_repeat_in_turn(&self) -> bool {
@@ -436,9 +434,7 @@ impl Tool for MoltbookSearchTool {
     }
 
     fn context_view_hint(&self) -> ToolContextViewHint {
-        ToolContextViewHint::Snippet {
-            max_chars: API_TOOL_SNIPPET_CHARS * 2,
-        }
+        ToolContextViewHint::Full
     }
 
     fn allow_repeat_in_turn(&self) -> bool {
@@ -472,7 +468,7 @@ impl Tool for MoltbookCommentsTool {
     }
 
     fn description(&self) -> &'static str {
-        "Read comments on a Moltbook post."
+        "Read comments on a Moltbook post (cursor pagination: moderate pages; pass cursor from prior response for next chunk)."
     }
 
     fn parameters_schema(&self) -> RootSchema {
@@ -480,15 +476,33 @@ impl Tool for MoltbookCommentsTool {
     }
 
     fn context_view_hint(&self) -> ToolContextViewHint {
-        ToolContextViewHint::Snippet {
-            max_chars: API_TOOL_SNIPPET_CHARS * 2,
-        }
+        ToolContextViewHint::Full
+    }
+
+    /// Same post/limit/sort may repeat across inner batches in one `step()` (retry, refresh,
+    /// model omitting `cursor`); per-step duplicate suppression would block legitimate reads.
+    fn allow_repeat_in_turn(&self) -> bool {
+        true
     }
 
     async fn execute(&self, args: Value) -> Result<String> {
         let parsed = parse_args!(args, CommentsArgs);
         let post_id = clean_path_segment("post_id", &parsed.post_id)?;
-        let limit = clamp_limit(parsed.limit, 35, 100).to_string();
+        let cursor_active = parsed
+            .cursor
+            .as_ref()
+            .map(|c| !c.trim().is_empty())
+            .unwrap_or(false);
+        let limit_n = comments_effective_limit(cursor_active, parsed.limit);
+        tracing::debug!(
+            event = "moltbook.comments.page_limit",
+            post_id = %post_id,
+            cursor_active,
+            limit = limit_n,
+            limit_arg = ?parsed.limit,
+            "Effective comments page limit"
+        );
+        let limit = limit_n.to_string();
         let query = [
             ("sort", parsed.sort),
             ("limit", Some(limit)),
@@ -505,7 +519,7 @@ impl Tool for MoltbookCommentsTool {
         tool_result(
             self.name(),
             response,
-            "Reply only when the user asked or the conversation clearly needs a response.",
+            "If `data` exposes a pagination cursor and you still need more replies, call again with the same post_id and sort, passing that value as `cursor`. Use a smaller `limit` if responses are huge.",
         )
     }
 }
@@ -738,9 +752,7 @@ impl Tool for MoltbookDmTool {
     }
 
     fn context_view_hint(&self) -> ToolContextViewHint {
-        ToolContextViewHint::Snippet {
-            max_chars: API_TOOL_SNIPPET_CHARS * 2,
-        }
+        ToolContextViewHint::Full
     }
 
     async fn execute(&self, args: Value) -> Result<String> {
@@ -841,6 +853,20 @@ fn clamp_limit(raw: Option<u32>, default: u32, max: u32) -> u32 {
     raw.unwrap_or(default).clamp(1, max)
 }
 
+/// Prefer smaller first pages; allow larger pulls only when continuing with `cursor`.
+fn comments_effective_limit(cursor_active: bool, raw_limit: Option<u32>) -> u32 {
+    const DEFAULT: u32 = 20;
+    const FIRST_PAGE_MAX: u32 = 30;
+    const CONTINUATION_MAX: u32 = 100;
+
+    match (cursor_active, raw_limit) {
+        (true, None) => DEFAULT,
+        (true, Some(l)) => l.clamp(1, CONTINUATION_MAX),
+        (false, None) => DEFAULT,
+        (false, Some(l)) => l.clamp(1, FIRST_PAGE_MAX),
+    }
+}
+
 fn required_segment(raw: Option<&str>, label: &str) -> Result<String> {
     let value = raw.ok_or_else(|| FcpError::SchemaViolation(format!("{label} is required")))?;
     clean_path_segment(label, value)
@@ -857,6 +883,22 @@ mod tests {
     use crate::tools::Tool;
     use wiremock::matchers::{header, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[test]
+    fn comments_effective_limit_first_page_defaults_and_caps() {
+        assert_eq!(comments_effective_limit(false, None), 20);
+        assert_eq!(comments_effective_limit(false, Some(15)), 15);
+        assert_eq!(comments_effective_limit(false, Some(30)), 30);
+        assert_eq!(comments_effective_limit(false, Some(50)), 30);
+    }
+
+    #[test]
+    fn comments_effective_limit_continuation_allows_high_explicit() {
+        assert_eq!(comments_effective_limit(true, None), 20);
+        assert_eq!(comments_effective_limit(true, Some(80)), 80);
+        assert_eq!(comments_effective_limit(true, Some(100)), 100);
+        assert_eq!(comments_effective_limit(true, Some(150)), 100);
+    }
 
     #[test]
     fn normalize_moltbook_verify_answer_formats_two_decimals() {

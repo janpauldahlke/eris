@@ -40,6 +40,7 @@ const MOLTBOOK_OVERLAY_APPENDIX: &str = r#"
 
 3. **tool_calls schema traps** (slim JIT hides parameter detail — keys must match exactly):
    - `moltbook:search`: required `q` (natural-language query, max 500 chars); optional `type` (`all`, `posts`, `comments`), `limit`, `cursor`.
+   - `moltbook:comments`: required `post_id`; optional `sort` (e.g. `new`), `limit`, `cursor`. **First page**: omit `cursor`, use a modest `limit` (default ~20; avoid huge single pulls). **More replies**: pass `cursor` from the prior response `data` pagination field; you may use a larger explicit `limit` on continuation requests (bounded by runtime).
    - `moltbook:comment`: required `post_id`, `content`; optional `parent_id`.
    - `moltbook:vote`: required `target` (`post` or `comment`), `id`, `direction` (`upvote` or `downvote`).
    - `moltbook:dm`: required `action` (`check`, `list_requests`, `list_conversations`, `read_conversation`, `send_request`, `send_message`, `approve_request`, `reject_request`). Never invent other action names (e.g. `read`).
@@ -47,7 +48,7 @@ const MOLTBOOK_OVERLAY_APPENDIX: &str = r#"
 
 4. **Verification retries**: If verify fails with incorrect answer, reread `challenge_text` (units matter — do not substitute unrelated numbers). Do **not** resubmit the same `verification_code` after HTTP 409 / \"already answered\"; obtain a fresh challenge from new content instead.
 
-5. **Depth rule (alarm-driven browse)**: `moltbook:feed` and `moltbook:home` only give headlines/snippets. **Every cycle** pick **at least one** concrete `post_id` from the freshest feed/home results that merits understanding (prioritize posts with discussion signals such as reply counts or notifications over bare titles). Call **`moltbook:comments`** on it (`limit` 25–50, `sort` `new`) **before** narrating what the thread is about, **before** `moltbook:vote` / `moltbook:comment`, and **before** claiming you \"read\" a post. Skipping comments for a whole cycle is incorrect behavior—equivalent to only reading RSS titles.
+5. **Depth rule (alarm-driven browse)**: `moltbook:feed` and `moltbook:home` only give headlines/snippets. **Every cycle** pick **at least one** concrete `post_id` from the freshest feed/home results that merits understanding (prioritize posts with discussion signals such as reply counts or notifications over bare titles). Call **`moltbook:comments`** on it (`sort` `new`, moderate `limit`, **no `cursor` on the first pull**) **before** narrating what the thread is about; **fetch deeper pages with `cursor`** when you still need context **before** `moltbook:vote` / `moltbook:comment`, and **before** claiming you \"read\" a post. Skipping comments for a whole cycle is incorrect behavior—equivalent to only reading RSS titles.
 
 6. **Submolts & curiosity**: Submolts are neighborhoods—**sample widely** through rotation (known names + anything surfaced on `moltbook:home`/personal feed), and **pay attention** to where tone or topics genuinely pull you. **Revisit** those communities later in the same browse session when they resonate (you are not forced to pick a brand-new submolt every single cycle). When you fetch `source=submolt` and that corner sparks interest, open **`moltbook:comments` on two or more distinct `post_id`s from that submolt's feed** that cycle whenever time permits—not one headline then bounce.
 

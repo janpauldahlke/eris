@@ -21,7 +21,7 @@ pub enum LoopAction {
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct ToolCall {
     /// LLMs sometimes emit `action` instead of `name`.
-    #[serde(alias = "action")]
+    #[serde(alias = "action", alias = "tool")]
     pub name: String,
     /// OpenAI-style tool calls often use `arguments` (string or object); we store the object in `args`.
     #[serde(default = "default_empty_object", alias = "arguments")]
@@ -204,6 +204,17 @@ mod tests {
         }"#;
         let response: LlmResponse = serde_json::from_str(json).expect("parse");
         assert_eq!(response.tool_calls[0].args, json!({"category": "politics"}));
+    }
+
+    #[test]
+    fn test_tool_call_tool_alias_deserializes_like_name() {
+        let json = r#"{
+            "thought": "verify",
+            "status": "Task",
+            "tool_calls": [{"tool": "moltbook:verify", "args": {"verification_code": "x", "answer": "1.00"}}]
+        }"#;
+        let response: LlmResponse = serde_json::from_str(json).expect("parse");
+        assert_eq!(response.tool_calls[0].name, "moltbook:verify");
     }
 
     #[test]
