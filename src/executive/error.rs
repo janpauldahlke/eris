@@ -32,6 +32,11 @@ pub enum FcpError {
     #[error("JSON Parse Fault: {0}")]
     ParseFault(#[from] serde_json::Error),
 
+    /// HTTP success from Moltbook, but the response body was not valid JSON (or not JSON-safe).
+    /// Distinct from [`FcpError::ParseFault`] on LLM/tool args so recovery does not treat it as a schema fault.
+    #[error("Moltbook response JSON parse fault: {0}")]
+    MoltbookResponseParse(String),
+
     #[error("Qdrant Daemon Offline: {0}")]
     VectorDbOffline(String),
 

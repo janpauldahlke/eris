@@ -55,6 +55,8 @@ impl<E: LlmEngine> Orchestrator<E> {
         targeted_tools: &mut HashSet<String>,
         web_tool_activity: &mut bool,
         tool_ms_acc: &mut u64,
+        turn_seq: u64,
+        moltbook_overlay_latched: bool,
     ) -> Result<ToolBatchDecision> {
         if !tools_needed {
             tracing::info!(
@@ -76,12 +78,48 @@ impl<E: LlmEngine> Orchestrator<E> {
         let mut suppressed_duplicate_count = 0usize;
         let mut recoverable_fail_count = 0usize;
         let mut fatal_fail_count = 0usize;
+        let mut suppressed_repeat_failure_streak = 0usize;
 
         for tool_call in tools {
             let tool_name = tool_call.name;
             let args = tool_call.args;
             let intent_id = Self::tool_fingerprint(&tool_name, &args);
             let repeatable = self.gatekeeper.tool_allows_repeat(&tool_name);
+            let repeat_streak_key = format!("{tool_name}\0{intent_id}");
+            if repeatable
+                && moltbook_overlay_latched
+                && self
+                    .tool_repeat_failure_streak
+                    .get(&repeat_streak_key)
+                    .copied()
+                    .unwrap_or(0)
+                    >= 2
+            {
+                suppressed_repeat_failure_streak += 1;
+                if let Some(ref mut ledger) = self.moltbook_browse_ledger {
+                    ledger.record_repeat_failure_suppressed();
+                }
+                tracing::info!(
+                    turn_seq,
+                    tool = %tool_name,
+                    intent_id = %intent_id,
+                    event = "orchestrator.tools.repeat_failure_suppressed",
+                    "Repeated identical repeatable tool after consecutive failures; suppressed"
+                );
+                let msg = format!(
+                    "[SYSTEM] Blocked repeated failure for `{tool_name}` with the same arguments in this turn after consecutive failures. Change `post_id` or other args, or pick a different action."
+                );
+                self.chat_stack.push(crate::engine::Message {
+                    role: "system".to_string(),
+                    content: msg.clone(),
+                });
+                if let Some(tx) = &self.presentation_tx {
+                    let telemetry =
+                        format!("[tool] {tool_name} · repeat-failure streak suppressed");
+                    let _ = tx.send(SessionEvent::SystemError(telemetry)).await;
+                }
+                continue;
+            }
             if !repeatable
                 && let Some(existing) = execution_ledger.get(&intent_id)
                 && matches!(
@@ -143,6 +181,10 @@ impl<E: LlmEngine> Orchestrator<E> {
             *tool_ms_acc = (*tool_ms_acc).saturating_add(tool_started.elapsed().as_millis() as u64);
             match result {
                 Ok(result) => {
+                    self.tool_repeat_failure_streak.remove(&repeat_streak_key);
+                    if let Some(ref mut ledger) = self.moltbook_browse_ledger {
+                        ledger.record_success(&tool_name, &args);
+                    }
                     if let Some(ticket) = execution_ledger.get_mut(&intent_id) {
                         ticket.status = ToolIntentStatus::Success;
                         ticket.last_error = None;
@@ -175,19 +217,31 @@ impl<E: LlmEngine> Orchestrator<E> {
                     }
                     self.broadcast_state().await;
                 }
-                Err(e) => {
+                Err(err) => {
                     tracing::error!(
                         tool = %tool_name,
                         intent_id = %intent_id,
-                        error = %e,
-                        error_type = ?std::mem::discriminant(&e),
+                        error = %err,
+                        error_type = ?std::mem::discriminant(&err),
                         "Tool execution failed"
                     );
-                    if let Some(ticket) = execution_ledger.get_mut(&intent_id) {
-                        ticket.last_error = Some(e.to_string());
+                    if repeatable && moltbook_overlay_latched {
+                        let streak = self
+                            .tool_repeat_failure_streak
+                            .entry(repeat_streak_key)
+                            .or_insert(0);
+                        *streak = (*streak).saturating_add(1);
                     }
-                    let failure_action =
-                        classify_tool_failure(&e, schema_recovery_attempted.contains(&tool_name));
+                    if let Some(ref mut ledger) = self.moltbook_browse_ledger {
+                        ledger.record_moltbook_tool_failure(&tool_name, &err);
+                    }
+                    if let Some(ticket) = execution_ledger.get_mut(&intent_id) {
+                        ticket.last_error = Some(err.to_string());
+                    }
+                    let failure_action = classify_tool_failure(
+                        &err,
+                        schema_recovery_attempted.contains(&tool_name),
+                    );
                     match failure_action {
                         ToolFailureAction::TargetedSchemaRetry => {
                             schema_recovery_attempted.insert(tool_name.clone());
@@ -198,7 +252,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                                 ticket.status = ToolIntentStatus::FailedRecoverable;
                             }
                             if recoverable_msg.is_none() {
-                                recoverable_msg = Some(e.to_string());
+                                recoverable_msg = Some(err.to_string());
                             }
                             tracing::warn!(tool = %tool_name, "Schema-fault recovery armed for tool");
                         }
@@ -208,7 +262,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                                 ticket.status = ToolIntentStatus::FailedRecoverable;
                             }
                             if recoverable_msg.is_none() {
-                                recoverable_msg = Some(e.to_string());
+                                recoverable_msg = Some(err.to_string());
                             }
                         }
                         ToolFailureAction::Fatal => {
@@ -216,13 +270,52 @@ impl<E: LlmEngine> Orchestrator<E> {
                             if let Some(ticket) = execution_ledger.get_mut(&intent_id) {
                                 ticket.status = ToolIntentStatus::FailedFatal;
                             }
-                            tracing::error!(error = %e, "System fatality detected during tool execution");
+                            tracing::error!(error = %err, "System fatality detected during tool execution");
                             if fatal_error.is_none() {
-                                fatal_error = Some(e);
+                                fatal_error = Some(err);
                             }
                         }
                     }
                 }
+            }
+        }
+
+        let batch_had_tool_activity = executed_success_count > 0
+            || recoverable_fail_count > 0
+            || fatal_fail_count > 0
+            || suppressed_duplicate_count > 0
+            || suppressed_repeat_failure_streak > 0;
+        if batch_had_tool_activity {
+            if let Some(ledger) = self.moltbook_browse_ledger.as_mut() {
+                if let Some(nudge) = ledger.missing_invariant_nudge() {
+                    self.chat_stack.push(crate::engine::Message {
+                        role: "system".to_string(),
+                        content: nudge,
+                    });
+                    tracing::info!(
+                        turn_seq,
+                        event = "moltbook.cycle.nudge",
+                        "Moltbook browse cycle policy nudge injected"
+                    );
+                }
+                let agenda_xor = crate::tools::agenda::remind_at::agenda_xor_normalized_count_for_logs();
+                tracing::info!(
+                    turn_seq,
+                    event = "moltbook.browse.batch_ledger",
+                    moltbook_cycle_id = ledger.started_at_turn_seq,
+                    comments_opened_unique_post_ids = ledger.comments_unique_post_ids.len(),
+                    repeat_failure_suppressions = ledger.repeat_failure_suppressions,
+                    agenda_xor_normalized_count = agenda_xor,
+                    home_ok = ledger.home_ok,
+                    search_ok = ledger.search_ok,
+                    feed_ok = ledger.feed_ok,
+                    comments_ok = ledger.comments_ok,
+                    votes = ledger.votes,
+                    memory_stage = ledger.memory_stage,
+                    remind_ok = ledger.remind_ok,
+                    last_blocker = ?ledger.last_blocker,
+                    "Moltbook browse ledger after tool batch (merge-gate / soak telemetry)"
+                );
             }
         }
 
@@ -243,6 +336,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             event = "orchestrator.tools.batch.summary",
             executed_success_count,
             suppressed_duplicate_count,
+            suppressed_repeat_failure_streak,
             recoverable_fail_count,
             fatal_fail_count,
             "Tool batch outcome summary"
@@ -251,12 +345,14 @@ impl<E: LlmEngine> Orchestrator<E> {
         if executed_success_count == 0
             && recoverable_fail_count == 0
             && fatal_fail_count == 0
-            && suppressed_duplicate_count > 0
+            && (suppressed_duplicate_count > 0 || suppressed_repeat_failure_streak > 0)
         {
             tracing::info!(
-                "All tool intents in batch were duplicate-suppressed; forcing user-facing reply via recover"
+                suppressed_duplicate_count,
+                suppressed_repeat_failure_streak,
+                "All tool intents in batch were suppressed (duplicates or repeat-failure streak); forcing user-facing reply via recover"
             );
-            let msg = "[SYSTEM OVERRIDE] All requested tool calls in this batch were suppressed as duplicates (already executed earlier). Do NOT repeat those tool calls again. Respond to the user now with status Idle and a non-empty message_to_user confirming the outcome. tool_calls MUST be [].".to_string();
+            let msg = "[SYSTEM OVERRIDE] All requested tool calls in this batch were suppressed (duplicates or repeated identical failures). Do NOT repeat those tool calls again. Respond to the user now with status Idle and a non-empty message_to_user confirming the outcome. tool_calls MUST be [].".to_string();
             // IMPORTANT: route through Recover so retry is bounded by `max_recovery_attempts`.
             return Ok(ToolBatchDecision::Recover { message: msg });
         }
@@ -358,5 +454,150 @@ mod clock_before_db_tests {
             out.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
             vec!["clock:now", "memory:query", "db:find_connections"]
         );
+    }
+}
+
+#[cfg(test)]
+mod repeat_failure_streak_tests {
+    use super::*;
+    use crate::config::AppConfig;
+    use crate::engine::{EngineResponse, LlmEngine, Message};
+    use crate::executive::error::Result;
+    use crate::memory::ephemeral::EphemeralMemory;
+    use crate::orchestrator::context::ContextViewSettings;
+    use crate::orchestrator::r#loop::tool_batch::ToolBatchDecision;
+    use crate::orchestrator::state::{AgentState, ToolCall};
+    use crate::tools::Gatekeeper;
+    use crate::tools::traits::Tool;
+    use async_trait::async_trait;
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+    use serde_json::json;
+    use std::collections::HashSet;
+    use std::path::Path;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use tokio::sync::mpsc;
+
+    struct StubEngine;
+
+    #[async_trait]
+    impl LlmEngine for StubEngine {
+        async fn generate(
+            &self,
+            _stack: &[Message],
+            _available_tools_json: &str,
+            _stream_tx: Option<mpsc::UnboundedSender<String>>,
+        ) -> Result<EngineResponse> {
+            Ok(EngineResponse {
+                content: "{}".into(),
+                prompt_tokens: 0,
+                generated_tokens: 0,
+            })
+        }
+    }
+
+    #[derive(JsonSchema, Deserialize)]
+    struct EmptyArgs {}
+
+    struct FailAlwaysTool {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Tool for FailAlwaysTool {
+        fn name(&self) -> &'static str {
+            "fcp_streak_probe"
+        }
+
+        fn description(&self) -> &'static str {
+            "test-only repeatable failing tool"
+        }
+
+        fn parameters_schema(&self) -> schemars::schema::RootSchema {
+            schemars::schema_for!(EmptyArgs)
+        }
+
+        fn allow_repeat_in_turn(&self) -> bool {
+            true
+        }
+
+        async fn execute(&self, _args: serde_json::Value) -> Result<String> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(crate::executive::error::FcpError::ToolFault {
+                tool_name: self.name().into(),
+                reason: "intentional".into(),
+            })
+        }
+    }
+
+    fn orchestrator_with_probe(calls: Arc<AtomicUsize>) -> Orchestrator<StubEngine> {
+        let mut gatekeeper = Gatekeeper::new();
+        gatekeeper.register(Arc::new(FailAlwaysTool {
+            calls: calls.clone(),
+        }));
+        let ephemeral = Arc::new(EphemeralMemory::new("ws".into()));
+        let vault_root = Path::new("/tmp/vault");
+        let (tx, rx) = tokio::sync::watch::channel(());
+        Box::leak(Box::new(tx));
+        let (id_tx, id_rx) = tokio::sync::watch::channel(Arc::from("id"));
+        Box::leak(Box::new(id_tx));
+        Orchestrator::new(
+            StubEngine,
+            gatekeeper,
+            ephemeral,
+            vault_root,
+            "ws",
+            3,
+            5,
+            0.8,
+            4096,
+            3,
+            6000,
+            false,
+            0,
+            rx,
+            None,
+            None,
+            None,
+            ContextViewSettings::default(),
+            Arc::new(AppConfig::default()),
+            id_rx,
+            Arc::new(AtomicBool::new(false)),
+        )
+    }
+
+    #[tokio::test]
+    async fn third_identical_repeatable_suppressed_after_two_failures_when_moltbook_latched() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut orch = orchestrator_with_probe(calls.clone());
+        orch.state = AgentState::Chat;
+        let mut ledger = HashMap::new();
+        let mut schema = HashSet::new();
+        let mut targeted = HashSet::new();
+        let mut web = false;
+        let mut tool_ms = 0u64;
+        let tc = || ToolCall {
+            name: "fcp_streak_probe".into(),
+            args: json!({}),
+            id: None,
+        };
+        let tools = vec![tc(), tc(), tc()];
+        let decision = orch
+            .execute_tool_batch(
+                tools,
+                true,
+                &mut ledger,
+                &mut schema,
+                &mut targeted,
+                &mut web,
+                &mut tool_ms,
+                1u64,
+                true,
+            )
+            .await
+            .expect("batch");
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert!(matches!(decision, ToolBatchDecision::Recover { .. }));
     }
 }

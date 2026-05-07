@@ -187,11 +187,7 @@ impl MoltbookClient {
         if !status.is_success() {
             return Err(map_http_error(status, &text, &rate_limit));
         }
-        let body = if text.trim().is_empty() {
-            Value::Object(Default::default())
-        } else {
-            serde_json::from_str(&text).map_err(FcpError::ParseFault)?
-        };
+        let body = parse_moltbook_success_json_body(&text)?;
         Ok(MoltbookResponse { body, rate_limit })
     }
 
@@ -414,6 +410,43 @@ fn summarize_error_body(body: &str) -> String {
     body.chars().take(280).collect()
 }
 
+/// Strips ASCII control characters except tab / LF / CR so `serde_json` can parse
+/// bodies that illegally embed raw controls inside JSON string values.
+fn sanitize_json_control_chars(input: &str) -> String {
+    input
+        .chars()
+        .map(|ch| {
+            if ch.is_control() && !matches!(ch, '\t' | '\n' | '\r') {
+                ' '
+            } else {
+                ch
+            }
+        })
+        .collect()
+}
+
+fn parse_moltbook_success_json_body(text: &str) -> Result<Value> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Ok(Value::Object(Default::default()));
+    }
+    if let Ok(v) = serde_json::from_str::<Value>(trimmed) {
+        return Ok(v);
+    }
+    let sanitized = sanitize_json_control_chars(trimmed);
+    if let Ok(v) = serde_json::from_str::<Value>(&sanitized) {
+        tracing::warn!(
+            event = "moltbook.response.json_sanitized",
+            "Moltbook JSON parsed after stripping illegal control characters"
+        );
+        return Ok(v);
+    }
+    let hint = trimmed.chars().take(120).collect::<String>();
+    Err(FcpError::MoltbookResponseParse(format!(
+        "response was not valid JSON (after control-char sanitize); prefix={hint:?}"
+    )))
+}
+
 fn truncate_utf8_lossy(bytes: &[u8], max: usize) -> String {
     let mut text = if bytes.len() <= max {
         String::from_utf8_lossy(bytes).to_string()
@@ -451,5 +484,18 @@ mod tests {
     fn clean_path_segment_rejects_slashes() {
         let err = clean_path_segment("post_id", "a/b").expect_err("slash should fail");
         assert!(matches!(err, FcpError::SchemaViolation(_)));
+    }
+
+    #[test]
+    fn parse_moltbook_body_sanitizes_nul_inside_string() {
+        let raw = "{\"title\":\"a\u{0}b\"}";
+        let v = parse_moltbook_success_json_body(raw).expect("sanitized parse");
+        assert_eq!(v["title"], "a b");
+    }
+
+    #[test]
+    fn parse_moltbook_body_maps_unfixable_to_moltbook_response_parse() {
+        let err = parse_moltbook_success_json_body("{not json").expect_err("unparseable");
+        assert!(matches!(err, FcpError::MoltbookResponseParse(_)));
     }
 }

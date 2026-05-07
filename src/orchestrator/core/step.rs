@@ -17,6 +17,7 @@ use super::{
     Orchestrator, PromotionSuppressedDuringStep, RECOVERY_BUDGET_EXHAUSTED_DECK_LINE,
     TOOL_ROUND_CAP_SYSTEM_GUIDANCE,
 };
+use super::moltbook_browse_ledger::MoltbookBrowseLedger;
 
 impl<E: LlmEngine> Orchestrator<E> {
     /// The main cognitive loop.
@@ -31,6 +32,8 @@ impl<E: LlmEngine> Orchestrator<E> {
             PromotionSuppressedDuringStep::arm(self.promotion_suppressed_during_step.clone());
         self.turn_seq = self.turn_seq.saturating_add(1);
         let turn_seq = self.turn_seq;
+        self.moltbook_browse_ledger = None;
+        self.tool_repeat_failure_streak.clear();
         // No `info_span!().entered()` here: `EnteredSpan` is not `Send` and `step()` awaits
         // inside `tokio::spawn`. Correlation uses `turn_seq` on every routing event instead.
 
@@ -74,6 +77,9 @@ impl<E: LlmEngine> Orchestrator<E> {
 
         // ── Pre-LLM semantic routing ─────────────────────────────────
         let (mut tools_needed, pre_llm_matched_tools) = self.run_pre_llm_routing().await;
+        if Self::moltbook_browse_cycle_hint(&self.last_user_content(), &pre_llm_matched_tools) {
+            self.moltbook_browse_ledger = Some(MoltbookBrowseLedger::new(turn_seq));
+        }
         let mut execution_ledger: HashMap<String, ToolIntentTicket> = HashMap::new();
         let mut schema_recovery_attempted: HashSet<String> = HashSet::new();
         let mut targeted_tools: HashSet<String> = HashSet::new();
@@ -159,6 +165,9 @@ impl<E: LlmEngine> Orchestrator<E> {
                     .any(|name| name.starts_with("moltbook:"));
             if moltbook_overlay_base {
                 moltbook_overlay_latched = true;
+            }
+            if self.moltbook_browse_ledger.is_none() && moltbook_overlay_latched {
+                self.moltbook_browse_ledger = Some(MoltbookBrowseLedger::new(turn_seq));
             }
             let moltbook_overlay = moltbook_overlay_latched;
 
@@ -432,6 +441,8 @@ impl<E: LlmEngine> Orchestrator<E> {
                             &mut targeted_tools,
                             &mut web_tool_activity,
                             &mut tool_ms_acc,
+                            turn_seq,
+                            moltbook_overlay_latched,
                         )
                         .await?;
                     match decision {
@@ -480,5 +491,12 @@ impl<E: LlmEngine> Orchestrator<E> {
             self.last_total_ms = step_start.elapsed().as_millis() as u64;
             self.broadcast_state().await;
         }
+    }
+
+    fn moltbook_browse_cycle_hint(user_line: &str, pre_llm_matches: &[String]) -> bool {
+        user_line.to_ascii_lowercase().contains("moltbook")
+            || pre_llm_matches
+                .iter()
+                .any(|n| n.starts_with("moltbook:"))
     }
 }

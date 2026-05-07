@@ -32,40 +32,11 @@ pub async fn run_ignition_sequence(
     let model_names: Vec<String> = local_models.into_iter().map(|m| m.name).collect();
 
     // 2. Interactive Prompts (blocking task)
-    let (agent_name, user_name, model_name) =
-        tokio::task::spawn_blocking(move || -> Result<(String, String, String)> {
-            let agent_name = Text::new("Agent Name:")
-                .with_default("ERIS")
-                .prompt()
-                .map_err(|e| match e {
-                    inquire::InquireError::OperationCanceled
-                    | inquire::InquireError::OperationInterrupted => {
-                        FcpError::Cancellation("Ignition cancelled by user".into())
-                    }
-                    _ => FcpError::Config(format!("Prompt error: {}", e)),
-                })?;
-
-            let user_name = Text::new("Your name (optional):")
-                .with_default("")
-                .prompt()
-                .map_err(|e| match e {
-                    inquire::InquireError::OperationCanceled
-                    | inquire::InquireError::OperationInterrupted => {
-                        FcpError::Cancellation("Ignition cancelled by user".into())
-                    }
-                    _ => FcpError::Config(format!("Prompt error: {}", e)),
-                })?;
-            let user_name = user_name.trim().to_string();
-
-            let model_name = if !model_names.is_empty() {
-                // Find if default qwen2.5:14b is in the list
-                let default_idx = model_names
-                    .iter()
-                    .position(|m| m.contains("qwen2.5:14b"))
-                    .unwrap_or(0);
-
-                Select::new("Ollama Model:", model_names.clone())
-                    .with_starting_cursor(default_idx)
+    let (agent_name, user_name, model_name, ollama_num_gpu, ollama_main_gpu, ollama_low_vram) =
+        tokio::task::spawn_blocking(
+            move || -> Result<(String, String, String, Option<u32>, Option<u32>, Option<bool>)> {
+                let agent_name = Text::new("Agent Name:")
+                    .with_default("ERIS")
                     .prompt()
                     .map_err(|e| match e {
                         inquire::InquireError::OperationCanceled
@@ -73,10 +44,10 @@ pub async fn run_ignition_sequence(
                             FcpError::Cancellation("Ignition cancelled by user".into())
                         }
                         _ => FcpError::Config(format!("Prompt error: {}", e)),
-                    })?
-            } else {
-                Text::new("Ollama Model:")
-                    .with_default("qwen2.5:14b")
+                    })?;
+
+                let user_name = Text::new("Your name (optional):")
+                    .with_default("")
                     .prompt()
                     .map_err(|e| match e {
                         inquire::InquireError::OperationCanceled
@@ -84,11 +55,98 @@ pub async fn run_ignition_sequence(
                             FcpError::Cancellation("Ignition cancelled by user".into())
                         }
                         _ => FcpError::Config(format!("Prompt error: {}", e)),
-                    })?
-            };
+                    })?;
+                let user_name = user_name.trim().to_string();
 
-            Ok((agent_name, user_name, model_name))
-        })
+                let model_name = if !model_names.is_empty() {
+                    let default_idx = model_names
+                        .iter()
+                        .position(|m| m.contains("qwen2.5:14b"))
+                        .unwrap_or(0);
+                    Select::new("Ollama Model:", model_names.clone())
+                        .with_starting_cursor(default_idx)
+                        .prompt()
+                        .map_err(|e| match e {
+                            inquire::InquireError::OperationCanceled
+                            | inquire::InquireError::OperationInterrupted => {
+                                FcpError::Cancellation("Ignition cancelled by user".into())
+                            }
+                            _ => FcpError::Config(format!("Prompt error: {}", e)),
+                        })?
+                } else {
+                    Text::new("Ollama Model:")
+                        .with_default("qwen2.5:14b")
+                        .prompt()
+                        .map_err(|e| match e {
+                            inquire::InquireError::OperationCanceled
+                            | inquire::InquireError::OperationInterrupted => {
+                                FcpError::Cancellation("Ignition cancelled by user".into())
+                            }
+                            _ => FcpError::Config(format!("Prompt error: {}", e)),
+                        })?
+                };
+
+                let ollama_low_vram = Some(
+                    inquire::Confirm::new("Enable Ollama low VRAM mode?")
+                        .with_default(false)
+                        .prompt()
+                        .map_err(|e| match e {
+                            inquire::InquireError::OperationCanceled
+                            | inquire::InquireError::OperationInterrupted => {
+                                FcpError::Cancellation("Ignition cancelled by user".into())
+                            }
+                            _ => FcpError::Config(format!("Prompt error: {}", e)),
+                        })?,
+                );
+
+                let num_gpu_raw = Text::new("Ollama num_gpu (GPU layers, blank = auto):")
+                    .with_default("")
+                    .prompt()
+                    .map_err(|e| match e {
+                        inquire::InquireError::OperationCanceled
+                        | inquire::InquireError::OperationInterrupted => {
+                            FcpError::Cancellation("Ignition cancelled by user".into())
+                        }
+                        _ => FcpError::Config(format!("Prompt error: {}", e)),
+                    })?;
+                let num_gpu_raw = num_gpu_raw.trim();
+                let ollama_num_gpu = if num_gpu_raw.is_empty() {
+                    None
+                } else {
+                    Some(num_gpu_raw.parse::<u32>().map_err(|_| {
+                        FcpError::Config("Invalid num_gpu: expected non-negative integer".into())
+                    })?)
+                };
+
+                let main_gpu_raw = Text::new("Ollama main_gpu index (blank = default):")
+                    .with_default("")
+                    .prompt()
+                    .map_err(|e| match e {
+                        inquire::InquireError::OperationCanceled
+                        | inquire::InquireError::OperationInterrupted => {
+                            FcpError::Cancellation("Ignition cancelled by user".into())
+                        }
+                        _ => FcpError::Config(format!("Prompt error: {}", e)),
+                    })?;
+                let main_gpu_raw = main_gpu_raw.trim();
+                let ollama_main_gpu = if main_gpu_raw.is_empty() {
+                    None
+                } else {
+                    Some(main_gpu_raw.parse::<u32>().map_err(|_| {
+                        FcpError::Config("Invalid main_gpu: expected non-negative integer".into())
+                    })?)
+                };
+
+                Ok((
+                    agent_name,
+                    user_name,
+                    model_name,
+                    ollama_num_gpu,
+                    ollama_main_gpu,
+                    ollama_low_vram,
+                ))
+            },
+        )
         .await
         .map_err(|e| FcpError::Config(format!("Spawn blocking failed: {}", e)))??;
 
@@ -134,6 +192,9 @@ pub async fn run_ignition_sequence(
     let mut config = AppConfig {
         model_name,
         user_name,
+        ollama_num_gpu,
+        ollama_main_gpu,
+        ollama_low_vram,
         workspace: options.workspace,
         ..Default::default()
     };

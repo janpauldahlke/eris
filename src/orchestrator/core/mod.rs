@@ -3,6 +3,7 @@
 mod condensation;
 mod deck;
 mod helpers;
+mod moltbook_browse_ledger;
 mod llm_directive;
 mod orchestrator;
 mod pre_llm_routing;
