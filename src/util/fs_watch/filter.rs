@@ -84,7 +84,10 @@ mod tests {
     fn identical_paths_match() {
         let p = PathBuf::from("/tmp/a/Identity.md");
         let targets = [p.clone()];
-        assert!(event_paths_match_targets(std::slice::from_ref(&p), &targets));
+        assert!(event_paths_match_targets(
+            std::slice::from_ref(&p),
+            &targets
+        ));
     }
 
     #[test]
@@ -98,7 +101,10 @@ mod tests {
     fn path_under_upload_dir_matches() {
         let root = PathBuf::from("/vault/ws/99_USER_UPLOADED");
         let file = PathBuf::from("/vault/ws/99_USER_UPLOADED/drop.bin");
-        assert!(path_is_under_any_dir(file.as_path(), std::slice::from_ref(&root)));
+        assert!(path_is_under_any_dir(
+            file.as_path(),
+            std::slice::from_ref(&root)
+        ));
     }
 
     #[test]

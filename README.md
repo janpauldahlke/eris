@@ -67,6 +67,12 @@ With **`[discord]`** in `.fcp/config.toml` (`enabled = true`, **`application_id`
 
 **`mail:*`** and **`calendar:*`** tools need **`[google]`** with `enabled = true`, `service_account_key`, and `impersonate_user` (Workspace **domain-wide delegation**). In Google Admin → Security → API controls → Domain-wide delegation, authorize the service account client id with at least **`https://mail.google.com/`** and **`https://www.googleapis.com/auth/calendar`**. Enable **Gmail API** and **Google Calendar API** in the same Google Cloud project. See `GoogleConfig` in `src/config.rs`, `src/tools/mail/`, and `src/tools/calendar/`.
 
+### Moltbook (optional)
+
+**`moltbook:*`** tools let Eris participate in Moltbook only when the operator asks. Enable the tool family with `[moltbook] enabled = true`; authenticated tools require `MOLTBOOK_API_KEY` or `api_key_file = "~/.config/moltbook/credentials.json"`. The client pins bearer-token requests to `https://www.moltbook.com/api/v1` and never logs the key.
+
+Registration is explicit: ask Eris to register on Moltbook with a name and description, save the returned API key outside the repo, then finish the claim URL in the browser. Normal visits should start with “check Moltbook”, which routes to `moltbook:home`; Eris does not run an autonomous heartbeat or background poller.
+
 ### Checklist
 
 | Piece       | `.fcp/config.toml` keys                         | Notes                                                                     |
@@ -78,6 +84,7 @@ With **`[discord]`** in `.fcp/config.toml` (`enabled = true`, **`application_id`
 | Web UI      | `web_bind_addr`, `web_port`, `web_open_browser` | Loopback + port for `eris chat --web`; optional `FCP_WEB_*` env overrides |
 | Discord     | `[discord]` table                               | Optional; needs `bot_token` + app id + channel when `enabled = true`      |
 | Google WS   | `[google]` (`enabled`, `service_account_key`, `impersonate_user`) | Optional `mail:*` + `calendar:*`; Cloud APIs + Admin domain-wide delegation |
+| Moltbook    | `[moltbook]` (`enabled`, `api_key_file`)        | Optional `moltbook:*`; prefer `MOLTBOOK_API_KEY` or an operator-owned credentials file |
 
 Figment also merges `FCP_` environment variables over TOML (e.g. `FCP_WORKSPACE`, `FCP_LOG_LEVEL`, `FCP_USER_NAME`). For other fields, match `AppConfig` in `[src/config.rs](src/config.rs)` to the env key shape your Figment build expects.
 
@@ -214,6 +221,11 @@ Representative **`routing_hints`** (say things _like_ this—the model still dec
 | **calendar:create**        | add calendar event, schedule meeting, block time, create Google Calendar appointment                              |
 | **calendar:update**        | reschedule meeting, change event time, rename meeting, edit calendar event                                       |
 | **calendar:delete**        | cancel meeting, delete calendar event, remove from Google Calendar                                                 |
+| **moltbook:home**          | check Moltbook, visit Moltbook, catch up on Moltbook, Moltbook heartbeat                                         |
+| **moltbook:feed**          | browse Moltbook feed, read submolt, following feed, Moltbook posts                                               |
+| **moltbook:search**        | semantic search Moltbook, find posts by meaning, discover discussions by topic                                   |
+| **moltbook:comment/post/vote** | comment on Moltbook, post to Moltbook, upvote Moltbook; only after explicit operator intent or approval      |
+| **moltbook:dm**            | Moltbook DM, direct messages, inbox, DM request, reply to Moltbook message                                       |
 
 To change operator-facing routing text, prefer **`routing_hints`** in `[src/tools/specs.rs](src/tools/specs.rs)`; for tools without TOML hints, edit **`fallback_triggers`** in `[src/tools/routing_phrases.rs](src/tools/routing_phrases.rs)`. The lexical phrase lists inside `tool_router.rs` remain for URL/page detection and short-input guards (not the full tool roster).
 

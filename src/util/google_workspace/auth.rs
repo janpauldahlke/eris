@@ -56,11 +56,12 @@ impl GoogleAuth {
                 key_path.display()
             ))
         })?;
-        let sa: ServiceAccountKey = serde_json::from_str(&raw).map_err(|e| {
-            FcpError::Config(format!("invalid service account JSON: {e}"))
-        })?;
+        let sa: ServiceAccountKey = serde_json::from_str(&raw)
+            .map_err(|e| FcpError::Config(format!("invalid service account JSON: {e}")))?;
         let encoding_key = EncodingKey::from_rsa_pem(sa.private_key.as_bytes()).map_err(|e| {
-            FcpError::Config(format!("invalid RSA private key in service account JSON: {e}"))
+            FcpError::Config(format!(
+                "invalid RSA private key in service account JSON: {e}"
+            ))
         })?;
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(15))
@@ -129,9 +130,10 @@ impl GoogleAuth {
             .map_err(|e| FcpError::NetworkFault(format!("token endpoint unreachable: {e}")))?;
 
         let status = resp.status();
-        let body = resp.text().await.map_err(|e| {
-            FcpError::NetworkFault(format!("token response body read failed: {e}"))
-        })?;
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| FcpError::NetworkFault(format!("token response body read failed: {e}")))?;
 
         if !status.is_success() {
             tracing::error!(status = %status, body = %body, "Google OAuth2 token request failed");
@@ -144,9 +146,8 @@ impl GoogleAuth {
         struct TokenResponse {
             access_token: String,
         }
-        let parsed: TokenResponse = serde_json::from_str(&body).map_err(|e| {
-            FcpError::NetworkFault(format!("unexpected token response JSON: {e}"))
-        })?;
+        let parsed: TokenResponse = serde_json::from_str(&body)
+            .map_err(|e| FcpError::NetworkFault(format!("unexpected token response JSON: {e}")))?;
 
         tracing::info!("Google OAuth2 access token acquired");
         Ok(parsed.access_token)

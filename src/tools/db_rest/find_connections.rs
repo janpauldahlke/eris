@@ -7,8 +7,8 @@ use serde_json::Value;
 
 use crate::executive::error::{FcpError, Result};
 use crate::tools::context_view_hint::ToolContextViewHint;
-use crate::tools::traits::Tool;
 use crate::tools::db_rest::open_transport::{self, validate_when_iso};
+use crate::tools::traits::Tool;
 use crate::util::ApiHttpClient;
 
 const MAX_JOURNEYS: usize = 3;
@@ -58,7 +58,8 @@ impl Tool for DbFindConnectionsTool {
     }
 
     async fn execute(&self, args: Value) -> Result<String> {
-        let parsed: DbFindConnectionsArgs = serde_json::from_value(args).map_err(FcpError::ParseFault)?;
+        let parsed: DbFindConnectionsArgs =
+            serde_json::from_value(args).map_err(FcpError::ParseFault)?;
         let from = parsed.from.trim();
         let to = parsed.to.trim();
         if from.is_empty() || to.is_empty() {

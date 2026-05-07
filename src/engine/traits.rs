@@ -1,6 +1,6 @@
+use crate::executive::error::Result;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
-use crate::executive::error::Result;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Message {
@@ -21,6 +21,6 @@ pub trait LlmEngine: Send + Sync {
         &self,
         stack: &[Message],
         available_tools_json: &str,
-        stream_tx: Option<mpsc::UnboundedSender<String>>
+        stream_tx: Option<mpsc::UnboundedSender<String>>,
     ) -> Result<EngineResponse>;
 }

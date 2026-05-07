@@ -28,9 +28,10 @@ mod integration_tests {
             .and(path("/locations"))
             .and(query_param("query", "Hamburg"))
             .and(query_param("results", "1"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(
-                r#"[{"type":"stop","id":"8002549","name":"Hamburg Hbf"}]"#,
-            ))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"[{"type":"stop","id":"8002549","name":"Hamburg Hbf"}]"#),
+            )
             .mount(&server)
             .await;
 
@@ -38,9 +39,10 @@ mod integration_tests {
             .and(path("/locations"))
             .and(query_param("query", "Berlin"))
             .and(query_param("results", "1"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(
-                r#"[{"type":"stop","id":"8011160","name":"Berlin Hbf"}]"#,
-            ))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"[{"type":"stop","id":"8011160","name":"Berlin Hbf"}]"#),
+            )
             .mount(&server)
             .await;
 

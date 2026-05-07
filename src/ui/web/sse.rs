@@ -4,9 +4,9 @@ use std::convert::Infallible;
 
 use axum::extract::State;
 use axum::response::sse::{Event, KeepAlive, Sse};
-use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
-use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 
 use super::WebAppState;
 

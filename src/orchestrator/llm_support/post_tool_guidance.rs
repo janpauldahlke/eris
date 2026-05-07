@@ -15,8 +15,7 @@ A tool in the last batch failed. Your next JSON with status Idle must use `messa
 pub fn recover_override_message_for_tool_failure(reason: &str) -> String {
     format!(
         "[SYSTEM OVERRIDE: FUCKUP DETECTED] Tool execution failed: {}\n\n{}",
-        reason,
-        POST_TOOL_FAILURE_TRUST_GUIDANCE
+        reason, POST_TOOL_FAILURE_TRUST_GUIDANCE
     )
 }
 

@@ -5,11 +5,11 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::util::ApiHttpClient;
 use crate::executive::error::{FcpError, Result};
-use crate::tools::context_view_hint::{ToolContextViewHint, API_TOOL_SNIPPET_CHARS};
+use crate::tools::context_view_hint::{API_TOOL_SNIPPET_CHARS, ToolContextViewHint};
 use crate::tools::traits::Tool;
 use crate::tools::weather::open_meteo::{self, HINT_CURRENT, PROFILE_FORECAST_CURRENT};
+use crate::util::ApiHttpClient;
 
 #[derive(Deserialize, JsonSchema)]
 pub struct WeatherCityArgs {

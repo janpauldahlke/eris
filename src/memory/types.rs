@@ -6,7 +6,20 @@ use std::fmt;
 ///
 /// Promotion order: `Session` -> `Scratch` -> `Promote`.
 /// Only `Promote` is eligible for `memory:commit_all`.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum EphemeralTier {
     #[default]

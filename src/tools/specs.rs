@@ -866,4 +866,188 @@ name = "empty_query"
 args = { query = "" }
 rationale = "query cannot be empty."
 "#,
+    r#"descriptor_version = 1
+tool_name = "moltbook:register"
+short_description = "Register a new Moltbook agent and return claim credentials."
+when_to_use = "Use only when the human explicitly asks to register/create a Moltbook agent identity. This creates an account and returns a secret API key."
+when_not_to_use = "Do not use for normal Moltbook visits, status checks, feed reading, posting, or if the user has not explicitly approved registration."
+routing_hints = ["register on moltbook", "create moltbook agent", "join moltbook", "claim moltbook account"]
+
+[[examples_good]]
+name = "register_agent"
+args = { name = "Eris", description = "A local Rust-based assistant joining Moltbook with human oversight." }
+rationale = "Explicit account creation request."
+
+[[examples_bad]]
+name = "missing_description"
+args = { name = "Eris" }
+rationale = "Registration requires both name and description."
+"#,
+    r#"descriptor_version = 1
+tool_name = "moltbook:status"
+short_description = "Check Moltbook claim/account status and profile."
+when_to_use = "Use when the user asks whether the Moltbook account is claimed, active, authenticated, or what profile is configured."
+when_not_to_use = "Do not use for browsing content; use moltbook:home first for an active visit."
+routing_hints = ["moltbook status", "is moltbook claimed", "moltbook profile", "moltbook account active"]
+
+[[examples_good]]
+name = "status"
+args = {}
+rationale = "No arguments are needed."
+"#,
+    r#"descriptor_version = 1
+tool_name = "moltbook:home"
+short_description = "Fetch Moltbook home dashboard; first step for any user-controlled Moltbook visit."
+when_to_use = "Use first when the user asks to check, visit, open, inspect, catch up on, browse, or explore Moltbook. Also the entry point for alarm-triggered browse sessions. After browsing, ALWAYS reschedule with agenda:remind_at (minutes=5 unless user chose another interval, description MUST contain 'moltbook' and the session expiry HH:MM). Each alarm is the next wake-up — without it the chain dies. Call clock:now each cycle; stop only when time >= expiry."
+when_not_to_use = "Do not call without a user prompt or alarm trigger. Do not cascade into posting, DM approval, or marking notifications read unless the user requested or approves that follow-up."
+routing_hints = ["check Moltbook", "visit Moltbook", "what is happening on Moltbook", "Moltbook heartbeat", "Moltbook home", "catch up on Moltbook", "look at Moltbook", "browse Moltbook", "explore Moltbook freely", "Moltbook session", "use Moltbook for a while", "moltbook browse session", "time to check moltbook", "moltbook check-in"]
+
+[[examples_good]]
+name = "home"
+args = {}
+rationale = "Starts an explicit Moltbook visit."
+"#,
+    r#"descriptor_version = 1
+tool_name = "moltbook:feed"
+short_description = "Read Moltbook feeds, global posts, or a submolt feed."
+when_to_use = "Use after moltbook:home or when the user asks to browse the feed, posts, following feed, or a specific submolt. Supports sort/filter/cursor pagination. During timed browse sessions, treat this as a discovery step only — pair it with moltbook:comments on at least one chosen post_id per cycle. For source=submolt feeds that genuinely interest you, open comments on multiple distinct post_ids from that feed when time allows (stay curious across neighborhoods and revisit favorites)."
+when_not_to_use = "Do not use as a background poll. Do not summarize threads or claim you understood a post from feed headlines alone; open moltbook:comments first. Do not vote or comment without having read the thread via moltbook:comments when replies exist."
+routing_hints = ["Moltbook feed", "browse Moltbook", "read submolt", "Moltbook posts", "following feed", "general submolt"]
+
+[[examples_good]]
+name = "following_feed"
+args = { source = "personal", filter = "following", sort = "new", limit = 15 }
+rationale = "Reads posts from followed accounts."
+
+[[examples_good]]
+name = "submolt_feed"
+args = { source = "submolt", submolt = "general", sort = "new" }
+rationale = "Reads one community feed."
+"#,
+    r#"descriptor_version = 1
+tool_name = "moltbook:search"
+short_description = "Semantic search on Moltbook — find posts and comments by meaning."
+when_to_use = "Use when the user or browse session needs to discover threads by topic, question, or concept (not exact keywords). Good for research before commenting, finding discussions to join, or exploring a theme across submolts. Required JSON key: q (string, natural language, max 500 chars). Optional: type (all, posts, or comments), limit (default 20, max 50), cursor for pagination."
+when_not_to_use = "Do not spam search as a substitute for reading threads you already have post_ids for. Do not claim you read a hit without following up with moltbook:comments on the relevant post_id."
+routing_hints = ["search Moltbook", "find posts about", "semantic search moltbook", "what are moltys saying about", "discover Moltbook discussions"]
+
+[[examples_good]]
+name = "natural_question"
+args = { q = "How do agents handle long-term memory?" }
+rationale = "Meaning-based query returns related posts and comments."
+
+[[examples_good]]
+name = "posts_only"
+args = { q = "debugging tool calling failures", type = "posts", limit = 15 }
+rationale = "Restricts hits to posts when comments are not needed."
+
+[[examples_good]]
+name = "next_page"
+args = { q = "AI safety", type = "all", cursor = "eyJvZmZzZXQiOjIwfQ" }
+rationale = "Continues a prior search using next_cursor from the API."
+"#,
+    r#"descriptor_version = 1
+tool_name = "moltbook:comments"
+short_description = "Read comments on a Moltbook post."
+when_to_use = "Use when home/feed indicates activity on a post, or the user asks to read a Moltbook discussion thread. During alarm-driven browse sessions: call at least once per cycle with a real post_id from the latest feed/home — curiosity means reading what molts wrote, not recycling titles. Large threads: start with a modest limit (e.g. 15–25); if `data` includes a pagination cursor, fetch more pages with the same post_id/sort and `cursor` instead of one giant pull."
+when_not_to_use = "Do not reply automatically; use moltbook:comment only when the user asked or approves a response."
+routing_hints = ["Moltbook comments", "read Moltbook thread", "comments on my Moltbook post", "replies on Moltbook"]
+
+[[examples_good]]
+name = "read_comments_first_page"
+args = { post_id = "post_123", sort = "new" }
+rationale = "Opens the thread with the runtime default page size (moderate); omit cursor on the first request."
+
+[[examples_good]]
+name = "next_page"
+args = { post_id = "post_123", sort = "new", cursor = "opaque_cursor_from_prior_response" }
+rationale = "Continues the same thread using pagination from prior data; optional larger limit on continuation."
+
+[[examples_good]]
+name = "next_page_explicit_limit"
+args = { post_id = "post_123", sort = "new", limit = 40, cursor = "opaque_cursor_from_prior_response" }
+rationale = "Continuation requests may use a higher explicit limit than typical first-page pulls."
+"#,
+    r#"descriptor_version = 1
+tool_name = "moltbook:comment"
+short_description = "Create a Moltbook comment or reply."
+when_to_use = "Use when the user explicitly asks to comment/reply, or after the user approves a drafted reply. Keep comments thoughtful and on-topic. Required JSON keys: post_id (string), content (string); optional parent_id."
+when_not_to_use = "Do not comment for visibility, karma, low-effort reactions, controversial topics needing human input, or before reading the thread. Watch for verification_required and use moltbook:verify if needed."
+routing_hints = ["comment on Moltbook", "reply on Moltbook", "answer that Moltbook comment", "leave a thoughtful comment"]
+
+[[examples_good]]
+name = "reply"
+args = { post_id = "post_123", parent_id = "comment_456", content = "Thanks for the thoughtful note. Here is what I noticed..." }
+rationale = "Posts an approved reply."
+"#,
+    r#"descriptor_version = 1
+tool_name = "moltbook:vote"
+short_description = "Vote on Moltbook posts or comments."
+when_to_use = "Use when the user asks to upvote/downvote, or when they explicitly ask Eris to engage with content it genuinely evaluated and enjoyed. Required JSON keys: target (post or comment), id (string), direction (upvote or downvote)."
+when_not_to_use = "Do not mass-vote, vote for politeness, vote without reading, or use for karma manipulation. Comment downvotes are not documented."
+routing_hints = ["upvote Moltbook", "downvote Moltbook", "vote on post", "upvote that comment"]
+
+[[examples_good]]
+name = "upvote_post"
+args = { target = "post", id = "post_123", direction = "upvote" }
+rationale = "Rewards a post after evaluation."
+"#,
+    r#"descriptor_version = 1
+tool_name = "moltbook:post"
+short_description = "Create a Moltbook text or link post."
+when_to_use = "Use only when the user explicitly asks to post or approves a drafted post. Good posts share a real question, discovery, experience, or useful thought."
+when_not_to_use = "Do not post just because time passed, to chase karma, as autonomous heartbeat activity, or before checking for duplicate context when appropriate. Respect cooldowns and verification challenges."
+routing_hints = ["post to Moltbook", "share on Moltbook", "create Moltbook post", "publish this to general"]
+
+[[examples_good]]
+name = "text_post"
+args = { submolt_name = "general", title = "A small note on tool recovery", content = "I noticed that explicit recovery hints make agent tools easier to trust." }
+rationale = "Creates an approved text post."
+"#,
+    r#"descriptor_version = 1
+tool_name = "moltbook:verify"
+short_description = "Submit an answer to a Moltbook AI verification challenge."
+when_to_use = "Use after moltbook:post or moltbook:comment returns verification_required with a verification_code and challenge_text. Answer literally from the challenge text (correct units); numeric answers use two decimal places when decimals apply."
+when_not_to_use = "Do not guess repeatedly or resubmit the same verification_code after already_answered/409. Failed/expired verification attempts can suspend the account; ask the human if unsure."
+routing_hints = ["Moltbook verification", "verify Moltbook post", "solve verification challenge", "submit Moltbook answer"]
+
+[[examples_good]]
+name = "verify"
+args = { verification_code = "moltbook_verify_abc123", answer = "15.00" }
+rationale = "Submits a solved challenge."
+"#,
+    r#"descriptor_version = 1
+tool_name = "moltbook:notifications_read"
+short_description = "Mark Moltbook notifications read after handling them."
+when_to_use = "Use after reading and responding to activity on a post, or when the user asks to clear Moltbook notifications."
+when_not_to_use = "Do not mark notifications read before reading or handling them. Do not clear all unless the user explicitly asks."
+routing_hints = ["mark Moltbook notifications read", "clear Moltbook notifications", "done with those Moltbook replies"]
+
+[[examples_good]]
+name = "post_read"
+args = { scope = "post", post_id = "post_123" }
+rationale = "Marks one handled post's notifications read."
+"#,
+    r#"descriptor_version = 1
+tool_name = "moltbook:dm"
+short_description = "Check and manage Moltbook direct messages."
+when_to_use = "Use for explicit DM checks, listing requests/conversations, reading approved conversations, sending messages, or managing requests with human approval. Required JSON key: action — one of check, list_requests, list_conversations, read_conversation, send_request, send_message, approve_request, reject_request (not generic read)."
+when_not_to_use = "Do not approve new DM requests without the human. Escalate sensitive topics, new requests, and messages with needs_human_input. Do not start DMs unless the user asks."
+routing_hints = ["Moltbook DM", "Moltbook direct messages", "check Moltbook inbox", "reply to Moltbook message", "approve DM request"]
+
+[[examples_good]]
+name = "check_dm"
+args = { action = "check" }
+rationale = "Quick DM activity check."
+
+[[examples_good]]
+name = "send_message"
+args = { action = "send_message", conversation_id = "conv_123", message = "Thanks, I will ask my human and follow up." }
+rationale = "Sends into an existing approved conversation."
+
+[[examples_good]]
+name = "read_conversation"
+args = { action = "read_conversation", conversation_id = "conv_123" }
+rationale = "Loads messages from an approved conversation."
+"#,
 ];

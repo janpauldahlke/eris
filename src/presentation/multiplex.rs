@@ -24,7 +24,10 @@ pub fn spawn_presentation_multiplex(
     targets: PresentationMultiplexTargets,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        tracing::info!(event = "fcp.presentation.mux.started", "Presentation multiplex started");
+        tracing::info!(
+            event = "fcp.presentation.mux.started",
+            "Presentation multiplex started"
+        );
         while let Some(evt) = presentation_rx.recv().await {
             if let SessionEvent::SystemAlarm(payload) = &evt {
                 let action = alarm_payload_to_user_action(payload.clone());
@@ -105,7 +108,9 @@ mod tests {
             .await
             .expect("send");
         pres_tx
-            .send(SessionEvent::SystemAlarm(AlarmPayload::Plain("wake".into())))
+            .send(SessionEvent::SystemAlarm(AlarmPayload::Plain(
+                "wake".into(),
+            )))
             .await
             .expect("send alarm");
         drop(pres_tx);

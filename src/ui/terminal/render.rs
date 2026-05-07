@@ -1,13 +1,13 @@
-use ratatui::{
-    layout::{Layout, Constraint, Direction},
-    widgets::{Block, Borders, Paragraph, Wrap},
-    style::{Style, Color, Modifier},
-    text::{Line, Span, Text},
-    Frame,
-};
 use super::app::{ActivePane, TuiApp};
 use crate::engine::token_metrics::LlmTokenSnapshot;
 use crate::orchestrator::state::AgentState;
+use ratatui::{
+    Frame,
+    layout::{Constraint, Direction, Layout},
+    style::{Color, Modifier, Style},
+    text::{Line, Span, Text},
+    widgets::{Block, Borders, Paragraph, Wrap},
+};
 
 const STATUS_ACTIVITY_MAX_CHARS: usize = 100;
 
@@ -135,9 +135,9 @@ pub fn draw(f: &mut Frame, app: &TuiApp, llm_tokens: &LlmTokenSnapshot) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(0),        // ERIS Console (grows with free space)
-            Constraint::Length(8),     // Telemetry + Status bar
-            Constraint::Length(8),     // Command Deck (~6 inner lines)
+            Constraint::Min(0),    // ERIS Console (grows with free space)
+            Constraint::Length(8), // Telemetry + Status bar
+            Constraint::Length(8), // Command Deck (~6 inner lines)
         ])
         .split(f.size());
 
@@ -168,7 +168,9 @@ pub fn draw(f: &mut Frame, app: &TuiApp, llm_tokens: &LlmTokenSnapshot) {
                 &mut chat_lines,
                 Some((
                     "You: ".to_string(),
-                    Style::default().fg(Color::Rgb(120, 180, 255)).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Rgb(120, 180, 255))
+                        .add_modifier(Modifier::BOLD),
                 )),
                 rest,
                 Style::default().fg(Color::Rgb(214, 223, 255)),
@@ -181,7 +183,9 @@ pub fn draw(f: &mut Frame, app: &TuiApp, llm_tokens: &LlmTokenSnapshot) {
                 &mut chat_lines,
                 Some((
                     name_part.to_string(),
-                    Style::default().fg(Color::Rgb(140, 255, 220)).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Rgb(140, 255, 220))
+                        .add_modifier(Modifier::BOLD),
                 )),
                 rest_part.trim_start(),
                 Style::default().fg(Color::Rgb(245, 248, 255)),
@@ -218,10 +222,12 @@ pub fn draw(f: &mut Frame, app: &TuiApp, llm_tokens: &LlmTokenSnapshot) {
 
     let chat = Paragraph::new(Text::from(chat_lines))
         .style(Style::default().bg(Color::Rgb(10, 13, 24)))
-        .block(Block::default()
-            .borders(Borders::ALL)
-            .border_style(get_border_style(ActivePane::Main))
-            .title(title))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(get_border_style(ActivePane::Main))
+                .title(title),
+        )
         .scroll((chat_scroll, 0));
     f.render_widget(chat, chunks[0]);
 
@@ -232,11 +238,17 @@ pub fn draw(f: &mut Frame, app: &TuiApp, llm_tokens: &LlmTokenSnapshot) {
         app.system_messages.join("\n")
     };
     let telemetry = Paragraph::new(sys_text)
-        .style(Style::default().fg(Color::Rgb(180, 186, 212)).bg(Color::Rgb(14, 16, 28)))
-        .block(Block::default()
-            .borders(Borders::ALL)
-            .border_style(get_border_style(ActivePane::Telemetry))
-            .title(" Telemetry "))
+        .style(
+            Style::default()
+                .fg(Color::Rgb(180, 186, 212))
+                .bg(Color::Rgb(14, 16, 28)),
+        )
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(get_border_style(ActivePane::Telemetry))
+                .title(" Telemetry "),
+        )
         .wrap(Wrap { trim: true })
         .scroll((app.telemetry_scroll, 0));
     f.render_widget(telemetry, bottom_bar[0]);
@@ -336,11 +348,18 @@ pub fn draw(f: &mut Frame, app: &TuiApp, llm_tokens: &LlmTokenSnapshot) {
         )
     };
     let status = Paragraph::new(status_text)
-        .style(Style::default().fg(state_color).bg(Color::Rgb(14, 16, 28)).add_modifier(Modifier::BOLD))
-        .block(Block::default()
-            .borders(Borders::ALL)
-            .border_style(get_border_style(ActivePane::SystemErrors))
-            .title(" Status "));
+        .style(
+            Style::default()
+                .fg(state_color)
+                .bg(Color::Rgb(14, 16, 28))
+                .add_modifier(Modifier::BOLD),
+        )
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(get_border_style(ActivePane::SystemErrors))
+                .title(" Status "),
+        );
     f.render_widget(status, bottom_bar[1]);
 
     // ── Input / Command Deck (minimal chrome; lifecycle lives in Status) ─
@@ -377,19 +396,35 @@ pub fn draw(f: &mut Frame, app: &TuiApp, llm_tokens: &LlmTokenSnapshot) {
             .map(|line| Line::from(line.as_str()))
             .collect::<Vec<Line>>(),
     ))
-        .style(Style::default().fg(Color::Rgb(214, 223, 255)).bg(Color::Rgb(8, 10, 18)))
-        .block(Block::default()
+    .style(
+        Style::default()
+            .fg(Color::Rgb(214, 223, 255))
+            .bg(Color::Rgb(8, 10, 18)),
+    )
+    .block(
+        Block::default()
             .borders(Borders::ALL)
             .border_style(get_border_style(ActivePane::CommandDeck))
             .title(Line::from(vec![
-                Span::styled(" Cmd ", Style::default().fg(Color::Rgb(120, 180, 255)).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    " Cmd ",
+                    Style::default()
+                        .fg(Color::Rgb(120, 180, 255))
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(
                     format!(" {} ", deck_mini),
-                    Style::default().fg(Color::Rgb(100, 110, 140)).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Rgb(100, 110, 140))
+                        .add_modifier(Modifier::BOLD),
                 ),
-            ])))
-        .scroll((input_scroll, 0));
+            ])),
+    )
+    .scroll((input_scroll, 0));
     f.render_widget(input, chunks[2]);
 
-    f.set_cursor(input_chunk.x + cursor_col + 1, input_chunk.y + visible_cursor_row + 1);
+    f.set_cursor(
+        input_chunk.x + cursor_col + 1,
+        input_chunk.y + visible_cursor_row + 1,
+    );
 }

@@ -2,7 +2,7 @@ use crate::engine::LlmEngine;
 #[cfg(test)]
 use crate::executive::error::FcpError;
 #[cfg(test)]
-use crate::orchestrator::r#loop::recovery_policy::{classify_tool_failure, ToolFailureAction};
+use crate::orchestrator::r#loop::recovery_policy::{ToolFailureAction, classify_tool_failure};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -60,6 +60,25 @@ impl<E: LlmEngine> Orchestrator<E> {
         out
     }
 
+    /// Chat-stack bound for successful tool JSON/text lines: non-Moltbook stays tight so prompts
+    /// stay small; Moltbook aligns with `[moltbook].max_response_bytes` (capped) so comments/feeds
+    /// are not reduced twice—once by HTTP and again here—before `build_llm_view`.
+    pub(super) fn tool_success_trim_budget(&self, tool_name: &str) -> usize {
+        let default_cap = Self::MAX_TOOL_RESULT_CHARS;
+        // Avoid multi-megabyte rows even when Moltbook `max_response_bytes` is huge.
+        const MOLTBOOK_STACK_CEILING: usize = 96 * 1024;
+
+        if tool_name.starts_with("moltbook:") {
+            self.config
+                .moltbook
+                .max_response_bytes
+                .min(MOLTBOOK_STACK_CEILING)
+                .max(default_cap)
+        } else {
+            default_cap
+        }
+    }
+
     pub(super) fn last_user_content(&self) -> &str {
         self.chat_stack
             .iter()
@@ -80,11 +99,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             .find(|c: char| c.is_whitespace() || c == ']')
             .unwrap_or(rest.len());
         let id = rest.get(..end)?.trim();
-        if id.is_empty() {
-            None
-        } else {
-            Some(id)
-        }
+        if id.is_empty() { None } else { Some(id) }
     }
 
     /// Looks for a prior user line (excluding the latest user message) containing `AGENDA_CONFIRM`.
@@ -140,10 +155,13 @@ impl<E: LlmEngine> Orchestrator<E> {
             if first.role == "system" {
                 first.content = prompt;
             } else {
-                chat_stack.insert(0, crate::engine::Message {
-                    role: "system".to_string(),
-                    content: prompt,
-                });
+                chat_stack.insert(
+                    0,
+                    crate::engine::Message {
+                        role: "system".to_string(),
+                        content: prompt,
+                    },
+                );
             }
         } else {
             chat_stack.push(crate::engine::Message {

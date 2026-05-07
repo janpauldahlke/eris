@@ -10,7 +10,7 @@ use serde_json::Value;
 use crate::executive::error::{FcpError, Result};
 use crate::generated::gws_types::calendar::Event;
 use crate::tools::calendar::common::format_event_one_line;
-use crate::tools::context_view_hint::{ToolContextViewHint, API_TOOL_SNIPPET_CHARS};
+use crate::tools::context_view_hint::{API_TOOL_SNIPPET_CHARS, ToolContextViewHint};
 use crate::tools::traits::Tool;
 use crate::util::CalendarClient;
 
@@ -48,8 +48,7 @@ impl Tool for CalendarGetTool {
     }
 
     async fn execute(&self, args: Value) -> Result<String> {
-        let parsed: CalendarGetArgs =
-            serde_json::from_value(args).map_err(FcpError::ParseFault)?;
+        let parsed: CalendarGetArgs = serde_json::from_value(args).map_err(FcpError::ParseFault)?;
         if parsed.event_id.trim().is_empty() {
             return Err(FcpError::SchemaViolation(
                 "event_id must be non-empty".into(),
@@ -70,11 +69,9 @@ impl Tool for CalendarGetTool {
                 reason: "unexpected Calendar API response".into(),
             }
         })?;
-        let pretty = serde_json::to_string_pretty(&v).map_err(|e| {
-            FcpError::ToolFault {
-                tool_name: "calendar:get".into(),
-                reason: format!("serialize event: {e}"),
-            }
+        let pretty = serde_json::to_string_pretty(&v).map_err(|e| FcpError::ToolFault {
+            tool_name: "calendar:get".into(),
+            reason: format!("serialize event: {e}"),
         })?;
 
         let summary_line = match serde_json::from_value::<Event>(v.clone()) {

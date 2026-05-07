@@ -1,16 +1,16 @@
-use crate::executive::error::{FcpError, Result};
 use crate::config::AppConfig;
+use crate::executive::error::{FcpError, Result};
 use crate::ingest::truncate_char_boundary;
-use std::sync::Arc;
+use ollama_rs::Ollama;
+use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use qdrant_client::Qdrant;
 use qdrant_client::qdrant::{
     Condition, CreateCollectionBuilder, CreateFieldIndexCollectionBuilder, DeletePointsBuilder,
-    Distance, FieldType, Filter, OrderBy, PointStruct, ScrollPointsBuilder, SearchPointsBuilder,
-    UpsertPointsBuilder, VectorParamsBuilder, Direction,
+    Direction, Distance, FieldType, Filter, OrderBy, PointStruct, ScrollPointsBuilder,
+    SearchPointsBuilder, UpsertPointsBuilder, VectorParamsBuilder,
 };
-use ollama_rs::Ollama;
-use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Qdrant payload key for millisecond UNIX time used to order “where we left off” recall.
 pub const RECENCY_TS_PAYLOAD_KEY: &str = "recency_ts";
@@ -101,15 +101,19 @@ impl SemanticBrain {
 
         let collection_name = &config.qdrant_collection_v2;
 
-        let exists = client.collection_exists(collection_name)
+        let exists = client
+            .collection_exists(collection_name)
             .await
             .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
 
         if !exists {
-            client.create_collection(
-                CreateCollectionBuilder::new(collection_name)
-                    .vectors_config(VectorParamsBuilder::new(768, Distance::Cosine))
-            ).await.map_err(|e| FcpError::NetworkFault(e.to_string()))?;
+            client
+                .create_collection(
+                    CreateCollectionBuilder::new(collection_name)
+                        .vectors_config(VectorParamsBuilder::new(768, Distance::Cosine)),
+                )
+                .await
+                .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
             tracing::info!(collection = %collection_name, "Created Qdrant collection");
         }
 
@@ -199,7 +203,9 @@ impl SemanticBrain {
 
     pub async fn generate_embedding(&self, text: &str) -> Result<Vec<f32>> {
         if text.trim().is_empty() {
-            return Err(FcpError::EmbeddingFault("Cannot generate embedding for empty query".to_string()));
+            return Err(FcpError::EmbeddingFault(
+                "Cannot generate embedding for empty query".to_string(),
+            ));
         }
 
         let request = GenerateEmbeddingsRequest::new(
@@ -207,18 +213,24 @@ impl SemanticBrain {
             text.to_string().into(),
         );
 
-        let response = self.ollama.generate_embeddings(request).await
+        let response = self
+            .ollama
+            .generate_embeddings(request)
+            .await
             .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
 
-        response
-            .embeddings
-            .into_iter()
-            .next()
-            .ok_or_else(|| FcpError::EmbeddingFault("Embedding model returned no vectors".to_string()))
+        response.embeddings.into_iter().next().ok_or_else(|| {
+            FcpError::EmbeddingFault("Embedding model returned no vectors".to_string())
+        })
     }
 
     /// `vault_key` should be a stable path-like id (e.g. `30_Synthesis/<node_id>/r0001.md` or `committed:<uuid>`). When `None`, uses `committed:<point_id>`.
-    pub async fn upsert(&self, text: &str, tags: Vec<String>, vault_key: Option<String>) -> Result<()> {
+    pub async fn upsert(
+        &self,
+        text: &str,
+        tags: Vec<String>,
+        vault_key: Option<String>,
+    ) -> Result<()> {
         let embedding = self.generate_embedding(text).await?;
         let id = uuid::Uuid::new_v4().to_string();
         let vk = vault_key.unwrap_or_else(|| format!("committed:{id}"));
@@ -234,9 +246,11 @@ impl SemanticBrain {
 
         let point = PointStruct::new(id, embedding, payload);
 
-        self.client.upsert_points(
-            UpsertPointsBuilder::new(&self.config.qdrant_collection_v2, vec![point])
-        )
+        self.client
+            .upsert_points(UpsertPointsBuilder::new(
+                &self.config.qdrant_collection_v2,
+                vec![point],
+            ))
             .await
             .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
 
@@ -267,7 +281,10 @@ impl SemanticBrain {
 
         let point = PointStruct::new(id, embedding, payload);
         self.client
-            .upsert_points(UpsertPointsBuilder::new(&self.config.qdrant_collection_v2, vec![point]))
+            .upsert_points(UpsertPointsBuilder::new(
+                &self.config.qdrant_collection_v2,
+                vec![point],
+            ))
             .await
             .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
 
@@ -297,7 +314,9 @@ impl SemanticBrain {
             let Some(artifact_val) = payload.get("artifact_id") else {
                 continue;
             };
-            let Some(qdrant_client::qdrant::value::Kind::StringValue(found_artifact_id)) = &artifact_val.kind else {
+            let Some(qdrant_client::qdrant::value::Kind::StringValue(found_artifact_id)) =
+                &artifact_val.kind
+            else {
                 continue;
             };
             if found_artifact_id != artifact_id {
@@ -367,11 +386,9 @@ impl SemanticBrain {
         }
 
         let embedding = self.generate_embedding(text).await?;
-        let point_id = uuid::Uuid::new_v5(
-            &uuid::Uuid::NAMESPACE_URL,
-            vault_relative_key.as_bytes(),
-        )
-        .to_string();
+        let point_id =
+            uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, vault_relative_key.as_bytes())
+                .to_string();
 
         let mut payload: HashMap<String, serde_json::Value> = HashMap::new();
         payload.insert("text".into(), serde_json::json!(text));
@@ -529,7 +546,9 @@ impl SemanticBrain {
             while let Ok(Some(rev_entry)) = rev_entries.next_entry().await {
                 let name = rev_entry.file_name();
                 let name_str = name.to_string_lossy();
-                if let Some(num_str) = name_str.strip_prefix('r').and_then(|s| s.strip_suffix(".md"))
+                if let Some(num_str) = name_str
+                    .strip_prefix('r')
+                    .and_then(|s| s.strip_suffix(".md"))
                     && let Ok(n) = num_str.parse::<u32>()
                     && best_rev.as_ref().is_none_or(|(best, _)| n > *best)
                 {
@@ -614,7 +633,10 @@ impl SemanticBrain {
 
         let embedding = self.generate_embedding(query).await?;
         let trimmed_tag = options.filter_tag.map(str::trim).filter(|t| !t.is_empty());
-        let trimmed_prefix = options.vault_path_prefix.map(str::trim).filter(|t| !t.is_empty());
+        let trimmed_prefix = options
+            .vault_path_prefix
+            .map(str::trim)
+            .filter(|t| !t.is_empty());
 
         let qdrant_limit = qdrant_oversample_limit(
             options.top_k,
@@ -722,7 +744,10 @@ impl SemanticBrain {
         options: MemoryQueryOptions<'_>,
     ) -> Result<MemorySearchOutcome> {
         let trimmed_tag = options.filter_tag.map(str::trim).filter(|t| !t.is_empty());
-        let trimmed_prefix = options.vault_path_prefix.map(str::trim).filter(|t| !t.is_empty());
+        let trimmed_prefix = options
+            .vault_path_prefix
+            .map(str::trim)
+            .filter(|t| !t.is_empty());
 
         let qdrant_limit = qdrant_oversample_limit(
             options.top_k,
@@ -853,10 +878,7 @@ impl SemanticBrain {
             .order_by(order_by);
 
         if let Some(tag) = filter_tag.map(str::trim).filter(|t| !t.is_empty()) {
-            scroll = scroll.filter(Filter::must([Condition::matches(
-                "tags",
-                tag.to_string(),
-            )]));
+            scroll = scroll.filter(Filter::must([Condition::matches("tags", tag.to_string())]));
         }
 
         let scroll_response = self
@@ -906,10 +928,7 @@ impl SemanticBrain {
                 .with_payload(true);
 
         if let Some(tag) = filter_tag.map(str::trim).filter(|t| !t.is_empty()) {
-            builder = builder.filter(Filter::must([Condition::matches(
-                "tags",
-                tag.to_string(),
-            )]));
+            builder = builder.filter(Filter::must([Condition::matches("tags", tag.to_string())]));
         }
 
         let search_result = self
@@ -1180,17 +1199,17 @@ fn parse_vault_md(raw: &str) -> ParsedVaultMd {
 mod tests {
     use super::*;
     use crate::config::AppConfig;
-    use std::sync::Arc;
     use ollama_rs::Ollama;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_semantic_brain_offline_returns_vector_db_offline() {
         let mut config = AppConfig::default();
         config.qdrant_url = "http://localhost:65535".to_string(); // Dead port
-        
+
         let client = Ollama::new("http://localhost".to_string(), 11434);
         let brain_result = SemanticBrain::new(Arc::new(config), Arc::new(client)).await;
-        
+
         match brain_result {
             Err(FcpError::NetworkFault(_)) => (),
             _ => panic!("Expected NetworkFault error, got success instead"),
@@ -1202,14 +1221,12 @@ mod tests {
         let mut config = AppConfig::default();
         config.qdrant_url = "http://127.0.0.1:65535".to_string();
         let client = Ollama::new("http://localhost".to_string(), 11434);
-        let brain_result = SemanticBrain::new_with_connect_retries(
-            Arc::new(config),
-            Arc::new(client),
-            2,
-            1,
-        )
-        .await;
-        assert!(brain_result.is_err(), "expected failure after retries on dead port");
+        let brain_result =
+            SemanticBrain::new_with_connect_retries(Arc::new(config), Arc::new(client), 2, 1).await;
+        assert!(
+            brain_result.is_err(),
+            "expected failure after retries on dead port"
+        );
     }
 
     #[test]
@@ -1403,4 +1420,3 @@ Hello there."#;
         assert_eq!(qdrant_oversample_limit(100, true, cap, mult, floor), 200);
     }
 }
-

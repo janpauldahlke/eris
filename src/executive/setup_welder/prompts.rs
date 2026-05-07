@@ -7,8 +7,8 @@ use inquire::{Confirm, Text};
 use crate::executive::cli::Cli;
 use crate::executive::error::{FcpError, Result};
 
-use super::report::WelderReport;
 use super::IgnitionWorkspaceHint;
+use super::report::WelderReport;
 
 pub(crate) fn sanitize_workspace_id(raw: &str) -> String {
     let s: String = raw
@@ -43,16 +43,18 @@ fn exe_looks_like_downloads_or_tmp() -> bool {
     };
     let lossy = exe.to_string_lossy();
     let lower = lossy.to_lowercase();
-    lower.contains("downloads")
-        || lower.contains("/tmp/")
-        || lower.contains("\\temp\\")
+    lower.contains("downloads") || lower.contains("/tmp/") || lower.contains("\\temp\\")
 }
 
 fn print_binary_layout_tip() {
     eprintln!();
     eprintln!("Tip: keep the `eris` binary outside Downloads.");
-    eprintln!("  mkdir -p \"$HOME/eris/bin\" && mv \"$HOME/Downloads/eris\" \"$HOME/eris/bin/eris\" && chmod +x \"$HOME/eris/bin/eris\"");
-    eprintln!("  echo 'export PATH=\"$HOME/eris/bin:$PATH\"' >> ~/.zshrc   # or ~/.bashrc on Linux");
+    eprintln!(
+        "  mkdir -p \"$HOME/eris/bin\" && mv \"$HOME/Downloads/eris\" \"$HOME/eris/bin/eris\" && chmod +x \"$HOME/eris/bin/eris\""
+    );
+    eprintln!(
+        "  echo 'export PATH=\"$HOME/eris/bin:$PATH\"' >> ~/.zshrc   # or ~/.bashrc on Linux"
+    );
     eprintln!("Your vault is separate: create a folder, `cd` into it, then run `eris chat`.");
     eprintln!();
 }
@@ -86,7 +88,9 @@ pub fn run_interactive_sequence(
         let home = std::env::var("HOME").unwrap_or_else(|_| "$HOME".to_string());
         eprintln!();
         eprintln!("Create a vault directory, enter it, then start again, for example:");
-        eprintln!("  mkdir -p \"{home}/eris/vaults/MyVault\" && cd \"{home}/eris/vaults/MyVault\" && eris chat");
+        eprintln!(
+            "  mkdir -p \"{home}/eris/vaults/MyVault\" && cd \"{home}/eris/vaults/MyVault\" && eris chat"
+        );
         eprintln!();
         return Err(FcpError::Config(
             "First-run vault: choose a directory with `cd`, then run `eris chat` again from there."
@@ -141,7 +145,9 @@ pub fn run_interactive_sequence(
 
 fn offer_install_help(report: &WelderReport) -> Result<()> {
     if report.ollama_cli {
-        eprintln!("The `ollama` CLI is on PATH; Eris will try to start `ollama serve` if the API stays down.");
+        eprintln!(
+            "The `ollama` CLI is on PATH; Eris will try to start `ollama serve` if the API stays down."
+        );
         return Ok(());
     }
 
@@ -159,7 +165,9 @@ fn offer_install_help(report: &WelderReport) -> Result<()> {
                 .status();
             match status {
                 Ok(s) if s.success() => eprintln!("brew install ollama finished successfully."),
-                Ok(s) => eprintln!("brew exited with status {s:?} — start Ollama manually if needed."),
+                Ok(s) => {
+                    eprintln!("brew exited with status {s:?} — start Ollama manually if needed.")
+                }
                 Err(e) => eprintln!("Could not run brew: {e}"),
             }
         }

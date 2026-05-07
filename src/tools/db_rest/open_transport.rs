@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use chrono::DateTime;
 use chrono::FixedOffset;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::executive::error::{FcpError, Result};
 use crate::util::ApiHttpClient;
@@ -21,7 +21,10 @@ const MAX_TOOL_RESULT_CHARS: usize = 8000;
 
 pub fn map_api_err(tool_name: &'static str, e: FcpError) -> FcpError {
     match e {
-        FcpError::ToolFault { tool_name: tn, reason } if tn == "api_client" => FcpError::ToolFault {
+        FcpError::ToolFault {
+            tool_name: tn,
+            reason,
+        } if tn == "api_client" => FcpError::ToolFault {
             tool_name: tool_name.to_string(),
             reason,
         },
@@ -44,25 +47,27 @@ struct LocationStop {
 }
 
 /// Parses the top-level JSON array from `/locations`; returns the first entry that has an `id`.
-pub fn parse_first_stop_id(tool_name: &'static str, label: &str, body: &str) -> Result<(String, String)> {
+pub fn parse_first_stop_id(
+    tool_name: &'static str,
+    label: &str,
+    body: &str,
+) -> Result<(String, String)> {
     let rows: Vec<LocationStop> = serde_json::from_str(body).map_err(|e| FcpError::ToolFault {
         tool_name: tool_name.to_string(),
         reason: format!("locations JSON parse error for {label}: {e}"),
     })?;
-    let hit = rows.iter().find(|r| r.id.as_deref().unwrap_or("").len() > 1).ok_or_else(|| {
-        FcpError::ToolFault {
+    let hit = rows
+        .iter()
+        .find(|r| r.id.as_deref().unwrap_or("").len() > 1)
+        .ok_or_else(|| FcpError::ToolFault {
             tool_name: tool_name.to_string(),
             reason: format!("no station or stop match for {label}"),
-        }
-    })?;
+        })?;
     let id = hit.id.clone().ok_or_else(|| FcpError::ToolFault {
         tool_name: tool_name.to_string(),
         reason: format!("location hit missing id for {label}"),
     })?;
-    let name = hit
-        .name
-        .clone()
-        .unwrap_or_else(|| id.clone());
+    let name = hit.name.clone().unwrap_or_else(|| id.clone());
     Ok((id, name))
 }
 
@@ -162,7 +167,11 @@ fn parse_rfc3339(s: &str) -> Option<DateTime<FixedOffset>> {
 }
 
 fn fold_journey(j: JourneyRaw) -> Value {
-    let motor_legs: Vec<LegRaw> = j.legs.into_iter().filter(|l| !is_transfer_placeholder(l)).collect();
+    let motor_legs: Vec<LegRaw> = j
+        .legs
+        .into_iter()
+        .filter(|l| !is_transfer_placeholder(l))
+        .collect();
 
     let rides: Vec<Value> = motor_legs
         .iter()
@@ -225,22 +234,21 @@ fn fold_journey(j: JourneyRaw) -> Value {
         }));
     }
 
-    let (duration_minutes, summary_depart, summary_arrive) = if let (Some(first), Some(last)) =
-        (motor_legs.first(), motor_legs.last())
-    {
-        let d0 = pick_dt(&first.departure, &first.planned_departure);
-        let a1 = pick_dt(&last.arrival, &last.planned_arrival);
-        let dur = match (d0.as_deref(), a1.as_deref()) {
-            (Some(ds), Some(as_)) => match (parse_rfc3339(ds), parse_rfc3339(as_)) {
-                (Some(td), Some(ta)) => Some(ta.signed_duration_since(td).num_minutes()),
+    let (duration_minutes, summary_depart, summary_arrive) =
+        if let (Some(first), Some(last)) = (motor_legs.first(), motor_legs.last()) {
+            let d0 = pick_dt(&first.departure, &first.planned_departure);
+            let a1 = pick_dt(&last.arrival, &last.planned_arrival);
+            let dur = match (d0.as_deref(), a1.as_deref()) {
+                (Some(ds), Some(as_)) => match (parse_rfc3339(ds), parse_rfc3339(as_)) {
+                    (Some(td), Some(ta)) => Some(ta.signed_duration_since(td).num_minutes()),
+                    _ => None,
+                },
                 _ => None,
-            },
-            _ => None,
+            };
+            (dur, d0, a1)
+        } else {
+            (None, None, None)
         };
-        (dur, d0, a1)
-    } else {
-        (None, None, None)
-    };
 
     let transfer_count = motor_legs.len().saturating_sub(1);
     let direct = motor_legs.len() <= 1;
@@ -274,7 +282,11 @@ fn fold_journey(j: JourneyRaw) -> Value {
     out
 }
 
-fn normalize_journeys(tool_name: &'static str, body: &str, max_journeys: usize) -> Result<Vec<Value>> {
+fn normalize_journeys(
+    tool_name: &'static str,
+    body: &str,
+    max_journeys: usize,
+) -> Result<Vec<Value>> {
     let parsed: JourneysBody = serde_json::from_str(body).map_err(|e| FcpError::ToolFault {
         tool_name: tool_name.to_string(),
         reason: format!("journeys JSON parse error: {e}"),
@@ -415,7 +427,8 @@ pub fn validate_when_iso(when: &str) -> Result<()> {
         .or_else(|_| t.parse::<DateTime<FixedOffset>>())
         .map_err(|_| {
             FcpError::SchemaViolation(
-                "`when` must include a timezone offset, e.g. 2026-04-15T08:00:00+02:00 (RFC 3339)".into(),
+                "`when` must include a timezone offset, e.g. 2026-04-15T08:00:00+02:00 (RFC 3339)"
+                    .into(),
             )
         })?;
     Ok(())
@@ -450,7 +463,10 @@ mod tests {
         assert_eq!(rides[0].get("line").and_then(|x| x.as_str()), Some("ICE 1"));
         let summary = v[0].get("summary").expect("summary");
         assert_eq!(summary.get("direct").and_then(|x| x.as_bool()), Some(true));
-        assert_eq!(summary.get("transferCount").and_then(|x| x.as_u64()), Some(0));
+        assert_eq!(
+            summary.get("transferCount").and_then(|x| x.as_u64()),
+            Some(0)
+        );
     }
 
     #[test]
@@ -463,11 +479,22 @@ mod tests {
         let v = normalize_journeys("db:find_connections", body, 3).expect("ok");
         let rides = v[0].get("rides").and_then(|r| r.as_array()).expect("rides");
         assert_eq!(rides.len(), 2);
-        let transfers = v[0].get("transfers").and_then(|t| t.as_array()).expect("transfers");
+        let transfers = v[0]
+            .get("transfers")
+            .and_then(|t| t.as_array())
+            .expect("transfers");
         assert_eq!(transfers.len(), 1);
         assert_eq!(transfers[0].get("at").and_then(|x| x.as_str()), Some("Y"));
-        assert_eq!(transfers[0].get("minutesBetween").and_then(|x| x.as_i64()), Some(30));
-        assert_eq!(v[0].get("summary").and_then(|s| s.get("direct")).and_then(|x| x.as_bool()), Some(false));
+        assert_eq!(
+            transfers[0].get("minutesBetween").and_then(|x| x.as_i64()),
+            Some(30)
+        );
+        assert_eq!(
+            v[0].get("summary")
+                .and_then(|s| s.get("direct"))
+                .and_then(|x| x.as_bool()),
+            Some(false)
+        );
     }
 
     #[test]

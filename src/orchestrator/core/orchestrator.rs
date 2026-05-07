@@ -4,13 +4,16 @@ use crate::memory::ephemeral::EphemeralMemory;
 use crate::orchestrator::context::ContextAssembler;
 use crate::orchestrator::context::ContextViewSettings;
 use crate::orchestrator::state::AgentState;
-use crate::presentation::{AgentStateUpdate, SessionEvent};
 use crate::orchestrator::tool_router::ToolRouter;
+use crate::presentation::{AgentStateUpdate, SessionEvent};
 use crate::tools::Gatekeeper;
 use crate::tools::ToolDescriptorRegistry;
+use std::collections::HashMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use super::moltbook_browse_ledger::MoltbookBrowseLedger;
 
 /// Marker string in `thought` / `message_to_user` when the last user line was empty (debuggable in logs and TUI).
 pub const EMPTY_USER_MESSAGE_TAG: &str = "SY FNORD";
@@ -102,6 +105,10 @@ pub struct Orchestrator<E: LlmEngine> {
     pub(crate) tool_round_cap_final_pass_pending: bool,
     /// Shared with [`crate::memory::ephemeral::spawn_snapshot_daemon`]: while `true`, promotion/decay ticks are skipped.
     pub(crate) promotion_suppressed_during_step: Arc<AtomicBool>,
+    /// When set, successful tool calls update browse-cycle counters and may inject invariant nudges.
+    pub(super) moltbook_browse_ledger: Option<MoltbookBrowseLedger>,
+    /// Per-`step()` consecutive failure counts for `(tool_name, intent_id)` on repeatable tools (Moltbook latch).
+    pub(super) tool_repeat_failure_streak: HashMap<String, u8>,
 }
 
 impl<E: LlmEngine> Orchestrator<E> {
@@ -122,9 +129,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                 total_ms: self.last_total_ms,
                 top_tool_match: self.last_top_tool_match.clone(),
             };
-            let _ = tx
-                .send(SessionEvent::StateUpdate(update))
-                .await;
+            let _ = tx.send(SessionEvent::StateUpdate(update)).await;
         }
     }
 
@@ -194,6 +199,8 @@ impl<E: LlmEngine> Orchestrator<E> {
             last_deck_message_body: None,
             tool_round_cap_final_pass_pending: false,
             promotion_suppressed_during_step,
+            moltbook_browse_ledger: None,
+            tool_repeat_failure_streak: HashMap::new(),
         }
     }
 

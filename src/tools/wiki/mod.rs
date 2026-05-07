@@ -13,9 +13,9 @@ mod integration_tests {
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    use crate::util::ApiHttpClient;
     use crate::config::{ApiProfile, AppConfig};
     use crate::tools::traits::Tool;
+    use crate::util::ApiHttpClient;
 
     use super::WikiSummaryTool;
 
@@ -39,10 +39,7 @@ mod integration_tests {
             "wikipedia_page_summary".into(),
             ApiProfile {
                 enabled: true,
-                base_url: format!(
-                    "{}/api/rest_v1/page/summary/{{title}}",
-                    server.uri()
-                ),
+                base_url: format!("{}/api/rest_v1/page/summary/{{title}}", server.uri()),
                 query: HashMap::new(),
                 headers: [(
                     "User-Agent".into(),

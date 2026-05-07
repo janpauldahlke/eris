@@ -4,20 +4,19 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::util::ApiHttpClient;
 use crate::executive::error::{FcpError, Result};
-use crate::tools::context_view_hint::{ToolContextViewHint, API_TOOL_SNIPPET_CHARS};
+use crate::tools::context_view_hint::{API_TOOL_SNIPPET_CHARS, ToolContextViewHint};
 use crate::tools::traits::Tool;
+use crate::util::ApiHttpClient;
 
 pub const PROFILE_WIKIPEDIA_PAGE_SUMMARY: &str = "wikipedia_page_summary";
 
-pub const HINT_WIKI_SUMMARY: &str =
-    "English Wikipedia lead summary only; may be incomplete or dated. Not your vault or arbitrary URLs.";
+pub const HINT_WIKI_SUMMARY: &str = "English Wikipedia lead summary only; may be incomplete or dated. Not your vault or arbitrary URLs.";
 
 #[derive(Deserialize, JsonSchema)]
 pub struct WikiSummaryArgs {
@@ -55,7 +54,10 @@ pub struct WikiSummaryTool {
 
 pub fn map_api_err(tool_name: &'static str, e: FcpError) -> FcpError {
     match e {
-        FcpError::ToolFault { tool_name: tn, reason } if tn == "api_client" => FcpError::ToolFault {
+        FcpError::ToolFault {
+            tool_name: tn,
+            reason,
+        } if tn == "api_client" => FcpError::ToolFault {
             tool_name: tool_name.to_string(),
             reason,
         },
@@ -89,12 +91,11 @@ pub async fn run_wiki_summary(api: &ApiHttpClient, title: &str) -> Result<String
         .get_templated(PROFILE_WIKIPEDIA_PAGE_SUMMARY, &params)
         .await
         .map_err(|e| map_api_err("wiki:summary", e))?;
-    let parsed: WikipediaSummaryBody = serde_json::from_str(&body).map_err(|e| {
-        FcpError::ToolFault {
+    let parsed: WikipediaSummaryBody =
+        serde_json::from_str(&body).map_err(|e| FcpError::ToolFault {
             tool_name: "wiki:summary".into(),
             reason: format!("Wikipedia summary JSON parse error: {e}"),
-        }
-    })?;
+        })?;
     let canonical_url = parsed
         .content_urls
         .as_ref()

@@ -49,8 +49,7 @@ impl Tool for MailWriteTool {
     }
 
     async fn execute(&self, args: Value) -> Result<String> {
-        let parsed: MailWriteArgs =
-            serde_json::from_value(args).map_err(FcpError::ParseFault)?;
+        let parsed: MailWriteArgs = serde_json::from_value(args).map_err(FcpError::ParseFault)?;
 
         let to = parsed.to.trim();
         if to.is_empty() || !is_plausible_email(to) {
@@ -64,9 +63,7 @@ impl Tool for MailWriteTool {
             ));
         }
         if parsed.body.trim().is_empty() {
-            return Err(FcpError::SchemaViolation(
-                "body must be non-empty".into(),
-            ));
+            return Err(FcpError::SchemaViolation("body must be non-empty".into()));
         }
         if let Some(cc) = &parsed.cc {
             if !cc.trim().is_empty() && !is_plausible_email(cc.trim()) {
@@ -99,7 +96,9 @@ impl Tool for MailWriteTool {
             .and_then(|v| v.get("id").and_then(|i| i.as_str()).map(String::from))
             .unwrap_or_else(|| "unknown".into());
 
-        Ok(format!("[mail:write] Message sent successfully (id={msg_id}) to {to}."))
+        Ok(format!(
+            "[mail:write] Message sent successfully (id={msg_id}) to {to}."
+        ))
     }
 }
 

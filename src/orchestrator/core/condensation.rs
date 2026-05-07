@@ -20,10 +20,16 @@ fn condensation_messages_outline(messages: &[Message]) -> String {
             .take(SNIPPET_CHARS)
             .collect();
         let suffix = if total > SNIPPET_CHARS { "…" } else { "" };
-        parts.push(format!("[{}#{} {}ch] {}{}", m.role, idx, total, snippet, suffix));
+        parts.push(format!(
+            "[{}#{} {}ch] {}{}",
+            m.role, idx, total, snippet, suffix
+        ));
     }
     if messages.len() > MAX_MSGS {
-        parts.push(format!("+{} more msgs", messages.len().saturating_sub(MAX_MSGS)));
+        parts.push(format!(
+            "+{} more msgs",
+            messages.len().saturating_sub(MAX_MSGS)
+        ));
     }
     let mut joined = parts.join(" | ");
     if joined.chars().count() > MAX_OUT_CHARS {
@@ -67,10 +73,8 @@ impl<E: LlmEngine> Orchestrator<E> {
 
         let retain_budget =
             crate::orchestrator::context::retain_budget_tokens(self.num_ctx).max(32);
-        let fold_est =
-            crate::orchestrator::context::estimate_stack_tokens(&plan.messages_to_fold);
-        let kept_est =
-            crate::orchestrator::context::estimate_stack_tokens(&plan.kept_tail);
+        let fold_est = crate::orchestrator::context::estimate_stack_tokens(&plan.messages_to_fold);
+        let kept_est = crate::orchestrator::context::estimate_stack_tokens(&plan.kept_tail);
         let summarizer_input_est =
             crate::orchestrator::context::estimate_stack_tokens(&summarize_stack);
         tracing::info!(
@@ -97,18 +101,15 @@ impl<E: LlmEngine> Orchestrator<E> {
         );
 
         let response = self.engine.generate(&summarize_stack, "", None).await?;
-        let json_out = crate::orchestrator::context::normalize_rolling_summary_response(
-            &response.content,
-        )?;
+        let json_out =
+            crate::orchestrator::context::normalize_rolling_summary_response(&response.content)?;
 
         let mut new_stack = Vec::new();
         new_stack.push(plan.main_system.clone());
         if let Some(jit) = plan.jit.clone() {
             new_stack.push(jit);
         }
-        new_stack.push(crate::orchestrator::context::rolling_summary_system_message(
-            &json_out,
-        ));
+        new_stack.push(crate::orchestrator::context::rolling_summary_system_message(&json_out));
         for m in plan.kept_tail {
             new_stack.push(m);
         }

@@ -2,13 +2,13 @@ use crate::executive::error::{FcpError, Result};
 use crate::ingest::{trim_chars, trim_snippets_to_budget};
 use crate::memory::ephemeral::EphemeralMemory;
 use crate::memory::semantic::SemanticBrain;
+use crate::tools::context_view_hint::{ARTIFACT_QUERY_SNIPPET_CHARS, ToolContextViewHint};
+use crate::tools::traits::Tool;
 use crate::tools::web::artifact::{WebArtifact, WebOutboundLink};
 use crate::tools::web::markdown_focus::chunk_heading_weight_factor;
-use crate::tools::context_view_hint::{ToolContextViewHint, ARTIFACT_QUERY_SNIPPET_CHARS};
-use crate::tools::traits::Tool;
 use async_trait::async_trait;
-use schemars::schema::RootSchema;
 use schemars::JsonSchema;
+use schemars::schema::RootSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
@@ -116,9 +116,12 @@ impl Tool for WebArtifactQueryTool {
     }
 
     async fn execute(&self, args: Value) -> Result<String> {
-        let args: WebArtifactQueryArgs = serde_json::from_value(args).map_err(FcpError::ParseFault)?;
+        let args: WebArtifactQueryArgs =
+            serde_json::from_value(args).map_err(FcpError::ParseFault)?;
         if args.artifact_id.trim().is_empty() {
-            return Err(FcpError::SchemaViolation("artifact_id cannot be empty".to_string()));
+            return Err(FcpError::SchemaViolation(
+                "artifact_id cannot be empty".to_string(),
+            ));
         }
 
         let entry = self
@@ -129,7 +132,8 @@ impl Tool for WebArtifactQueryTool {
                 tool_name: self.name().to_string(),
                 reason: "Artifact not found or expired".to_string(),
             })?;
-        let artifact: WebArtifact = serde_json::from_str(&entry.data).map_err(FcpError::ParseFault)?;
+        let artifact: WebArtifact =
+            serde_json::from_str(&entry.data).map_err(FcpError::ParseFault)?;
         let top_k = args.top_k.unwrap_or(3).clamp(1, 3);
         let mut matches = if let Some(semantic) = &self.semantic {
             match semantic
@@ -144,7 +148,9 @@ impl Tool for WebArtifactQueryTool {
                         snippet: trim_chars(&hit.snippet, self.max_snippet_chars),
                     })
                     .collect::<Vec<_>>(),
-                Ok(_) => lexical_matches(&artifact.chunks, &args.query, top_k, self.max_snippet_chars),
+                Ok(_) => {
+                    lexical_matches(&artifact.chunks, &args.query, top_k, self.max_snippet_chars)
+                }
                 Err(e) => {
                     tracing::warn!(error = %e, "Semantic artifact query failed; using lexical fallback");
                     lexical_matches(&artifact.chunks, &args.query, top_k, self.max_snippet_chars)
@@ -200,7 +206,12 @@ mod tests {
         };
         let payload = serde_json::to_string(&artifact).expect("serialize");
         let stored = mem
-            .insert("web_artifact:test", &payload, vec!["web_artifact".into()], 60)
+            .insert(
+                "web_artifact:test",
+                &payload,
+                vec!["web_artifact".into()],
+                60,
+            )
             .await
             .expect("insert");
 

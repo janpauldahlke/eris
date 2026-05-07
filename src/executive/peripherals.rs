@@ -179,8 +179,7 @@ fn sync_reap_managed_child(child: &mut Child, name: &'static str) {
             Ok(_) => {}
         }
 
-        let deadline =
-            std::time::Instant::now() + Duration::from_secs(DAEMON_SIGTERM_GRACE_SECS);
+        let deadline = std::time::Instant::now() + Duration::from_secs(DAEMON_SIGTERM_GRACE_SECS);
         loop {
             match child.try_wait() {
                 Ok(Some(status)) => {
@@ -265,9 +264,13 @@ pub async fn ensure_peripherals_for_chat(config: &AppConfig) -> Result<Periphera
             "Ollama not reachable yet; waiting before attempting a managed launch"
         );
         if wait_for_ollama(&config.ollama_host, PRE_SPAWN_OLLAMA_WAIT_SECS).await {
-            tracing::info!("Ollama became reachable during pre-spawn wait; not launching a managed instance");
+            tracing::info!(
+                "Ollama became reachable during pre-spawn wait; not launching a managed instance"
+            );
         } else {
-            tracing::warn!("Ollama still not reachable after extended wait; attempting Rust-managed launch");
+            tracing::warn!(
+                "Ollama still not reachable after extended wait; attempting Rust-managed launch"
+            );
             let mut child = spawn_ollama_daemon(config)?;
             if !wait_for_ollama(&config.ollama_host, READY_TIMEOUT_SECS).await {
                 sync_reap_managed_child(&mut child, "ollama-bootstrap");
@@ -311,12 +314,15 @@ pub async fn ensure_peripherals_for_chat(config: &AppConfig) -> Result<Periphera
                         .stderr(Stdio::null())
                         .status();
                     return Err(FcpError::NetworkFault(
-                        "FATAL: Qdrant docker sidecar failed to become ready after launch attempt.".into(),
+                        "FATAL: Qdrant docker sidecar failed to become ready after launch attempt."
+                            .into(),
                     ));
                 }
                 lifecycle.qdrant = Some(ManagedProcess {
                     name: "qdrant",
-                    kind: ManagedProcessKind::DockerContainer { name: container_name },
+                    kind: ManagedProcessKind::DockerContainer {
+                        name: container_name,
+                    },
                 });
                 tracing::info!("Qdrant docker sidecar launched and reachable");
             }
@@ -427,15 +433,14 @@ fn spawn_ollama_daemon(config: &AppConfig) -> Result<Child> {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     apply_unix_sidecar_process_group(&mut cmd);
-    cmd.spawn()
-        .map_err(|e| {
-            FcpError::NetworkFault(format!(
-                "FATAL: failed to launch ollama daemon with `{}` ({}={}): {e}",
-                render_daemon_command(daemon),
-                OLLAMA_CONTEXT_LENGTH_ENV,
-                ctx
-            ))
-        })
+    cmd.spawn().map_err(|e| {
+        FcpError::NetworkFault(format!(
+            "FATAL: failed to launch ollama daemon with `{}` ({}={}): {e}",
+            render_daemon_command(daemon),
+            OLLAMA_CONTEXT_LENGTH_ENV,
+            ctx
+        ))
+    })
 }
 
 fn spawn_daemon(name: &'static str, daemon: &DaemonCommand) -> Result<Child> {
@@ -444,13 +449,12 @@ fn spawn_daemon(name: &'static str, daemon: &DaemonCommand) -> Result<Child> {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     apply_unix_sidecar_process_group(&mut cmd);
-    cmd.spawn()
-        .map_err(|e| {
-            FcpError::NetworkFault(format!(
-                "FATAL: failed to launch {name} daemon with `{}`: {e}",
-                render_daemon_command(daemon)
-            ))
-        })
+    cmd.spawn().map_err(|e| {
+        FcpError::NetworkFault(format!(
+            "FATAL: failed to launch {name} daemon with `{}`: {e}",
+            render_daemon_command(daemon)
+        ))
+    })
 }
 
 fn render_daemon_command(daemon: &DaemonCommand) -> String {

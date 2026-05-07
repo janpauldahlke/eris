@@ -21,7 +21,9 @@ fn should_generate() -> bool {
 
 fn main() {
     if !should_generate() {
-        println!("cargo:warning=gws-builder: skipping generation (src/generated/gws_types/ already populated; set GWS_GEN=1 to force)");
+        println!(
+            "cargo:warning=gws-builder: skipping generation (src/generated/gws_types/ already populated; set GWS_GEN=1 to force)"
+        );
         return;
     }
 
@@ -47,7 +49,9 @@ fn main() {
             );
         }
         Err(e) => {
-            println!("cargo:warning=gws-builder: generation failed: {e} — build will proceed without generated types");
+            println!(
+                "cargo:warning=gws-builder: generation failed: {e} — build will proceed without generated types"
+            );
         }
     }
 }

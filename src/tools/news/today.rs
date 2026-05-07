@@ -4,15 +4,16 @@ use crate::executive::error::{FcpError, Result};
 use crate::ingest::truncate_char_boundary;
 use crate::memory::ephemeral::EphemeralMemory;
 use crate::memory::semantic::SemanticBrain;
-use crate::tools::context_view_hint::{ToolContextViewHint, ARTIFACT_QUERY_SNIPPET_CHARS};
+use crate::tools::context_view_hint::{ARTIFACT_QUERY_SNIPPET_CHARS, ToolContextViewHint};
 use crate::tools::traits::Tool;
 use crate::tools::web::artifact::WebOutboundLink;
 use crate::tools::web::fetch_inner::{
-    build_web_fetch_client, default_next_step_hint, run_web_fetch, WebFetchRuntime, WebFetchRunOutcome,
+    WebFetchRunOutcome, WebFetchRuntime, build_web_fetch_client, default_next_step_hint,
+    run_web_fetch,
 };
 use async_trait::async_trait;
-use schemars::schema::RootSchema;
 use schemars::JsonSchema;
+use schemars::schema::RootSchema;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -68,9 +69,7 @@ fn join_site_base(site_base: &str, rel_path: &str) -> Result<String> {
         ));
     }
     let base = Url::parse(raw).map_err(|_| {
-        FcpError::SchemaViolation(format!(
-            "news:today: invalid news_today_site_base ({raw})"
-        ))
+        FcpError::SchemaViolation(format!("news:today: invalid news_today_site_base ({raw})"))
     })?;
     let path = rel_path.trim().trim_start_matches('/');
     if path.is_empty() {
@@ -78,13 +77,11 @@ fn join_site_base(site_base: &str, rel_path: &str) -> Result<String> {
             "news:today: internal empty category path".into(),
         ));
     }
-    base.join(path)
-        .map(|u| u.to_string())
-        .map_err(|_| {
-            FcpError::SchemaViolation(format!(
-                "news:today: could not join path {path:?} to site base {raw}"
-            ))
-        })
+    base.join(path).map(|u| u.to_string()).map_err(|_| {
+        FcpError::SchemaViolation(format!(
+            "news:today: could not join path {path:?} to site base {raw}"
+        ))
+    })
 }
 
 /// Snapshot of [`crate::config::AppConfig`] fields needed by [`NewsTodayTool`].
@@ -224,9 +221,7 @@ fn host_allowed(target: &Url, homepage: &Url, cfg_hosts: &[String]) -> bool {
 fn normalize_same_document(a: &Url, b: &Url) -> bool {
     let ma = a.clone();
     let mb = b.clone();
-    ma.scheme() == mb.scheme()
-        && ma.host_str() == mb.host_str()
-        && ma.path() == mb.path()
+    ma.scheme() == mb.scheme() && ma.host_str() == mb.host_str() && ma.path() == mb.path()
 }
 
 /// Ranked outbound links filtered by host policy; skips the homepage document itself.
@@ -290,9 +285,8 @@ impl Tool for NewsTodayTool {
             ));
         }
 
-        let homepage_url = Url::parse(&homepage_str).map_err(|_| {
-            FcpError::SchemaViolation("news:today: invalid homepage URL".into())
-        })?;
+        let homepage_url = Url::parse(&homepage_str)
+            .map_err(|_| FcpError::SchemaViolation("news:today: invalid homepage URL".into()))?;
 
         let max_headlines = args
             .max_headlines
@@ -306,12 +300,8 @@ impl Tool for NewsTodayTool {
 
         let referer_arg = args.referer.clone();
 
-        let homepage_result = run_web_fetch(
-            &self.rt,
-            homepage_str.clone(),
-            referer_arg.clone(),
-        )
-        .await?;
+        let homepage_result =
+            run_web_fetch(&self.rt, homepage_str.clone(), referer_arg.clone()).await?;
 
         let stored = match homepage_result {
             WebFetchRunOutcome::Plain(msg) => {
@@ -350,11 +340,7 @@ impl Tool for NewsTodayTool {
                 let article_result = run_web_fetch(
                     &self.rt,
                     link.url.clone(),
-                    Some(
-                        referer_arg
-                            .clone()
-                            .unwrap_or_else(|| homepage_str.clone()),
-                    ),
+                    Some(referer_arg.clone().unwrap_or_else(|| homepage_str.clone())),
                 )
                 .await?;
 
@@ -430,10 +416,7 @@ mod tests {
         );
 
         let base = server.uri();
-        let hp = format!(
-            "{}/",
-            base.trim_end_matches('/')
-        );
+        let hp = format!("{}/", base.trim_end_matches('/'));
         let args = json!({ "homepage_url": hp });
 
         let out = tool.execute(args).await.expect("execute");
@@ -441,7 +424,12 @@ mod tests {
         assert!(v["homepage_artifact_id"].as_str().is_some());
         let headlines = v["headlines"].as_array().expect("headlines array");
         assert!(!headlines.is_empty());
-        assert!(headlines[0]["url"].as_str().unwrap_or("").contains("/news/article-one"));
+        assert!(
+            headlines[0]["url"]
+                .as_str()
+                .unwrap_or("")
+                .contains("/news/article-one")
+        );
     }
 
     #[test]
@@ -458,11 +446,7 @@ mod tests {
         let h = Url::parse("https://www.bbc.com/").unwrap();
         let sister = Url::parse("https://bbc.co.uk/foo").unwrap();
         assert!(!host_allowed(&sister, &h, &[]));
-        assert!(host_allowed(
-            &sister,
-            &h,
-            &["bbc.co.uk".to_string()]
-        ));
+        assert!(host_allowed(&sister, &h, &["bbc.co.uk".to_string()]));
     }
 
     #[test]
@@ -470,14 +454,7 @@ mod tests {
         use NewsTodayCategory::*;
         let base = "https://www.bbc.com";
         for cat in [
-            World,
-            Uk,
-            Politics,
-            Business,
-            Science,
-            Technology,
-            Sport,
-            Health,
+            World, Uk, Politics, Business, Science, Technology, Sport, Health,
         ] {
             let s = super::join_site_base(base, super::bbc_category_path(cat)).expect("join");
             assert!(s.starts_with("https://"), "category {cat:?} url {s}");

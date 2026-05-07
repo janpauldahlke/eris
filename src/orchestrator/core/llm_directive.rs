@@ -2,9 +2,7 @@ use crate::engine::LlmEngine;
 use crate::orchestrator::llm_support::json_envelope::{
     llm_json_parse_recovery_message_with_excerpt, parse_llm_response_protocol,
 };
-use crate::orchestrator::state::{
-    AgentState, LoopAction, LoopDirective, LlmResponse,
-};
+use crate::orchestrator::state::{AgentState, LlmResponse, LoopAction, LoopDirective};
 
 use super::Orchestrator;
 

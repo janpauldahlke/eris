@@ -44,8 +44,7 @@ impl Tool for MailDeleteTool {
     }
 
     async fn execute(&self, args: Value) -> Result<String> {
-        let parsed: MailDeleteArgs =
-            serde_json::from_value(args).map_err(FcpError::ParseFault)?;
+        let parsed: MailDeleteArgs = serde_json::from_value(args).map_err(FcpError::ParseFault)?;
         let id = parsed.message_id.trim();
         if id.is_empty() {
             return Err(FcpError::SchemaViolation(
@@ -54,7 +53,9 @@ impl Tool for MailDeleteTool {
         }
 
         if parsed.permanent.unwrap_or(false) {
-            self.client.delete_message_permanent(id, "mail:delete").await?;
+            self.client
+                .delete_message_permanent(id, "mail:delete")
+                .await?;
             return Ok(format!(
                 "[mail:delete] Message permanently deleted (id={id})."
             ));
@@ -68,10 +69,7 @@ impl Tool for MailDeleteTool {
                 reason: "unexpected Gmail API response (invalid JSON)".into(),
             }
         })?;
-        let new_id = v
-            .get("id")
-            .and_then(|x| x.as_str())
-            .unwrap_or(id);
+        let new_id = v.get("id").and_then(|x| x.as_str()).unwrap_or(id);
         Ok(format!(
             "[mail:delete] Message moved to Trash (id={new_id})."
         ))

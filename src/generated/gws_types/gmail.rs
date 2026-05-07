@@ -97,7 +97,10 @@ pub struct Message {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payload: Option<MessagePart>,
     ///The internal message creation timestamp (epoch ms), which determines ordering in the inbox. For normal SMTP-received email, this represents the time the message was originally accepted by Google, which is more reliable than the `Date` header. However, for API-migrated mail, it can be configured by client to be based on the `Date` header.
-    #[serde(default, deserialize_with = "super::serde_helpers::deserialize_opt_i64")]
+    #[serde(
+        default,
+        deserialize_with = "super::serde_helpers::deserialize_opt_i64"
+    )]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub internal_date: Option<i64>,
     ///Estimated size in bytes of the message.
@@ -116,7 +119,10 @@ pub struct Message {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thread_id: Option<String>,
     ///The ID of the last history record that modified this message.
-    #[serde(default, deserialize_with = "super::serde_helpers::deserialize_opt_u64")]
+    #[serde(
+        default,
+        deserialize_with = "super::serde_helpers::deserialize_opt_u64"
+    )]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub history_id: Option<u64>,
     ///Classification Label values on the message. Available Classification Label schemas can be queried using the Google Drive Labels API. Each classification label ID must be unique. If duplicate IDs are provided, only one will be retained, and the selection is arbitrary. Only used for Google Workspace accounts.
@@ -361,18 +367,16 @@ pub static SEND_ACTION: ActionDescriptor = ActionDescriptor {
         "https://www.googleapis.com/auth/gmail.modify",
         "https://www.googleapis.com/auth/gmail.send",
     ],
-    parameters: &[
-        ParamDescriptor {
-            name: "userId",
-            param_type: "string",
-            location: "path",
-            required: true,
-            description: "The user's email address. The special value `me` can be used to indicate the authenticated user.",
-            default_value: Some("\"me\""),
-            enum_values: None,
-            deprecated: false,
-        },
-    ],
+    parameters: &[ParamDescriptor {
+        name: "userId",
+        param_type: "string",
+        location: "path",
+        required: true,
+        description: "The user's email address. The special value `me` can be used to indicate the authenticated user.",
+        default_value: Some("\"me\""),
+        enum_values: None,
+        deprecated: false,
+    }],
     request_body_schema: Some("Message"),
     response_body_schema: Some("Message"),
     supports_pagination: false,
@@ -380,8 +384,4 @@ pub static SEND_ACTION: ActionDescriptor = ActionDescriptor {
     supports_media_download: false,
     deprecated: false,
 };
-pub static ALL_ACTIONS: &[&ActionDescriptor] = &[
-    &GET_ACTION,
-    &LIST_ACTION,
-    &SEND_ACTION,
-];
+pub static ALL_ACTIONS: &[&ActionDescriptor] = &[&GET_ACTION, &LIST_ACTION, &SEND_ACTION];

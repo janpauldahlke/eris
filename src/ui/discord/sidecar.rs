@@ -1,7 +1,7 @@
 //! Start Serenity and a non-blocking outbound loop for assistant lines from the presentation mux.
 
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use serenity::builder::CreateMessage;
@@ -12,13 +12,13 @@ use serenity::model::id::ApplicationId;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use super::DiscordReadySignal;
+use super::DiscordTypingCtl;
+use super::format::chunk_discord_content;
+use super::handler::DiscordHandler;
 use crate::config::AppConfig;
 use crate::executive::error::{FcpError, Result};
 use crate::presentation::UserAction;
-use super::format::chunk_discord_content;
-use super::handler::DiscordHandler;
-use super::DiscordReadySignal;
-use super::DiscordTypingCtl;
 
 const DISCORD_CONTENT_CHAR_BUDGET: usize = 1990;
 const READY_TIMEOUT: Duration = Duration::from_secs(90);
@@ -39,9 +39,8 @@ pub async fn run_discord_sidecar(
     })?;
     let (ready_tx, mut ready_rx) = mpsc::channel::<DiscordReadySignal>(1);
 
-    let intents = GatewayIntents::GUILDS
-        | GatewayIntents::GUILD_MESSAGES
-        | GatewayIntents::MESSAGE_CONTENT;
+    let intents =
+        GatewayIntents::GUILDS | GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
 
     let listen_channel_id = Arc::new(tokio::sync::RwLock::new(None));
     let listen_ready_sent = Arc::new(AtomicBool::new(false));
@@ -62,7 +61,10 @@ pub async fn run_discord_sidecar(
     let shard_manager = client.shard_manager.clone();
 
     let start_jh = tokio::spawn(async move {
-        tracing::info!(event = "fcp.discord.shard_starting", "Discord gateway client starting");
+        tracing::info!(
+            event = "fcp.discord.shard_starting",
+            "Discord gateway client starting"
+        );
         if let Err(e) = client.start().await {
             tracing::error!(
                 event = "fcp.discord.client_start_failed",
@@ -84,7 +86,9 @@ pub async fn run_discord_sidecar(
             let _ = shard_manager.shutdown_all().await;
             start_jh.abort();
             let _ = start_jh.await;
-            return Err(FcpError::Config(format!("Discord listen channel: {message}")));
+            return Err(FcpError::Config(format!(
+                "Discord listen channel: {message}"
+            )));
         }
     };
 

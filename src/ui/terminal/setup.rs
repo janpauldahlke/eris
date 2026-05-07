@@ -1,10 +1,10 @@
-use std::io::{stdout, Stdout};
+use crate::executive::error::{FcpError, Result};
 use crossterm::{
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
-use crate::executive::error::{Result, FcpError};
+use ratatui::{Terminal, backend::CrosstermBackend};
+use std::io::{Stdout, stdout};
 
 pub fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
     enable_raw_mode().map_err(|e| FcpError::Config(format!("Failed to enable raw mode: {}", e)))?;
@@ -23,7 +23,8 @@ pub fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
 }
 
 pub fn restore_terminal() -> Result<()> {
-    disable_raw_mode().map_err(|e| FcpError::Config(format!("Failed to disable raw mode: {}", e)))?;
+    disable_raw_mode()
+        .map_err(|e| FcpError::Config(format!("Failed to disable raw mode: {}", e)))?;
     execute!(stdout(), LeaveAlternateScreen)
         .map_err(|e| FcpError::Config(format!("Failed to leave alt screen: {}", e)))?;
     Ok(())

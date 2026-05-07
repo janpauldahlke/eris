@@ -1,7 +1,7 @@
 use crate::engine::LlmEngine;
 use crate::executive::error::Result;
 use crate::orchestrator::llm_support::json_envelope::{
-    split_leading_json_object, FCP_JSON_REPAIR_MARKER, JSON_REPAIR_UI_SUMMARY,
+    FCP_JSON_REPAIR_MARKER, JSON_REPAIR_UI_SUMMARY, split_leading_json_object,
 };
 use crate::orchestrator::r#loop::transition::{StateTransition, TransitionControl};
 use crate::orchestrator::state::{AgentState, LlmResponse};
@@ -34,7 +34,10 @@ impl<E: LlmEngine> Orchestrator<E> {
                 self.broadcast_state().await;
                 Ok(TransitionControl::ReturnOk)
             }
-            StateTransition::Recover { message, schema_retry } => {
+            StateTransition::Recover {
+                message,
+                schema_retry,
+            } => {
                 self.recovery_count = self.recovery_count.saturating_add(1);
                 self.state = AgentState::Recover;
                 if schema_retry {
@@ -55,9 +58,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                     } else {
                         message.clone()
                     };
-                    let _ = tx
-                        .send(SessionEvent::SystemError(presentation_line))
-                        .await;
+                    let _ = tx.send(SessionEvent::SystemError(presentation_line)).await;
                 }
                 self.broadcast_state().await;
                 Ok(TransitionControl::ContinueLoop)
@@ -116,7 +117,8 @@ impl<E: LlmEngine> Orchestrator<E> {
                     })
                     .is_some();
                 if !has_deck {
-                    self.emit_assistant_deck_line(TOOL_ROUND_CAP_USER_FOOTNOTE).await;
+                    self.emit_assistant_deck_line(TOOL_ROUND_CAP_USER_FOOTNOTE)
+                        .await;
                 }
                 StateTransition::Halt
             }

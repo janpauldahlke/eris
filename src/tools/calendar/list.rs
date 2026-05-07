@@ -11,7 +11,7 @@ use serde_json::Value;
 use crate::executive::error::{FcpError, Result};
 use crate::generated::gws_types::calendar::Events;
 use crate::tools::calendar::common::format_event_one_line;
-use crate::tools::context_view_hint::{ToolContextViewHint, API_TOOL_SNIPPET_CHARS};
+use crate::tools::context_view_hint::{API_TOOL_SNIPPET_CHARS, ToolContextViewHint};
 use crate::tools::traits::Tool;
 use crate::util::CalendarClient;
 
@@ -40,9 +40,8 @@ pub struct CalendarListTool {
 
 fn default_local_day_bounds() -> Result<(String, String)> {
     let d = Local::now().date_naive();
-    let t0 = NaiveTime::from_hms_opt(0, 0, 0).ok_or_else(|| {
-        FcpError::Config("internal error constructing midnight".into())
-    })?;
+    let t0 = NaiveTime::from_hms_opt(0, 0, 0)
+        .ok_or_else(|| FcpError::Config("internal error constructing midnight".into()))?;
     let naive_day = d.and_time(t0);
     let start = match naive_day.and_local_timezone(Local) {
         chrono::LocalResult::Single(dt) => dt,

@@ -58,7 +58,8 @@ impl Tool for MemoryStagedListTool {
     }
 
     async fn execute(&self, args: Value) -> Result<String> {
-        let args: MemoryStagedListArgs = serde_json::from_value(args).map_err(FcpError::ParseFault)?;
+        let args: MemoryStagedListArgs =
+            serde_json::from_value(args).map_err(FcpError::ParseFault)?;
         let include_preview = args.include_content_preview.unwrap_or(false);
 
         let filter_tier = args.filter_tier;
@@ -80,7 +81,8 @@ impl Tool for MemoryStagedListTool {
                 needs_review: entry.needs_review,
                 kind: entry.kind,
                 node_id: entry.node_id,
-                content_preview: include_preview.then(|| entry.data.chars().take(120).collect::<String>()),
+                content_preview: include_preview
+                    .then(|| entry.data.chars().take(120).collect::<String>()),
             })
             .collect::<Vec<_>>();
 
@@ -101,7 +103,12 @@ mod tests {
     async fn test_staged_list_returns_entries() {
         let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
         let _ = ephemeral
-            .insert("profile", "Hagbard likes Rust.", vec!["user".to_string()], 60)
+            .insert(
+                "profile",
+                "Hagbard likes Rust.",
+                vec!["user".to_string()],
+                60,
+            )
             .await
             .unwrap();
 
@@ -115,16 +122,33 @@ mod tests {
     async fn test_staged_list_filter_by_tier() {
         let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
         ephemeral
-            .insert_with_tier("a", "data", vec!["t".into()], 60, crate::memory::types::EphemeralTier::Session, crate::memory::types::VaultKind::Synthesis)
+            .insert_with_tier(
+                "a",
+                "data",
+                vec!["t".into()],
+                60,
+                crate::memory::types::EphemeralTier::Session,
+                crate::memory::types::VaultKind::Synthesis,
+            )
             .await
             .unwrap();
         ephemeral
-            .insert_with_tier("b", "data", vec!["t".into()], 60, crate::memory::types::EphemeralTier::Promote, crate::memory::types::VaultKind::Synthesis)
+            .insert_with_tier(
+                "b",
+                "data",
+                vec!["t".into()],
+                60,
+                crate::memory::types::EphemeralTier::Promote,
+                crate::memory::types::VaultKind::Synthesis,
+            )
             .await
             .unwrap();
 
         let tool = MemoryStagedListTool { ephemeral };
-        let output = tool.execute(serde_json::json!({"filter_tier": "promote"})).await.unwrap();
+        let output = tool
+            .execute(serde_json::json!({"filter_tier": "promote"}))
+            .await
+            .unwrap();
         assert!(output.contains("\"staged_count\":1"));
         assert!(output.contains("\"title\":\"b\""));
     }
@@ -132,12 +156,21 @@ mod tests {
     #[tokio::test]
     async fn test_staged_list_only_needs_review() {
         let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
-        let entry = ephemeral.insert("contested", "data", vec!["t".into()], 60).await.unwrap();
+        let entry = ephemeral
+            .insert("contested", "data", vec!["t".into()], 60)
+            .await
+            .unwrap();
         ephemeral.set_needs_review(&entry.staged_id, true).await;
-        ephemeral.insert("clean", "data", vec!["t".into()], 60).await.unwrap();
+        ephemeral
+            .insert("clean", "data", vec!["t".into()], 60)
+            .await
+            .unwrap();
 
         let tool = MemoryStagedListTool { ephemeral };
-        let output = tool.execute(serde_json::json!({"only_needs_review": true})).await.unwrap();
+        let output = tool
+            .execute(serde_json::json!({"only_needs_review": true}))
+            .await
+            .unwrap();
         assert!(output.contains("\"staged_count\":1"));
         assert!(output.contains("\"title\":\"contested\""));
     }

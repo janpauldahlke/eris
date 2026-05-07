@@ -1,13 +1,13 @@
 use std::path::Path;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling;
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt};
 
 use crate::executive::error::Result;
 
 pub fn init_tracing(workspace_root: &Path) -> Result<WorkerGuard> {
     let log_dir = crate::vault_layout::telemetry_logs_dir(workspace_root);
-    
+
     // Explicitly create the directory before initializing the appender
     std::fs::create_dir_all(&log_dir).map_err(crate::executive::error::FcpError::Io)?;
 
@@ -41,7 +41,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let result = init_tracing(&dir.path().to_path_buf());
         assert!(result.is_ok());
-        
+
         let log_dir = crate::vault_layout::telemetry_logs_dir(dir.path());
         assert!(log_dir.exists());
     }

@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::config::AppConfig;
 use crate::executive::error::{FcpError, Result};
-use crate::memory::ephemeral::{normalize_canonical_key, EphemeralMemory};
+use crate::memory::ephemeral::{EphemeralMemory, normalize_canonical_key};
 use crate::memory::types::{EphemeralTier, VaultKind};
 use crate::tools::traits::Tool;
 
@@ -50,8 +50,7 @@ impl Tool for MemoryStageTool {
     }
 
     async fn execute(&self, args: Value) -> Result<String> {
-        let args: MemoryStageArgs =
-            serde_json::from_value(args).map_err(FcpError::ParseFault)?;
+        let args: MemoryStageArgs = serde_json::from_value(args).map_err(FcpError::ParseFault)?;
 
         let title = args
             .title
@@ -145,7 +144,14 @@ impl Tool for MemoryStageTool {
         let ttl = self.config.ttl_for_tier(requested_tier);
         let staged = self
             .ephemeral
-            .insert_with_tier(&title, &content, tags.clone(), ttl, requested_tier, requested_kind)
+            .insert_with_tier(
+                &title,
+                &content,
+                tags.clone(),
+                ttl,
+                requested_tier,
+                requested_kind,
+            )
             .await?;
 
         // Apply stage boost to fresh entries

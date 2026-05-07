@@ -1,19 +1,19 @@
 use crate::executive::error::{FcpError, Result};
 use crate::memory::ephemeral::EphemeralMemory;
 use crate::memory::semantic::SemanticBrain;
-use crate::tools::web::fetch_inner::{
-    build_web_fetch_client, default_next_step_hint, run_web_fetch, WebFetchReceiptJson,
-    WebFetchRuntime, WebFetchRunOutcome,
-};
-use crate::tools::context_view_hint::{ToolContextViewHint, API_TOOL_SNIPPET_CHARS};
+use crate::tools::context_view_hint::{API_TOOL_SNIPPET_CHARS, ToolContextViewHint};
 use crate::tools::traits::Tool;
+use crate::tools::web::fetch_inner::{
+    WebFetchReceiptJson, WebFetchRunOutcome, WebFetchRuntime, build_web_fetch_client,
+    default_next_step_hint, run_web_fetch,
+};
 use async_trait::async_trait;
+use reqwest::Client;
 use schemars::JsonSchema;
 use schemars::schema::RootSchema;
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
-use reqwest::Client;
 
 #[derive(Deserialize, JsonSchema)]
 pub struct WebFetchArgs {
@@ -65,11 +65,15 @@ impl WebFetchTool {
 
 #[async_trait]
 impl Tool for WebFetchTool {
-    fn name(&self) -> &'static str { "web:fetch" }
+    fn name(&self) -> &'static str {
+        "web:fetch"
+    }
     fn description(&self) -> &'static str {
         "Fetch webpage, sanitize/chunk externally, and return a compact artifact receipt with heuristic outbound link hints (HTML anchors; filters obvious image/asset URLs)."
     }
-    fn parameters_schema(&self) -> RootSchema { schemars::schema_for!(WebFetchArgs) }
+    fn parameters_schema(&self) -> RootSchema {
+        schemars::schema_for!(WebFetchArgs)
+    }
 
     fn context_view_hint(&self) -> ToolContextViewHint {
         ToolContextViewHint::Snippet {
@@ -80,11 +84,17 @@ impl Tool for WebFetchTool {
     async fn execute(&self, args: Value) -> Result<String> {
         let parsed: WebFetchArgs = match serde_json::from_value(args) {
             Ok(p) => p,
-            Err(_) => return Err(FcpError::SchemaViolation("Invalid arguments for web:fetch".into())),
+            Err(_) => {
+                return Err(FcpError::SchemaViolation(
+                    "Invalid arguments for web:fetch".into(),
+                ));
+            }
         };
 
         if !parsed.url.starts_with("http://") && !parsed.url.starts_with("https://") {
-            return Err(FcpError::SchemaViolation("URL must start with http:// or https://".into()));
+            return Err(FcpError::SchemaViolation(
+                "URL must start with http:// or https://".into(),
+            ));
         }
 
         let rt = WebFetchRuntime {
@@ -120,16 +130,16 @@ mod tests {
     use super::*;
     use crate::memory::ephemeral::EphemeralMemory;
     use crate::tools::web::fetch_inner::FALLBACK_WEB_FETCH_UA;
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
     use serde_json::json;
     use std::sync::Arc;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[tokio::test]
     async fn test_web_fetch_truncation() {
         let server = MockServer::start().await;
         let large_html = format!("<html><body><p>{}</p></body></html>", "A".repeat(1000));
-        
+
         Mock::given(method("GET"))
             .and(path("/large"))
             .respond_with(ResponseTemplate::new(200).set_body_string(large_html))
@@ -183,7 +193,7 @@ mod tests {
         let result = tool.execute(args).await.expect("Execution failed");
         assert_eq!(result, "HTTP Error 404: Not Found");
     }
-    
+
     #[tokio::test]
     async fn test_schema_violation_malformed_url() {
         let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));

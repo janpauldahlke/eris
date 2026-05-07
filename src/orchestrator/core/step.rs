@@ -17,6 +17,7 @@ use super::{
     Orchestrator, PromotionSuppressedDuringStep, RECOVERY_BUDGET_EXHAUSTED_DECK_LINE,
     TOOL_ROUND_CAP_SYSTEM_GUIDANCE,
 };
+use super::moltbook_browse_ledger::MoltbookBrowseLedger;
 
 impl<E: LlmEngine> Orchestrator<E> {
     /// The main cognitive loop.
@@ -27,11 +28,12 @@ impl<E: LlmEngine> Orchestrator<E> {
     /// generation per user turn unless interrupted.
     #[allow(clippy::never_loop)]
     pub async fn step(&mut self, _user_input: Option<String>) -> Result<()> {
-        let _promotion_hold = PromotionSuppressedDuringStep::arm(
-            self.promotion_suppressed_during_step.clone(),
-        );
+        let _promotion_hold =
+            PromotionSuppressedDuringStep::arm(self.promotion_suppressed_during_step.clone());
         self.turn_seq = self.turn_seq.saturating_add(1);
         let turn_seq = self.turn_seq;
+        self.moltbook_browse_ledger = None;
+        self.tool_repeat_failure_streak.clear();
         // No `info_span!().entered()` here: `EnteredSpan` is not `Send` and `step()` awaits
         // inside `tokio::spawn`. Correlation uses `turn_seq` on every routing event instead.
 
@@ -66,15 +68,25 @@ impl<E: LlmEngine> Orchestrator<E> {
             return self.handle_empty_user_turn().await;
         }
 
-        if self.maybe_run_deterministic_agenda_complete(step_start).await? {
+        if self
+            .maybe_run_deterministic_agenda_complete(step_start)
+            .await?
+        {
             return Ok(());
         }
 
         // ── Pre-LLM semantic routing ─────────────────────────────────
         let (mut tools_needed, pre_llm_matched_tools) = self.run_pre_llm_routing().await;
+        if Self::moltbook_browse_cycle_hint(&self.last_user_content(), &pre_llm_matched_tools) {
+            self.moltbook_browse_ledger = Some(MoltbookBrowseLedger::new(turn_seq));
+        }
         let mut execution_ledger: HashMap<String, ToolIntentTicket> = HashMap::new();
         let mut schema_recovery_attempted: HashSet<String> = HashSet::new();
         let mut targeted_tools: HashSet<String> = HashSet::new();
+        // Once true, keep appending `00_Invariants/Moltbook.md` for every inner LLM round in
+        // this `step()`, so later recovery/tool rounds do not drop the overlay after JIT or
+        // `targeted_tools` shift mid-loop.
+        let mut moltbook_overlay_latched = false;
 
         // ── Tool-enabled loop (full schemas) ─────────────────────────
         loop {
@@ -87,17 +99,14 @@ impl<E: LlmEngine> Orchestrator<E> {
                 );
                 let notice = format!(
                     "[fcp] Recovery budget exhausted ({} of {} recovery passes this turn). The assistant is idle — send a new message or simplify the request.",
-                    self.recovery_count,
-                    self.max_recovery_attempts,
+                    self.recovery_count, self.max_recovery_attempts,
                 );
                 self.state = AgentState::Idle;
                 self.recovery_count = 0;
                 self.tool_rounds = 0;
                 self.activity_line = None;
                 if let Some(tx) = &self.presentation_tx {
-                    let _ = tx
-                        .send(SessionEvent::SystemError(notice))
-                        .await;
+                    let _ = tx.send(SessionEvent::SystemError(notice)).await;
                 }
                 if self.presentation_tx.is_some() {
                     self.emit_assistant_deck_line(RECOVERY_BUDGET_EXHAUSTED_DECK_LINE)
@@ -119,19 +128,14 @@ impl<E: LlmEngine> Orchestrator<E> {
                     );
                     let notice = format!(
                         "[fcp] Per-turn tool budget exhausted ({} successful tool runs; max {}). Forcing one final reply without tools — say **continue** if you need more.",
-                        self.tool_rounds,
-                        self.max_tool_rounds
+                        self.tool_rounds, self.max_tool_rounds
                     );
                     if let Some(tx) = &self.presentation_tx {
-                        let _ = tx
-                            .send(SessionEvent::SystemError(notice))
-                            .await;
+                        let _ = tx.send(SessionEvent::SystemError(notice)).await;
                     }
                     let guidance = format!(
                         "{}\n\n(Current turn: {} successful tool executions; configured maximum per user turn is {}.)",
-                        TOOL_ROUND_CAP_SYSTEM_GUIDANCE,
-                        self.tool_rounds,
-                        self.max_tool_rounds
+                        TOOL_ROUND_CAP_SYSTEM_GUIDANCE, self.tool_rounds, self.max_tool_rounds
                     );
                     self.chat_stack.push(crate::engine::Message {
                         role: "system".to_string(),
@@ -149,10 +153,27 @@ impl<E: LlmEngine> Orchestrator<E> {
                 && tools_needed
                 && targeted_tools.is_empty()
                 && !self.force_full_tool_schemas_in_llm_view;
+            let moltbook_overlay_base = self
+                .last_user_content()
+                .to_ascii_lowercase()
+                .contains("moltbook")
+                || pre_llm_matched_tools
+                    .iter()
+                    .any(|name| name.starts_with("moltbook:"))
+                || targeted_tools
+                    .iter()
+                    .any(|name| name.starts_with("moltbook:"));
+            if moltbook_overlay_base {
+                moltbook_overlay_latched = true;
+            }
+            if self.moltbook_browse_ledger.is_none() && moltbook_overlay_latched {
+                self.moltbook_browse_ledger = Some(MoltbookBrowseLedger::new(turn_seq));
+            }
+            let moltbook_overlay = moltbook_overlay_latched;
 
             let system_prompt = if !tools_needed {
                 self.context_assembler
-                    .assemble_conversational(&self.state, &self.ephemeral)
+                    .assemble_conversational(&self.state, &self.ephemeral, moltbook_overlay)
                     .await?
             } else if !targeted_tools.is_empty() {
                 let tool_names = targeted_tools.iter().cloned().collect::<Vec<_>>();
@@ -162,10 +183,11 @@ impl<E: LlmEngine> Orchestrator<E> {
                         &self.ephemeral,
                         &self.gatekeeper,
                         &tool_names,
+                        moltbook_overlay,
                     )
                     .await?
             } else if slim_assembly {
-                let offered: Vec<String> = if pre_llm_matched_tools.is_empty() {
+                let mut offered: Vec<String> = if pre_llm_matched_tools.is_empty() {
                     vec![]
                 } else {
                     let cap = self.tool_map_offer_cap;
@@ -175,12 +197,25 @@ impl<E: LlmEngine> Orchestrator<E> {
                         pre_llm_matched_tools.iter().take(cap).cloned().collect()
                     }
                 };
+                // Slim mode filters to `offered` only; semantic routing can omit every `moltbook:*`
+                // while the Moltbook overlay still instructs browse behavior — union native tools.
+                if moltbook_overlay_latched && !offered.is_empty() {
+                    for name in self
+                        .gatekeeper
+                        .allowed_tool_names_with_prefix(&self.state, "moltbook:")
+                    {
+                        if !offered.contains(&name) {
+                            offered.push(name);
+                        }
+                    }
+                }
                 tracing::info!(
                     event = "fcp.tool_prompt.assembly",
                     mode = "slim_phrase_map",
                     offered_count = offered.len(),
                     router_hit_count = pre_llm_matched_tools.len(),
                     cap = self.tool_map_offer_cap,
+                    moltbook_overlay_latched,
                     "Slim tool prompt assembly"
                 );
                 let descriptors = self.descriptor_registry.as_deref();
@@ -191,11 +226,17 @@ impl<E: LlmEngine> Orchestrator<E> {
                         &self.gatekeeper,
                         descriptors,
                         &offered,
+                        moltbook_overlay,
                     )
                     .await?
             } else {
                 self.context_assembler
-                    .assemble(&self.state, &self.ephemeral, &self.gatekeeper)
+                    .assemble(
+                        &self.state,
+                        &self.ephemeral,
+                        &self.gatekeeper,
+                        moltbook_overlay,
+                    )
                     .await?
             };
             tracing::debug!(prompt_len = system_prompt.len(), "System prompt assembled");
@@ -224,8 +265,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                     .config
                     .optimize_context_proactive_condensation_ratio
                     .clamp(0.05, 1.0);
-                let threshold_line =
-                    (self.num_ctx as f32 * active_ratio * ratio).max(1.0) as usize;
+                let threshold_line = (self.num_ctx as f32 * active_ratio * ratio).max(1.0) as usize;
                 if est > threshold_line {
                     tracing::info!(
                         target: "fcp.context_view",
@@ -241,7 +281,10 @@ impl<E: LlmEngine> Orchestrator<E> {
                 }
             }
 
-            tracing::info!(chat_stack_len = self.chat_stack.len(), "Sending to LLM engine");
+            tracing::info!(
+                chat_stack_len = self.chat_stack.len(),
+                "Sending to LLM engine"
+            );
 
             // 3. Engine Generation (build view before select! so the interrupt branch can borrow `self.interrupt_rx`.)
             let view_settings = self.llm_view_settings();
@@ -292,7 +335,12 @@ impl<E: LlmEngine> Orchestrator<E> {
 
             let response = match response_result {
                 Ok(res) => {
-                    tracing::info!(prompt_tokens = res.prompt_tokens, generated_tokens = res.generated_tokens, content_len = res.content.len(), "LLM response received");
+                    tracing::info!(
+                        prompt_tokens = res.prompt_tokens,
+                        generated_tokens = res.generated_tokens,
+                        content_len = res.content.len(),
+                        "LLM response received"
+                    );
                     tracing::debug!(raw_content = %res.content, "LLM raw output");
                     res
                 }
@@ -406,6 +454,8 @@ impl<E: LlmEngine> Orchestrator<E> {
                             &mut targeted_tools,
                             &mut web_tool_activity,
                             &mut tool_ms_acc,
+                            turn_seq,
+                            moltbook_overlay_latched,
                         )
                         .await?;
                     match decision {
@@ -454,5 +504,12 @@ impl<E: LlmEngine> Orchestrator<E> {
             self.last_total_ms = step_start.elapsed().as_millis() as u64;
             self.broadcast_state().await;
         }
+    }
+
+    fn moltbook_browse_cycle_hint(user_line: &str, pre_llm_matches: &[String]) -> bool {
+        user_line.to_ascii_lowercase().contains("moltbook")
+            || pre_llm_matches
+                .iter()
+                .any(|n| n.starts_with("moltbook:"))
     }
 }

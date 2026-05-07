@@ -5,12 +5,18 @@
 
 use std::process::{Command, Stdio};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn ci_like_environment() -> bool {
-    ["CI", "GITHUB_ACTIONS", "JENKINS_URL", "GITLAB_CI", "BUILD_BUILDID"]
-        .into_iter()
-        .any(|key| std::env::var(key).is_ok())
+    [
+        "CI",
+        "GITHUB_ACTIONS",
+        "JENKINS_URL",
+        "GITLAB_CI",
+        "BUILD_BUILDID",
+    ]
+    .into_iter()
+    .any(|key| std::env::var(key).is_ok())
 }
 
 /// Returns true if Eris may run the host `nvidia-smi` executable for health diagnostics.

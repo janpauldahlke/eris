@@ -5,7 +5,12 @@ use std::path::PathBuf;
 use super::error::{FcpError, Result};
 
 #[derive(Parser, Debug, Clone)]
-#[command(name = "eris", version, about = "The Unified Dreadnought: Local SLM Orchestrator", disable_version_flag = true)]
+#[command(
+    name = "eris",
+    version,
+    about = "The Unified Dreadnought: Local SLM Orchestrator",
+    disable_version_flag = true
+)]
 pub struct Cli {
     /// Defines the active memory partition (isolates vector spaces)
     #[arg(short = 'w', long, env = "FCP_WORKSPACE", default_value = "default")]
@@ -36,10 +41,7 @@ pub enum Commands {
     Run { prompt: String },
 
     /// Bypass Layer 1 entirely and manually invoke a Layer 2 tool
-    Tool {
-        name: String,
-        args: String,
-    },
+    Tool { name: String, args: String },
 }
 
 pub fn parse_from<I, T>(itr: I) -> Result<Cli>

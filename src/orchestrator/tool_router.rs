@@ -1,8 +1,8 @@
-use std::sync::Arc;
-use ollama_rs::Ollama;
-use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use crate::executive::error::{FcpError, Result};
 use crate::tools::ToolDescriptorRegistry;
+use ollama_rs::Ollama;
+use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
+use std::sync::Arc;
 
 pub struct ToolRouter {
     ollama: Arc<Ollama>,
@@ -114,10 +114,19 @@ impl ToolRouter {
             "ToolRouter initialized with pre-computed embeddings"
         );
 
-        Ok(Self { ollama, embed_model, tool_embeddings, threshold })
+        Ok(Self {
+            ollama,
+            embed_model,
+            tool_embeddings,
+            threshold,
+        })
     }
 
-    fn enrich_for_routing(name: &str, description: &str, descriptors: Option<&ToolDescriptorRegistry>) -> String {
+    fn enrich_for_routing(
+        name: &str,
+        description: &str,
+        descriptors: Option<&ToolDescriptorRegistry>,
+    ) -> String {
         if let Some(registry) = descriptors
             && let Some(desc) = registry.get(name)
             && !desc.routing_hints.is_empty()
@@ -139,18 +148,18 @@ impl ToolRouter {
 
     async fn embed(ollama: &Ollama, model: &str, text: &str) -> Result<Vec<f32>> {
         if text.trim().is_empty() {
-            return Err(FcpError::EmbeddingFault("Cannot embed empty text".to_string()));
+            return Err(FcpError::EmbeddingFault(
+                "Cannot embed empty text".to_string(),
+            ));
         }
         let request = GenerateEmbeddingsRequest::new(model.to_string(), text.to_string().into());
         let response = ollama
             .generate_embeddings(request)
             .await
             .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
-        response
-            .embeddings
-            .into_iter()
-            .next()
-            .ok_or_else(|| FcpError::EmbeddingFault("Embedding model returned no vectors".to_string()))
+        response.embeddings.into_iter().next().ok_or_else(|| {
+            FcpError::EmbeddingFault("Embedding model returned no vectors".to_string())
+        })
     }
 
     /// Embed the LLM's thought and compare against all tool embeddings.
@@ -180,7 +189,10 @@ impl ToolRouter {
         hits.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         if hits.is_empty() {
-            tracing::debug!(thought_preview = &thought[..thought.len().min(80)], "No tool match");
+            tracing::debug!(
+                thought_preview = &thought[..thought.len().min(80)],
+                "No tool match"
+            );
         } else {
             tracing::info!(
                 matches = ?hits.iter().map(|(n, s)| format!("{}({:.3})", n, s)).collect::<Vec<_>>(),
@@ -245,14 +257,20 @@ mod tests {
 
     #[test]
     fn test_web_lexical_intent_with_url() {
-        assert!(ToolRouter::has_web_lexical_intent("visit https://www.spiegel.de and summarize"));
+        assert!(ToolRouter::has_web_lexical_intent(
+            "visit https://www.spiegel.de and summarize"
+        ));
         assert!(ToolRouter::has_web_lexical_intent("read www.zeit.de news"));
     }
 
     #[test]
     fn test_web_lexical_intent_with_domain_token() {
-        assert!(ToolRouter::has_web_lexical_intent("please open heise.de/newsticker"));
-        assert!(!ToolRouter::has_web_lexical_intent("tell me about rust traits"));
+        assert!(ToolRouter::has_web_lexical_intent(
+            "please open heise.de/newsticker"
+        ));
+        assert!(!ToolRouter::has_web_lexical_intent(
+            "tell me about rust traits"
+        ));
     }
 
     #[test]
@@ -264,14 +282,20 @@ mod tests {
 
     #[test]
     fn test_web_lexical_intent_visit_page_phrase() {
-        assert!(ToolRouter::has_web_lexical_intent("visit the page and summarize"));
+        assert!(ToolRouter::has_web_lexical_intent(
+            "visit the page and summarize"
+        ));
         assert!(ToolRouter::has_web_lexical_intent("please open this page"));
     }
 
     #[test]
     fn test_short_input_guard_without_explicit_intent() {
         assert!(ToolRouter::short_input_guard_conversational_only("test"));
-        assert!(!ToolRouter::short_input_guard_conversational_only("https://example.com"));
-        assert!(!ToolRouter::short_input_guard_conversational_only("/health"));
+        assert!(!ToolRouter::short_input_guard_conversational_only(
+            "https://example.com"
+        ));
+        assert!(!ToolRouter::short_input_guard_conversational_only(
+            "/health"
+        ));
     }
 }

@@ -46,6 +46,69 @@ impl Default for DiscordConfig {
     }
 }
 
+/// Optional Moltbook integration for the AI-agent social network.
+///
+/// Credentials must come from the process environment or an operator-owned file, not from
+/// checked-in TOML. Authenticated requests are pinned to the default `www.moltbook.com` API
+/// origin by the Moltbook client.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct MoltbookConfig {
+    /// When true, register the native `moltbook:*` tools during chat startup.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Environment variable that contains the bearer token.
+    #[serde(default = "default_moltbook_api_key_env")]
+    pub api_key_env: String,
+    /// Optional JSON credentials file, e.g. `~/.config/moltbook/credentials.json`.
+    #[serde(default)]
+    pub api_key_file: Option<PathBuf>,
+    /// Optional expected agent name; useful for operator-facing status messages.
+    #[serde(default)]
+    pub agent_name: Option<String>,
+    /// API base URL. Production must remain `https://www.moltbook.com/api/v1`.
+    #[serde(default = "default_moltbook_base_url")]
+    pub base_url: String,
+    /// HTTP timeout for Moltbook API requests (seconds). Moltbook can be slow;
+    /// defaults to 30s instead of the shorter `web_fetch_timeout_secs`.
+    #[serde(default = "default_moltbook_timeout_secs")]
+    pub timeout_secs: u64,
+    /// Max UTF-8 bytes read per Moltbook JSON response before parse.
+    /// Separate from [`AppConfig::web_fetch_max_bytes`]: large `moltbook:comments` / DM payloads
+    /// often exceed typical web-scrape caps (~20KiB) without being maliciously huge.
+    #[serde(default = "default_moltbook_max_response_bytes")]
+    pub max_response_bytes: usize,
+}
+
+fn default_moltbook_api_key_env() -> String {
+    "MOLTBOOK_API_KEY".into()
+}
+
+fn default_moltbook_base_url() -> String {
+    "https://www.moltbook.com/api/v1".into()
+}
+
+fn default_moltbook_timeout_secs() -> u64 {
+    30
+}
+
+fn default_moltbook_max_response_bytes() -> usize {
+    1_048_576
+}
+
+impl Default for MoltbookConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_key_env: default_moltbook_api_key_env(),
+            api_key_file: None,
+            agent_name: None,
+            base_url: default_moltbook_base_url(),
+            timeout_secs: default_moltbook_timeout_secs(),
+            max_response_bytes: default_moltbook_max_response_bytes(),
+        }
+    }
+}
+
 /// Optional Google Workspace credentials (Gmail + Calendar APIs via domain-wide delegation). When `enabled`, both paths must be set; Admin Console must allow `https://mail.google.com/` and `https://www.googleapis.com/auth/calendar` for the service account client id.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Default)]
 pub struct GoogleConfig {
@@ -316,6 +379,9 @@ pub struct AppConfig {
     /// Optional Discord bot sidecar (same session as web/TUI).
     #[serde(default)]
     pub discord: DiscordConfig,
+    /// Optional Moltbook social-network tools.
+    #[serde(default)]
+    pub moltbook: MoltbookConfig,
     /// When true, keep full JSON parameter schemas in the LLM view for tool definitions (larger prompt). When false and [`Self::optimize_context`] is true, [`crate::orchestrator::context::build_llm_view`] strips `parameters` in that block only; [`crate::orchestrator::core::Orchestrator::chat_stack`] stays full. Independently, the orchestrator forces full schemas for one recovery LLM pass after a Gatekeeper schema fault ([`crate::orchestrator::core::Orchestrator::force_full_tool_schemas_in_llm_view`]).
     #[serde(default = "default_optimize_context_full_tool_schemas")]
     pub optimize_context_full_tool_schemas: bool,
@@ -798,8 +864,10 @@ impl Default for AppConfig {
             ephemeral_ttl_session_secs: default_ephemeral_ttl_session_secs(),
             ephemeral_ttl_scratch_secs: default_ephemeral_ttl_scratch_secs(),
             ephemeral_ttl_promote_secs: default_ephemeral_ttl_promote_secs(),
-            promotion_threshold_session_to_scratch: default_promotion_threshold_session_to_scratch(),
-            promotion_threshold_scratch_to_promote: default_promotion_threshold_scratch_to_promote(),
+            promotion_threshold_session_to_scratch: default_promotion_threshold_session_to_scratch(
+            ),
+            promotion_threshold_scratch_to_promote: default_promotion_threshold_scratch_to_promote(
+            ),
             promotion_decay_per_tick: default_promotion_decay_per_tick(),
             promotion_eval_interval_secs: default_promotion_eval_interval_secs(),
             promotion_mention_boost: default_promotion_mention_boost(),
@@ -837,18 +905,21 @@ impl Default for AppConfig {
             apis: default_builtin_apis(),
             vault_watch: VaultWatchConfig::default(),
             optimize_context: default_optimize_context(),
-            optimize_context_max_tool_snippet_chars: default_optimize_context_max_tool_snippet_chars(),
+            optimize_context_max_tool_snippet_chars:
+                default_optimize_context_max_tool_snippet_chars(),
             optimize_context_assistant_compact: default_optimize_context_assistant_compact(),
             optimize_context_tool_overrides: HashMap::new(),
             google: GoogleConfig::default(),
             discord: DiscordConfig::default(),
+            moltbook: MoltbookConfig::default(),
 
             optimize_context_full_tool_schemas: default_optimize_context_full_tool_schemas(),
             optimize_context_omit_resolved_tool_recovery:
                 default_optimize_context_omit_resolved_tool_recovery(),
             optimize_context_assistant_non_json_placeholder:
                 default_optimize_context_assistant_non_json_placeholder(),
-            optimize_context_proactive_condensation: default_optimize_context_proactive_condensation(),
+            optimize_context_proactive_condensation:
+                default_optimize_context_proactive_condensation(),
             optimize_context_proactive_condensation_ratio:
                 default_optimize_context_proactive_condensation_ratio(),
             memory_query_default_top_k: default_memory_query_default_top_k(),
@@ -873,18 +944,30 @@ impl Default for AppConfig {
 
 impl AppConfig {
     pub fn load(cli: crate::executive::cli::Cli) -> crate::executive::error::Result<Self> {
-        use figment::{Figment, providers::{Env, Format, Toml}};
+        use figment::{
+            Figment,
+            providers::{Env, Format, Toml},
+        };
 
         let _ = dotenvy::dotenv();
 
-        let figment = Figment::from(figment::providers::Serialized::defaults(AppConfig::default()))
-            .merge(Toml::file(crate::vault_layout::config_toml(std::path::Path::new("."))))
-            .merge(Env::prefixed("FCP_"));
+        let figment = Figment::from(figment::providers::Serialized::defaults(
+            AppConfig::default(),
+        ))
+        .merge(Toml::file(crate::vault_layout::config_toml(
+            std::path::Path::new("."),
+        )))
+        .merge(Env::prefixed("FCP_"));
 
-        let mut config: AppConfig = figment.extract().map_err(|e| crate::executive::error::FcpError::Config(e.to_string()))?;
+        let mut config: AppConfig = figment
+            .extract()
+            .map_err(|e| crate::executive::error::FcpError::Config(e.to_string()))?;
 
         config.config_source_dir = std::env::current_dir().map_err(|e| {
-            crate::executive::error::FcpError::Config(format!("Could not read current directory: {}", e))
+            crate::executive::error::FcpError::Config(format!(
+                "Could not read current directory: {}",
+                e
+            ))
         })?;
 
         if cli.workspace != "default" {
@@ -974,10 +1057,17 @@ impl AppConfig {
 
     /// Score threshold required to promote *from* the given tier to the next.
     /// Returns `None` for `Promote` (no next tier).
-    pub fn promotion_threshold_for_tier(&self, tier: crate::memory::types::EphemeralTier) -> Option<f64> {
+    pub fn promotion_threshold_for_tier(
+        &self,
+        tier: crate::memory::types::EphemeralTier,
+    ) -> Option<f64> {
         match tier {
-            crate::memory::types::EphemeralTier::Session => Some(self.promotion_threshold_session_to_scratch),
-            crate::memory::types::EphemeralTier::Scratch => Some(self.promotion_threshold_scratch_to_promote),
+            crate::memory::types::EphemeralTier::Session => {
+                Some(self.promotion_threshold_session_to_scratch)
+            }
+            crate::memory::types::EphemeralTier::Scratch => {
+                Some(self.promotion_threshold_scratch_to_promote)
+            }
             crate::memory::types::EphemeralTier::Promote => None,
         }
     }
@@ -991,7 +1081,10 @@ impl AppConfig {
     }
 
     /// Absolute paths under `chat_workspace_root` for vault watch (e.g. `00_Invariants/Identity.md`).
-    pub fn resolved_vault_watch_file_paths(&self, chat_workspace_root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    pub fn resolved_vault_watch_file_paths(
+        &self,
+        chat_workspace_root: &std::path::Path,
+    ) -> Vec<std::path::PathBuf> {
         self.vault_watch
             .paths
             .iter()
@@ -1011,16 +1104,22 @@ mod tests {
     fn test_config_hierarchy_and_dynamic_resolution() {
         figment::Jail::expect_with(|jail| {
             jail.create_dir(".fcp")?;
-            jail.create_file(".fcp/config.toml", r#"
+            jail.create_file(
+                ".fcp/config.toml",
+                r#"
                 workspace = "toml_workspace"
                 vault_root = "/toml/vaults"
                 log_level = "warn"
-            "#)?;
+            "#,
+            )?;
 
-            jail.create_file(".env", r#"
+            jail.create_file(
+                ".env",
+                r#"
                 FCP_WORKSPACE=env_workspace
                 FCP_LOG_LEVEL=error
-            "#)?;
+            "#,
+            )?;
 
             jail.set_env("FCP_WORKSPACE", "env_workspace");
             jail.set_env("FCP_LOG_LEVEL", "error");
@@ -1086,7 +1185,8 @@ mod tests {
             "qdrant_daemon": { "command": "qdrant", "args": [] }
         }"#;
 
-        let parsed_config: AppConfig = serde_json::from_str(json_data).expect("Failed to parse JSON");
+        let parsed_config: AppConfig =
+            serde_json::from_str(json_data).expect("Failed to parse JSON");
 
         assert_eq!(parsed_config.workspace, "test_workspace");
         assert_eq!(parsed_config.vault_root, PathBuf::from("/tmp/vaults"));
@@ -1107,7 +1207,10 @@ mod tests {
         assert_eq!(parsed_config.idle_timeout_secs, 42);
         assert_eq!(parsed_config.web_fetch_timeout_secs, 15);
         assert_eq!(parsed_config.web_fetch_max_bytes, 10240);
-        assert_eq!(parsed_config.web_fetch_user_agent, default_web_fetch_user_agent());
+        assert_eq!(
+            parsed_config.web_fetch_user_agent,
+            default_web_fetch_user_agent()
+        );
         assert_eq!(parsed_config.vault_read_ratio, 0.25);
         assert_eq!(parsed_config.tool_match_threshold, 0.50);
         assert_eq!(parsed_config.ollama_daemon.command, "ollama");
@@ -1152,23 +1255,46 @@ mod tests {
     #[test]
     fn ttl_for_tier_returns_configured_values() {
         let c = AppConfig::default();
-        assert_eq!(c.ttl_for_tier(crate::memory::types::EphemeralTier::Session), 900);
-        assert_eq!(c.ttl_for_tier(crate::memory::types::EphemeralTier::Scratch), 3600);
-        assert_eq!(c.ttl_for_tier(crate::memory::types::EphemeralTier::Promote), 28800);
+        assert_eq!(
+            c.ttl_for_tier(crate::memory::types::EphemeralTier::Session),
+            900
+        );
+        assert_eq!(
+            c.ttl_for_tier(crate::memory::types::EphemeralTier::Scratch),
+            3600
+        );
+        assert_eq!(
+            c.ttl_for_tier(crate::memory::types::EphemeralTier::Promote),
+            28800
+        );
     }
 
     #[test]
     fn promotion_threshold_returns_none_for_promote() {
         let c = AppConfig::default();
-        assert!(c.promotion_threshold_for_tier(crate::memory::types::EphemeralTier::Session).is_some());
-        assert!(c.promotion_threshold_for_tier(crate::memory::types::EphemeralTier::Scratch).is_some());
-        assert!(c.promotion_threshold_for_tier(crate::memory::types::EphemeralTier::Promote).is_none());
+        assert!(
+            c.promotion_threshold_for_tier(crate::memory::types::EphemeralTier::Session)
+                .is_some()
+        );
+        assert!(
+            c.promotion_threshold_for_tier(crate::memory::types::EphemeralTier::Scratch)
+                .is_some()
+        );
+        assert!(
+            c.promotion_threshold_for_tier(crate::memory::types::EphemeralTier::Promote)
+                .is_none()
+        );
     }
 
     #[test]
     fn vault_watch_includes_invariants_identity() {
         let c = AppConfig::default();
-        assert!(c.vault_watch.paths.iter().any(|p| p.contains("00_Invariants")));
+        assert!(
+            c.vault_watch
+                .paths
+                .iter()
+                .any(|p| p.contains("00_Invariants"))
+        );
     }
 
     #[test]

@@ -3,17 +3,25 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
 use tokio::sync::mpsc;
 
+use super::AgendaTask;
 use crate::executive::error::{FcpError, Result};
 use crate::tools::clock::{
-    load_alarms, next_wall_alarm_fire_local, remove_alarm_by_id, save_alarms, AlarmRecord,
-    MAX_TIMER_MINUTES,
+    AlarmRecord, MAX_TIMER_MINUTES, load_alarms, next_wall_alarm_fire_local, remove_alarm_by_id,
+    save_alarms,
 };
 use crate::tools::traits::Tool;
-use super::AgendaTask;
+
+static AGENDA_XOR_NORMALIZED_COUNT: AtomicU64 = AtomicU64::new(0);
+
+/// Cumulative process counter for soak / merge-gate log greps (`agenda_xor_normalized_count` in tool batch telemetry).
+pub fn agenda_xor_normalized_count_for_logs() -> u64 {
+    AGENDA_XOR_NORMALIZED_COUNT.load(Ordering::Relaxed)
+}
 
 #[derive(Deserialize, JsonSchema)]
 pub struct AgendaRemindAtArgs {
@@ -47,28 +55,60 @@ impl Tool for AgendaRemindAtTool {
         schemars::schema_for!(AgendaRemindAtArgs)
     }
 
-    async fn execute(&self, args: Value) -> Result<String> {
-        let args: AgendaRemindAtArgs = serde_json::from_value(args).map_err(FcpError::ParseFault)?;
+    /// Same description often repeats across rounds while chaining Moltbook actions.
+    /// The tool replaces the prior alarm for that pending task; suppressing duplicates
+    /// looked like a missed reschedule and could trigger duplicate-only recovery batches.
+    fn allow_repeat_in_turn(&self) -> bool {
+        true
+    }
 
-        let tid = args
+    async fn execute(&self, args: Value) -> Result<String> {
+        let args: AgendaRemindAtArgs =
+            serde_json::from_value(args).map_err(FcpError::ParseFault)?;
+
+        let mut tid = args
             .task_id
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
-        let desc = args
+        let mut desc = args
             .description
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
+        if tid.is_some() && desc.is_some() {
+            tracing::info!(
+                event = "agenda.remind_at.xor_normalized",
+                agenda_xor_normalized = true,
+                "Both task_id and description supplied; using task_id when that id exists in agenda, otherwise description"
+            );
+            AGENDA_XOR_NORMALIZED_COUNT.fetch_add(1, Ordering::Relaxed);
+            let agenda_path = crate::vault_layout::agenda_json(&self.workspace_root);
+            let id_exists = if agenda_path.exists() {
+                let content = fs::read_to_string(&agenda_path)
+                    .await
+                    .map_err(FcpError::Io)?;
+                if content.trim().is_empty() {
+                    false
+                } else {
+                    let tasks: Vec<AgendaTask> =
+                        serde_json::from_str(&content).map_err(FcpError::ParseFault)?;
+                    tid.as_ref()
+                        .is_some_and(|id| tasks.iter().any(|t| t.id == *id))
+                }
+            } else {
+                false
+            };
+            if id_exists {
+                desc = None;
+            } else {
+                tid = None;
+            }
+        }
 
         match (&tid, &desc) {
-            (Some(_), Some(_)) => {
-                return Err(FcpError::SchemaViolation(
-                    "Provide exactly one of task_id or description.".to_string(),
-                ));
-            }
             (None, None) => {
                 return Err(FcpError::SchemaViolation(
                     "Provide exactly one of task_id or description.".to_string(),
@@ -86,15 +126,20 @@ impl Tool for AgendaRemindAtTool {
                 }
                 Schedule::Minutes(m)
             }
-            (None, Some(h), Some(mi)) => Schedule::Wall { hour: h, minute: mi },
+            (None, Some(h), Some(mi)) => Schedule::Wall {
+                hour: h,
+                minute: mi,
+            },
             (None, None, None) => {
                 return Err(FcpError::SchemaViolation(
-                    "Provide either minutes (relative) or hour and minute (wall clock).".to_string(),
+                    "Provide either minutes (relative) or hour and minute (wall clock)."
+                        .to_string(),
                 ));
             }
             _ => {
                 return Err(FcpError::SchemaViolation(
-                    "Provide either minutes (relative) or hour+minute (wall), not both.".to_string(),
+                    "Provide either minutes (relative) or hour+minute (wall), not both."
+                        .to_string(),
                 ));
             }
         };
@@ -102,7 +147,9 @@ impl Tool for AgendaRemindAtTool {
         let agenda_path = crate::vault_layout::agenda_json(&self.workspace_root);
         let mut tasks: Vec<AgendaTask> = Vec::new();
         if agenda_path.exists() {
-            let content = fs::read_to_string(&agenda_path).await.map_err(FcpError::Io)?;
+            let content = fs::read_to_string(&agenda_path)
+                .await
+                .map_err(FcpError::Io)?;
             if !content.trim().is_empty() {
                 tasks = serde_json::from_str(&content).map_err(FcpError::ParseFault)?;
             }
@@ -128,7 +175,9 @@ impl Tool for AgendaRemindAtTool {
             task_id = id;
         } else {
             let d = desc.ok_or_else(|| {
-                FcpError::SchemaViolation("Provide exactly one of task_id or description.".to_string())
+                FcpError::SchemaViolation(
+                    "Provide exactly one of task_id or description.".to_string(),
+                )
             })?;
             if d.len() > 200 {
                 return Err(FcpError::SchemaViolation(
@@ -167,7 +216,8 @@ impl Tool for AgendaRemindAtTool {
                 let now = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .map_err(|_| FcpError::Config("system clock before UNIX epoch".into()))?;
-                now.as_secs().saturating_add(u64::from(m).saturating_mul(60))
+                now.as_secs()
+                    .saturating_add(u64::from(m).saturating_mul(60))
             }
             Schedule::Wall { hour, minute } => {
                 let fire_dt = next_wall_alarm_fire_local(hour, minute)?;
@@ -185,13 +235,14 @@ impl Tool for AgendaRemindAtTool {
         });
         save_alarms(&alarms_path, &alarms).await?;
 
-        let pos = tasks
-            .iter()
-            .position(|t| t.id == task_id)
-            .ok_or_else(|| FcpError::ToolFault {
-                tool_name: self.name().into(),
-                reason: "Agenda task row missing after schedule".into(),
-            })?;
+        let pos =
+            tasks
+                .iter()
+                .position(|t| t.id == task_id)
+                .ok_or_else(|| FcpError::ToolFault {
+                    tool_name: self.name().into(),
+                    reason: "Agenda task row missing after schedule".into(),
+                })?;
         tasks[pos].alarm_id = Some(alarm_uuid.clone());
 
         let new_content =
@@ -199,7 +250,9 @@ impl Tool for AgendaRemindAtTool {
         fs::create_dir_all(crate::vault_layout::tools_dir(&self.workspace_root))
             .await
             .map_err(FcpError::Io)?;
-        fs::write(&agenda_path, new_content).await.map_err(FcpError::Io)?;
+        fs::write(&agenda_path, new_content)
+            .await
+            .map_err(FcpError::Io)?;
 
         let _ = self.reschedule_tx.send(());
 
@@ -285,6 +338,73 @@ mod tests {
         assert!(out.contains("SUCCESS"));
         let raw = fs::read_to_string(&alarms_path).await.unwrap();
         assert!(!raw.contains("old-alarm"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_remind_at_both_task_id_and_description_prefers_existing_id() -> Result<()> {
+        let dir = tempdir().unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        write_agenda(
+            dir.path(),
+            r#"[{"id":"keep","created_at":1,"description":"orig","status":"pending","alarm_id":null}]"#,
+        )
+        .await?;
+        let tool = AgendaRemindAtTool {
+            workspace_root: dir.path().to_path_buf(),
+            reschedule_tx: tx,
+        };
+        let out = tool
+            .execute(serde_json::json!({
+                "task_id": "keep",
+                "description": "ignored",
+                "minutes": 5
+            }))
+            .await?;
+        assert!(out.contains("keep"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_remind_at_neither_task_nor_description_rejected() {
+        let dir = tempdir().unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let tool = AgendaRemindAtTool {
+            workspace_root: dir.path().to_path_buf(),
+            reschedule_tx: tx,
+        };
+        let err = tool
+            .execute(serde_json::json!({ "minutes": 5 }))
+            .await
+            .expect_err("schema");
+        assert!(matches!(err, FcpError::SchemaViolation(_)));
+    }
+
+    #[tokio::test]
+    async fn test_remind_at_both_unknown_id_falls_back_to_description() -> Result<()> {
+        let dir = tempdir().unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        write_agenda(
+            dir.path(),
+            r#"[{"id":"keep","created_at":1,"description":"orig","status":"pending","alarm_id":null}]"#,
+        )
+        .await?;
+        let tool = AgendaRemindAtTool {
+            workspace_root: dir.path().to_path_buf(),
+            reschedule_tx: tx,
+        };
+        let out = tool
+            .execute(serde_json::json!({
+                "task_id": "nope",
+                "description": "New row",
+                "minutes": 5
+            }))
+            .await?;
+        assert!(out.contains("SUCCESS"));
+        let agenda = fs::read_to_string(crate::vault_layout::agenda_json(dir.path()))
+            .await
+            .unwrap();
+        assert!(agenda.contains("New row"));
         Ok(())
     }
 

@@ -1,13 +1,12 @@
-use serde::{Deserialize, Serialize};
-use moka::future::Cache;
-use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 use crate::executive::error::Result;
 use crate::memory::types::{EphemeralTier, VaultKind};
+use moka::future::Cache;
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
-
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CacheValue {
@@ -56,15 +55,27 @@ pub struct EphemeralMemory {
 
 impl EphemeralMemory {
     pub fn new(workspace: String) -> Self {
-        let cache = Cache::builder()
-            .max_capacity(10_000)
-            .build();
-            
+        let cache = Cache::builder().max_capacity(10_000).build();
+
         Self { cache, workspace }
     }
 
-    pub async fn insert(&self, title: &str, value: &str, tags: Vec<String>, ttl_secs: u64) -> Result<CacheValue> {
-        self.insert_with_tier(title, value, tags, ttl_secs, EphemeralTier::Session, VaultKind::default()).await
+    pub async fn insert(
+        &self,
+        title: &str,
+        value: &str,
+        tags: Vec<String>,
+        ttl_secs: u64,
+    ) -> Result<CacheValue> {
+        self.insert_with_tier(
+            title,
+            value,
+            tags,
+            ttl_secs,
+            EphemeralTier::Session,
+            VaultKind::default(),
+        )
+        .await
     }
 
     pub async fn insert_with_tier(
@@ -76,7 +87,9 @@ impl EphemeralMemory {
         tier: EphemeralTier,
         kind: VaultKind,
     ) -> Result<CacheValue> {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
         let now_secs = now.as_secs();
         let expires_at = now_secs + ttl_secs;
         let staged_id = uuid::Uuid::new_v4().to_string();
@@ -166,7 +179,9 @@ impl EphemeralMemory {
         tags: Vec<String>,
         ttl_secs: u64,
     ) -> Result<CacheValue> {
-        let prior = self.get_by_canonical_key(&normalize_canonical_key(title)).await;
+        let prior = self
+            .get_by_canonical_key(&normalize_canonical_key(title))
+            .await;
         self.invalidate_by_title(title).await;
         let mut new_val = self.insert(title, value, tags, ttl_secs).await?;
         if let Some(prev) = prior {
@@ -261,22 +276,27 @@ impl EphemeralMemory {
     }
 
     pub async fn snapshot_to_disk(&self, vault_root: &std::path::Path) -> Result<()> {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-        
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
         let entries: Vec<CacheValue> = self
             .cache
             .iter()
             .filter_map(|(_, v)| (v.expires_at > now).then_some(v.clone()))
             .collect();
-        
+
         let path = crate::vault_layout::ephemeral_bin(vault_root, &self.workspace);
         if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await.map_err(|e| crate::executive::error::FcpError::WorkspaceFault {
-                workspace: self.workspace.clone(),
-                reason: e.to_string(),
+            tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                crate::executive::error::FcpError::WorkspaceFault {
+                    workspace: self.workspace.clone(),
+                    reason: e.to_string(),
+                }
             })?;
         }
-        
+
         let ws = self.workspace.clone();
         let serialized = tokio::task::spawn_blocking(move || bincode::serialize(&entries))
             .await
@@ -288,41 +308,51 @@ impl EphemeralMemory {
                 workspace: ws,
                 reason: e.to_string(),
             })?;
-            
-        tokio::fs::write(path, serialized).await.map_err(|e| crate::executive::error::FcpError::WorkspaceFault {
-            workspace: self.workspace.clone(),
-            reason: e.to_string(),
+
+        tokio::fs::write(path, serialized).await.map_err(|e| {
+            crate::executive::error::FcpError::WorkspaceFault {
+                workspace: self.workspace.clone(),
+                reason: e.to_string(),
+            }
         })?;
-        
+
         Ok(())
     }
 
-    pub async fn load_from_disk(workspace: &str, vault_root: &std::path::Path, max_capacity: u64) -> Result<Self> {
-        let cache = Cache::builder()
-            .max_capacity(max_capacity)
-            .build();
-            
+    pub async fn load_from_disk(
+        workspace: &str,
+        vault_root: &std::path::Path,
+        max_capacity: u64,
+    ) -> Result<Self> {
+        let cache = Cache::builder().max_capacity(max_capacity).build();
+
         let path = crate::vault_layout::ephemeral_bin(vault_root, workspace);
-        
+
         if path.exists() {
-            let data = tokio::fs::read(path).await.map_err(|e| crate::executive::error::FcpError::WorkspaceFault {
-                workspace: workspace.to_string(),
-                reason: e.to_string(),
+            let data = tokio::fs::read(path).await.map_err(|e| {
+                crate::executive::error::FcpError::WorkspaceFault {
+                    workspace: workspace.to_string(),
+                    reason: e.to_string(),
+                }
             })?;
             if !data.is_empty() {
                 let ws = workspace.to_string();
-                let entries: Vec<CacheValue> = tokio::task::spawn_blocking(move || bincode::deserialize(&data))
-                    .await
-                    .map_err(|e| crate::executive::error::FcpError::WorkspaceFault {
-                        workspace: ws.clone(),
-                        reason: e.to_string(),
-                    })?
-                    .map_err(|e| crate::executive::error::FcpError::WorkspaceFault {
-                        workspace: ws,
-                        reason: e.to_string(),
-                    })?;
-                
-                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+                let entries: Vec<CacheValue> =
+                    tokio::task::spawn_blocking(move || bincode::deserialize(&data))
+                        .await
+                        .map_err(|e| crate::executive::error::FcpError::WorkspaceFault {
+                            workspace: ws.clone(),
+                            reason: e.to_string(),
+                        })?
+                        .map_err(|e| crate::executive::error::FcpError::WorkspaceFault {
+                            workspace: ws,
+                            reason: e.to_string(),
+                        })?;
+
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
                 for v in entries {
                     if v.expires_at > now {
                         cache.insert(v.staged_id.clone(), v).await;
@@ -330,7 +360,7 @@ impl EphemeralMemory {
                 }
             }
         }
-        
+
         Ok(Self {
             cache,
             workspace: workspace.to_string(),
@@ -392,7 +422,8 @@ pub async fn evaluate_promotions_and_decay(
         let mut updated = entry.clone();
 
         // Apply decay
-        updated.promotion_score = (updated.promotion_score - config.promotion_decay_per_tick).max(0.0);
+        updated.promotion_score =
+            (updated.promotion_score - config.promotion_decay_per_tick).max(0.0);
 
         // Check upward promotion
         if let Some(threshold) = config.promotion_threshold_for_tier(updated.tier)
@@ -438,10 +469,7 @@ pub async fn evaluate_promotions_and_decay(
         if updated.tier != entry.tier
             || (updated.promotion_score - entry.promotion_score).abs() > f64::EPSILON
         {
-            memory
-                .cache
-                .insert(entry.staged_id.clone(), updated)
-                .await;
+            memory.cache.insert(entry.staged_id.clone(), updated).await;
         }
     }
 
@@ -530,16 +558,28 @@ mod tests {
 
     #[test]
     fn test_is_web_artifact_staging() {
-        assert!(is_web_artifact_staging(&["web_artifact".into(), "external".into()], "anything"));
-        assert!(is_web_artifact_staging(&["news".into()], "web_artifact:uuid-here"));
-        assert!(!is_web_artifact_staging(&["user".into()], "hagbard_profile"));
+        assert!(is_web_artifact_staging(
+            &["web_artifact".into(), "external".into()],
+            "anything"
+        ));
+        assert!(is_web_artifact_staging(
+            &["news".into()],
+            "web_artifact:uuid-here"
+        ));
+        assert!(!is_web_artifact_staging(
+            &["user".into()],
+            "hagbard_profile"
+        ));
     }
 
     #[tokio::test]
     async fn test_ephemeral_insert_and_get() {
         let memory = EphemeralMemory::new("test_ws".to_string());
 
-        let staged = memory.insert("key1", "value1", vec!["tag1".into()], 60).await.unwrap();
+        let staged = memory
+            .insert("key1", "value1", vec!["tag1".into()], 60)
+            .await
+            .unwrap();
 
         let result = memory.get("key1").await;
         assert_eq!(result, Some("value1".to_string()));
@@ -569,10 +609,13 @@ mod tests {
     #[tokio::test]
     async fn test_ephemeral_absolute_ttl_enforcement() {
         let memory = EphemeralMemory::new("test_ws".to_string());
-        
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         let past_timestamp = now.saturating_sub(1);
-        
+
         // Manually insert into the cache to bypass the `insert` method's `now + ttl_secs` logic
         let expired_value = CacheValue {
             staged_id: "expired_id".to_string(),
@@ -590,7 +633,10 @@ mod tests {
             last_seen_at: past_timestamp,
             kind: VaultKind::default(),
         };
-        memory.cache.insert("expired_id".to_string(), expired_value).await;
+        memory
+            .cache
+            .insert("expired_id".to_string(), expired_value)
+            .await;
 
         let result = memory.get("expired_key").await;
         assert_eq!(result, None);
@@ -600,14 +646,16 @@ mod tests {
     async fn test_snapshot_and_load_preserves_valid_keys() {
         let temp_dir = tempfile::tempdir().unwrap();
         let vault_root = temp_dir.path();
-        
+
         let memory = EphemeralMemory::new("test_ws".to_string());
         memory.insert("key1", "value1", vec![], 60).await.unwrap();
-        
+
         memory.snapshot_to_disk(vault_root).await.unwrap();
-        
-        let loaded_memory = EphemeralMemory::load_from_disk("test_ws", vault_root, 10_000).await.unwrap();
-        
+
+        let loaded_memory = EphemeralMemory::load_from_disk("test_ws", vault_root, 10_000)
+            .await
+            .unwrap();
+
         let result = loaded_memory.get("key1").await;
         assert_eq!(result, Some("value1".to_string()));
     }
@@ -616,13 +664,16 @@ mod tests {
     async fn test_load_drops_stale_keys_from_disk() {
         let temp_dir = tempfile::tempdir().unwrap();
         let vault_root = temp_dir.path();
-        
+
         // Setup initial cache state
         let memory = EphemeralMemory::new("test_ws".to_string());
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         let past_timestamp = now.saturating_sub(10);
         let future_timestamp = now + 60;
-        
+
         let expired_value = CacheValue {
             staged_id: "expired_id".to_string(),
             title: "expired_key".to_string(),
@@ -655,19 +706,27 @@ mod tests {
             last_seen_at: now,
             kind: VaultKind::default(),
         };
-        
-        memory.cache.insert("expired_id".to_string(), expired_value).await;
-        memory.cache.insert("valid_id".to_string(), valid_value).await;
-        
+
+        memory
+            .cache
+            .insert("expired_id".to_string(), expired_value)
+            .await;
+        memory
+            .cache
+            .insert("valid_id".to_string(), valid_value)
+            .await;
+
         // Snapshot to disk
         memory.snapshot_to_disk(vault_root).await.unwrap();
-        
+
         // Load
-        let loaded_memory = EphemeralMemory::load_from_disk("test_ws", vault_root, 10_000).await.unwrap();
-        
+        let loaded_memory = EphemeralMemory::load_from_disk("test_ws", vault_root, 10_000)
+            .await
+            .unwrap();
+
         let r1 = loaded_memory.get("expired_key").await;
         let r2 = loaded_memory.get("valid_key").await;
-        
+
         assert_eq!(r1, None);
         assert_eq!(r2, Some("valid".to_string()));
     }
@@ -676,12 +735,12 @@ mod tests {
     async fn test_daemon_snapshots_on_cancellation() {
         let temp_dir = tempfile::tempdir().unwrap();
         let vault_root = temp_dir.path().to_path_buf();
-        
+
         let memory = Arc::new(EphemeralMemory::new("daemon_test_ws".to_string()));
         memory.insert("key1", "value1", vec![], 60).await.unwrap();
-        
+
         let cancel_token = CancellationToken::new();
-        
+
         // Spawn the daemon with a very long interval
         spawn_snapshot_daemon(
             memory.clone(),
@@ -692,28 +751,36 @@ mod tests {
             Arc::new(crate::config::AppConfig::default()),
             std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         );
-        
+
         // Immediately cancel
         cancel_token.cancel();
-        
+
         // Yield to let the daemon finish writing
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        
+
         let path = crate::vault_layout::ephemeral_bin(&vault_root, "daemon_test_ws");
         assert!(path.exists(), "Snapshot file must exist after cancellation");
-        
-        let loaded = EphemeralMemory::load_from_disk("daemon_test_ws", &vault_root, 10_000).await.unwrap();
+
+        let loaded = EphemeralMemory::load_from_disk("daemon_test_ws", &vault_root, 10_000)
+            .await
+            .unwrap();
         assert_eq!(loaded.get("key1").await, Some("value1".to_string()));
     }
 
     #[test]
     fn test_normalize_canonical_key_basic() {
-        assert_eq!(normalize_canonical_key("Hagbard Profile"), "hagbard_profile");
+        assert_eq!(
+            normalize_canonical_key("Hagbard Profile"),
+            "hagbard_profile"
+        );
     }
 
     #[test]
     fn test_normalize_canonical_key_special_chars() {
-        assert_eq!(normalize_canonical_key("API/REST endpoint"), "api_rest_endpoint");
+        assert_eq!(
+            normalize_canonical_key("API/REST endpoint"),
+            "api_rest_endpoint"
+        );
     }
 
     #[test]
@@ -730,7 +797,10 @@ mod tests {
     #[tokio::test]
     async fn test_insert_populates_v2_fields() {
         let memory = EphemeralMemory::new("test_ws".to_string());
-        let entry = memory.insert("My Title", "content", vec!["tag".into()], 60).await.unwrap();
+        let entry = memory
+            .insert("My Title", "content", vec!["tag".into()], 60)
+            .await
+            .unwrap();
 
         assert!(!entry.node_id.is_empty());
         assert_eq!(entry.canonical_key, "my_title");
@@ -746,7 +816,17 @@ mod tests {
     #[tokio::test]
     async fn test_insert_with_tier_uses_given_tier() {
         let memory = EphemeralMemory::new("test_ws".to_string());
-        let entry = memory.insert_with_tier("t", "c", vec![], 60, EphemeralTier::Promote, VaultKind::Discourse).await.unwrap();
+        let entry = memory
+            .insert_with_tier(
+                "t",
+                "c",
+                vec![],
+                60,
+                EphemeralTier::Promote,
+                VaultKind::Discourse,
+            )
+            .await
+            .unwrap();
         assert_eq!(entry.tier, EphemeralTier::Promote);
         assert_eq!(entry.kind, VaultKind::Discourse);
     }
@@ -754,10 +834,19 @@ mod tests {
     #[tokio::test]
     async fn test_upsert_preserves_node_id() {
         let memory = EphemeralMemory::new("test_ws".to_string());
-        let first = memory.insert("same_title", "v1", vec!["a".into()], 60).await.unwrap();
-        let second = memory.upsert_by_title("same_title", "v2", vec!["b".into()], 60).await.unwrap();
+        let first = memory
+            .insert("same_title", "v1", vec!["a".into()], 60)
+            .await
+            .unwrap();
+        let second = memory
+            .upsert_by_title("same_title", "v2", vec!["b".into()], 60)
+            .await
+            .unwrap();
 
-        assert_eq!(first.node_id, second.node_id, "node_id must be preserved across upserts");
+        assert_eq!(
+            first.node_id, second.node_id,
+            "node_id must be preserved across upserts"
+        );
         assert_eq!(second.mention_count, 2);
         assert_eq!(second.first_seen_at, first.first_seen_at);
     }
@@ -765,7 +854,15 @@ mod tests {
     #[tokio::test]
     async fn test_get_by_canonical_key() {
         let memory = EphemeralMemory::new("test_ws".to_string());
-        memory.insert("Coffee Preference", "black, no sugar", vec!["user".into()], 60).await.unwrap();
+        memory
+            .insert(
+                "Coffee Preference",
+                "black, no sugar",
+                vec!["user".into()],
+                60,
+            )
+            .await
+            .unwrap();
 
         let found = memory.get_by_canonical_key("coffee_preference").await;
         assert!(found.is_some());
@@ -775,7 +872,10 @@ mod tests {
     #[tokio::test]
     async fn test_get_by_node_id() {
         let memory = EphemeralMemory::new("test_ws".to_string());
-        let entry = memory.insert("lookup", "by node", vec![], 60).await.unwrap();
+        let entry = memory
+            .insert("lookup", "by node", vec![], 60)
+            .await
+            .unwrap();
 
         let found = memory.get_by_node_id(&entry.node_id).await;
         assert!(found.is_some());
@@ -790,15 +890,25 @@ mod tests {
         config.promotion_decay_per_tick = 0.0; // disable decay for this test
 
         // Insert with score above threshold
-        let mut entry = memory.insert("promotable", "content", vec![], 300).await.unwrap();
+        let mut entry = memory
+            .insert("promotable", "content", vec![], 300)
+            .await
+            .unwrap();
         entry.promotion_score = 5.0;
         entry.tier = EphemeralTier::Session;
-        memory.cache.insert(entry.staged_id.clone(), entry.clone()).await;
+        memory
+            .cache
+            .insert(entry.staged_id.clone(), entry.clone())
+            .await;
 
         evaluate_promotions_and_decay(&memory, &config).await;
 
         let updated = memory.get_by_id(&entry.staged_id).await.unwrap();
-        assert_eq!(updated.tier, EphemeralTier::Scratch, "should have been promoted to scratch");
+        assert_eq!(
+            updated.tier,
+            EphemeralTier::Scratch,
+            "should have been promoted to scratch"
+        );
     }
 
     #[tokio::test]
@@ -808,14 +918,23 @@ mod tests {
         config.promotion_decay_per_tick = 1.0;
         config.promotion_threshold_session_to_scratch = 100.0; // won't promote
 
-        let mut entry = memory.insert("decaying", "content", vec![], 300).await.unwrap();
+        let mut entry = memory
+            .insert("decaying", "content", vec![], 300)
+            .await
+            .unwrap();
         entry.promotion_score = 3.0;
-        memory.cache.insert(entry.staged_id.clone(), entry.clone()).await;
+        memory
+            .cache
+            .insert(entry.staged_id.clone(), entry.clone())
+            .await;
 
         evaluate_promotions_and_decay(&memory, &config).await;
 
         let updated = memory.get_by_id(&entry.staged_id).await.unwrap();
-        assert!((updated.promotion_score - 2.0).abs() < 0.01, "score should have decayed by 1.0");
+        assert!(
+            (updated.promotion_score - 2.0).abs() < 0.01,
+            "score should have decayed by 1.0"
+        );
     }
 
     #[tokio::test]
@@ -826,15 +945,25 @@ mod tests {
         config.promotion_decay_per_tick = 0.0;
 
         // Start at scratch with very low score (below 50% of session->scratch threshold)
-        let mut entry = memory.insert("demotable", "content", vec![], 300).await.unwrap();
+        let mut entry = memory
+            .insert("demotable", "content", vec![], 300)
+            .await
+            .unwrap();
         entry.tier = EphemeralTier::Scratch;
         entry.promotion_score = 0.5; // below 3.0 * 0.5 = 1.5
-        memory.cache.insert(entry.staged_id.clone(), entry.clone()).await;
+        memory
+            .cache
+            .insert(entry.staged_id.clone(), entry.clone())
+            .await;
 
         evaluate_promotions_and_decay(&memory, &config).await;
 
         let updated = memory.get_by_id(&entry.staged_id).await.unwrap();
-        assert_eq!(updated.tier, EphemeralTier::Session, "should have been demoted back to session");
+        assert_eq!(
+            updated.tier,
+            EphemeralTier::Session,
+            "should have been demoted back to session"
+        );
     }
 
     #[tokio::test]
@@ -844,14 +973,24 @@ mod tests {
         config.promotion_threshold_session_to_scratch = 1.0;
         config.promotion_decay_per_tick = 0.0;
 
-        let mut entry = memory.insert("contested", "content", vec![], 300).await.unwrap();
+        let mut entry = memory
+            .insert("contested", "content", vec![], 300)
+            .await
+            .unwrap();
         entry.promotion_score = 10.0;
         entry.needs_review = true;
-        memory.cache.insert(entry.staged_id.clone(), entry.clone()).await;
+        memory
+            .cache
+            .insert(entry.staged_id.clone(), entry.clone())
+            .await;
 
         evaluate_promotions_and_decay(&memory, &config).await;
 
         let updated = memory.get_by_id(&entry.staged_id).await.unwrap();
-        assert_eq!(updated.tier, EphemeralTier::Session, "needs_review should block promotion");
+        assert_eq!(
+            updated.tier,
+            EphemeralTier::Session,
+            "needs_review should block promotion"
+        );
     }
 }

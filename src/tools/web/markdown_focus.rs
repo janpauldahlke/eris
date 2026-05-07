@@ -78,7 +78,10 @@ fn strip_low_value_lines(s: &str) -> String {
                 }
             }
         }
-        if t.chars().all(|c| c == '-' || c == '*' || c == '_' || c == ' ') && t.chars().count() >= 3 {
+        if t.chars()
+            .all(|c| c == '-' || c == '*' || c == '_' || c == ' ')
+            && t.chars().count() >= 3
+        {
             continue;
         }
         out.push(line.to_string());

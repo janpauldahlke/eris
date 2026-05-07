@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
 use base64::Engine;
+use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
 use htmd::HtmlToMarkdown;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -44,8 +44,7 @@ impl Tool for MailReadTool {
     }
 
     async fn execute(&self, args: Value) -> Result<String> {
-        let parsed: MailReadArgs =
-            serde_json::from_value(args).map_err(FcpError::ParseFault)?;
+        let parsed: MailReadArgs = serde_json::from_value(args).map_err(FcpError::ParseFault)?;
         let id = parsed.message_id.trim();
         if id.is_empty() {
             return Err(FcpError::SchemaViolation(

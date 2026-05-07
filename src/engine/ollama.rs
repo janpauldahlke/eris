@@ -1,11 +1,11 @@
-use std::sync::Arc;
-use tokio::sync::{mpsc, watch};
+use crate::config::AppConfig;
+use crate::engine::token_metrics::{self, LlmTokenSnapshot};
+use crate::engine::{EngineResponse, LlmEngine, Message};
+use crate::executive::error::Result;
 use async_trait::async_trait;
 use ollama_rs::Ollama;
-use crate::config::AppConfig;
-use crate::engine::{LlmEngine, Message, EngineResponse};
-use crate::engine::token_metrics::{self, LlmTokenSnapshot};
-use crate::executive::error::Result;
+use std::sync::Arc;
+use tokio::sync::{mpsc, watch};
 
 pub struct OllamaClient {
     pub client: Ollama,
@@ -42,14 +42,14 @@ impl LlmEngine for OllamaClient {
         &self,
         stack: &[Message],
         available_tools_json: &str,
-        stream_tx: Option<mpsc::UnboundedSender<String>>
+        stream_tx: Option<mpsc::UnboundedSender<String>>,
     ) -> Result<EngineResponse> {
-        use ollama_rs::generation::chat::{ChatMessage, MessageRole};
-        use ollama_rs::generation::chat::request::ChatMessageRequest;
-        use tokio_stream::StreamExt;
-        use std::time::Duration;
         use crate::executive::error::FcpError;
+        use ollama_rs::generation::chat::request::ChatMessageRequest;
+        use ollama_rs::generation::chat::{ChatMessage, MessageRole};
         use ollama_rs::generation::parameters::FormatType;
+        use std::time::Duration;
+        use tokio_stream::StreamExt;
 
         let mut chat_messages = Vec::new();
         let mut injected = false;
@@ -63,7 +63,7 @@ impl LlmEngine for OllamaClient {
             };
 
             let mut content = msg.content.clone();
-            
+
             if role == MessageRole::System && !injected && !available_tools_json.is_empty() {
                 content = format!("{}\n\nAVAILABLE TOOLS:\n{}", content, available_tools_json);
                 injected = true;
@@ -73,10 +73,13 @@ impl LlmEngine for OllamaClient {
         }
 
         if !injected && !available_tools_json.is_empty() {
-            chat_messages.insert(0, ChatMessage::new(
-                MessageRole::System,
-                format!("AVAILABLE TOOLS:\n{}", available_tools_json)
-            ));
+            chat_messages.insert(
+                0,
+                ChatMessage::new(
+                    MessageRole::System,
+                    format!("AVAILABLE TOOLS:\n{}", available_tools_json),
+                ),
+            );
         }
 
         tracing::info!(
@@ -103,13 +106,10 @@ impl LlmEngine for OllamaClient {
             );
         }
 
-        let request = ChatMessageRequest::new(
-            self.config.model_name.clone(),
-            chat_messages
-        )
-        .format(FormatType::Json)
-        .options(gen_options)
-        .think(self.config.enable_reasoning_fsm);
+        let request = ChatMessageRequest::new(self.config.model_name.clone(), chat_messages)
+            .format(FormatType::Json)
+            .options(gen_options)
+            .think(self.config.enable_reasoning_fsm);
 
         let timeout = Duration::from_secs(self.config.generation_timeout_secs);
 
@@ -122,7 +122,10 @@ impl LlmEngine for OllamaClient {
                     return Err(FcpError::NetworkFault(e.to_string()));
                 }
                 Err(_) => {
-                    tracing::error!(timeout_secs = self.config.generation_timeout_secs, "Ollama stream timed out on connect");
+                    tracing::error!(
+                        timeout_secs = self.config.generation_timeout_secs,
+                        "Ollama stream timed out on connect"
+                    );
                     return Err(FcpError::EngineFault("Generation timed out".to_string()));
                 }
             };
@@ -137,7 +140,11 @@ impl LlmEngine for OllamaClient {
                 let next_chunk = match tokio::time::timeout(timeout, chunk_future).await {
                     Ok(Some(chunk)) => chunk,
                     Ok(None) => break,
-                    Err(_) => return Err(FcpError::EngineFault("Generation timed out during stream".to_string())),
+                    Err(_) => {
+                        return Err(FcpError::EngineFault(
+                            "Generation timed out during stream".to_string(),
+                        ));
+                    }
                 };
 
                 match next_chunk {
@@ -171,7 +178,12 @@ impl LlmEngine for OllamaClient {
                     } else {
                         (0, 0)
                     };
-                    tracing::info!(prompt_tokens, generated_tokens, content_len = content.len(), "Ollama non-stream response received");
+                    tracing::info!(
+                        prompt_tokens,
+                        generated_tokens,
+                        content_len = content.len(),
+                        "Ollama non-stream response received"
+                    );
                     token_metrics::publish(&self.token_metrics_tx, prompt_tokens, generated_tokens);
                     Ok(EngineResponse {
                         content,
@@ -184,7 +196,10 @@ impl LlmEngine for OllamaClient {
                     Err(FcpError::NetworkFault(e.to_string()))
                 }
                 Err(_) => {
-                    tracing::error!(timeout_secs = self.config.generation_timeout_secs, "Ollama request timed out");
+                    tracing::error!(
+                        timeout_secs = self.config.generation_timeout_secs,
+                        "Ollama request timed out"
+                    );
                     Err(FcpError::EngineFault("Generation timed out".to_string()))
                 }
             }
@@ -195,16 +210,16 @@ impl LlmEngine for OllamaClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
-    use wiremock::{MockServer, Mock, ResponseTemplate};
-    use wiremock::matchers::{method, path};
     use crate::executive::error::FcpError;
+    use std::time::Duration;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[tokio::test]
     async fn test_ollama_client_offline_returns_network_fault() {
         let mut config = AppConfig::default();
         config.ollama_host = "http://localhost:65535".to_string(); // Dead port
-        
+
         let client = Ollama::new("http://localhost".to_string(), 65535);
         let engine = OllamaClient::new(client, Arc::new(config));
 
@@ -219,15 +234,19 @@ mod tests {
     #[tokio::test]
     async fn test_ollama_client_timeout_returns_engine_fault() {
         let mock_server = MockServer::start().await;
-        
+
         let mut config = AppConfig::default();
         config.ollama_host = mock_server.uri();
         config.generation_timeout_secs = 1;
 
         let parsed_url = url::Url::parse(&mock_server.uri()).unwrap();
         let client = Ollama::new(
-            format!("{}://{}", parsed_url.scheme(), parsed_url.host_str().unwrap()),
-            parsed_url.port().unwrap_or(80)
+            format!(
+                "{}://{}",
+                parsed_url.scheme(),
+                parsed_url.host_str().unwrap()
+            ),
+            parsed_url.port().unwrap_or(80),
         );
         let engine = OllamaClient::new(client, Arc::new(config));
 
@@ -248,14 +267,18 @@ mod tests {
     #[tokio::test]
     async fn test_ollama_client_handles_valid_response() {
         let mock_server = MockServer::start().await;
-        
+
         let mut config = AppConfig::default();
         config.ollama_host = mock_server.uri();
 
         let parsed_url = url::Url::parse(&mock_server.uri()).unwrap();
         let client = Ollama::new(
-            format!("{}://{}", parsed_url.scheme(), parsed_url.host_str().unwrap()),
-            parsed_url.port().unwrap_or(80)
+            format!(
+                "{}://{}",
+                parsed_url.scheme(),
+                parsed_url.host_str().unwrap()
+            ),
+            parsed_url.port().unwrap_or(80),
         );
         let engine = OllamaClient::new(client, Arc::new(config));
 
@@ -281,7 +304,10 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let result = engine.generate(&[], "{}", None).await.expect("Expected a valid EngineResponse");
+        let result = engine
+            .generate(&[], "{}", None)
+            .await
+            .expect("Expected a valid EngineResponse");
 
         assert_eq!(result.content, "Hello world");
         assert_eq!(result.prompt_tokens, 10);

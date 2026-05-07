@@ -6,10 +6,10 @@ use std::path::PathBuf;
 use tokio::fs;
 use tokio::sync::mpsc;
 
+use super::AgendaTask;
 use crate::executive::error::{FcpError, Result};
 use crate::tools::clock::remove_alarm_by_id;
 use crate::tools::traits::Tool;
-use super::AgendaTask;
 
 #[derive(Deserialize, JsonSchema)]
 pub struct AgendaRemoveArgs {
@@ -85,8 +85,11 @@ impl Tool for AgendaRemoveTool {
             });
         }
 
-        let content = fs::read_to_string(&agenda_path).await.map_err(FcpError::Io)?;
-        let mut tasks: Vec<AgendaTask> = serde_json::from_str(&content).map_err(FcpError::ParseFault)?;
+        let content = fs::read_to_string(&agenda_path)
+            .await
+            .map_err(FcpError::Io)?;
+        let mut tasks: Vec<AgendaTask> =
+            serde_json::from_str(&content).map_err(FcpError::ParseFault)?;
 
         if let Some(id) = tid {
             let initial_len = tasks.len();
@@ -106,17 +109,21 @@ impl Tool for AgendaRemoveTool {
                     }
                 }
             }
-            let new_content =
-                serde_json::to_string_pretty(&tasks).map_err(|e| FcpError::Config(e.to_string()))?;
+            let new_content = serde_json::to_string_pretty(&tasks)
+                .map_err(|e| FcpError::Config(e.to_string()))?;
             fs::create_dir_all(crate::vault_layout::tools_dir(&self.workspace_root))
                 .await
                 .map_err(FcpError::Io)?;
-            fs::write(&agenda_path, new_content).await.map_err(FcpError::Io)?;
+            fs::write(&agenda_path, new_content)
+                .await
+                .map_err(FcpError::Io)?;
             return Ok(format!("SUCCESS: Task [{}] removed from agenda.", id));
         }
 
         let m = dm.ok_or_else(|| {
-            FcpError::SchemaViolation("Provide exactly one of task_id or description_match.".to_string())
+            FcpError::SchemaViolation(
+                "Provide exactly one of task_id or description_match.".to_string(),
+            )
         })?;
         let needle = m.to_lowercase();
 
@@ -238,9 +245,7 @@ mod tests {
         )
         .await?;
         let tool = make_tool(dir.path());
-        let r = tool
-            .execute(serde_json::json!({ "task_id": "ffff" }))
-            .await;
+        let r = tool.execute(serde_json::json!({ "task_id": "ffff" })).await;
         assert!(r.is_err());
         Ok(())
     }

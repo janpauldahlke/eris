@@ -5,7 +5,7 @@ use serde_json::Value;
 use std::sync::Arc;
 
 use crate::executive::error::{FcpError, Result};
-use crate::memory::ephemeral::{is_web_artifact_staging, EphemeralMemory};
+use crate::memory::ephemeral::{EphemeralMemory, is_web_artifact_staging};
 use crate::memory::semantic::SemanticBrain;
 use crate::memory::types::EphemeralTier;
 use crate::tools::traits::Tool;
@@ -66,10 +66,7 @@ impl Tool for MemoryCommitAllTool {
                     tier = %entry.tier,
                     "commit_all: skipping non-promote entry"
                 );
-                skipped_not_promote.push(format!(
-                    "{}(tier={})",
-                    entry.staged_id, entry.tier
-                ));
+                skipped_not_promote.push(format!("{}(tier={})", entry.staged_id, entry.tier));
                 continue;
             }
 

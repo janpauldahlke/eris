@@ -10,6 +10,7 @@ pub const OUTCOME_TOOL_FALLBACK: &str = "tool_fallback";
 pub const OUTCOME_TOOL_MATCHED: &str = "tool_matched";
 
 pub const ISSUE_STEP_EMPTY_USER_SY_FNORD: &str = "STEP_EMPTY_USER_SY_FNORD";
+pub const ISSUE_PRELLM_ALARM_TOOL_ELIGIBLE: &str = "PRELLM_ALARM_TOOL_ELIGIBLE";
 pub const ISSUE_PRELLM_CONV_ALARM: &str = "PRELLM_CONV_ALARM";
 pub const ISSUE_PRELLM_CONV_SHORT_INPUT: &str = "PRELLM_CONV_SHORT_INPUT";
 pub const ISSUE_PRELLM_ROUTER_UNAVAILABLE: &str = "PRELLM_ROUTER_UNAVAILABLE";
@@ -39,7 +40,10 @@ mod tests {
     #[test]
     fn outcome_from_pre_llm_tuple_maps_physical_state() {
         assert_eq!(outcome_from_pre_llm_tuple(false, 0), OUTCOME_CONVERSATIONAL);
-        assert_eq!(outcome_from_pre_llm_tuple(false, 99), OUTCOME_CONVERSATIONAL);
+        assert_eq!(
+            outcome_from_pre_llm_tuple(false, 99),
+            OUTCOME_CONVERSATIONAL
+        );
         assert_eq!(outcome_from_pre_llm_tuple(true, 0), OUTCOME_TOOL_FALLBACK);
         assert_eq!(outcome_from_pre_llm_tuple(true, 1), OUTCOME_TOOL_MATCHED);
         assert_eq!(outcome_from_pre_llm_tuple(true, 5), OUTCOME_TOOL_MATCHED);

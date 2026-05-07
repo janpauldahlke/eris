@@ -1,12 +1,15 @@
-use crate::orchestrator::state::LoopDirective;
 use crate::orchestrator::r#loop::transition::StateTransition;
+use crate::orchestrator::state::LoopDirective;
 
 /// Pure policy: map parsed LLM directives to coordinator transitions.
 pub fn decide_transition_from_directive(directive: LoopDirective) -> StateTransition {
     match directive {
         LoopDirective::HaltAndAwaitInput(_) => StateTransition::Halt,
         LoopDirective::RecoverFromFuckup(msg) => StateTransition::Recover {
-            message: format!("[SYSTEM OVERRIDE: FUCKUP DETECTED] Invalid LLM Output: {}", msg),
+            message: format!(
+                "[SYSTEM OVERRIDE: FUCKUP DETECTED] Invalid LLM Output: {}",
+                msg
+            ),
             schema_retry: false,
         },
         LoopDirective::ShiftToReflection => StateTransition::ShiftToReflection,
