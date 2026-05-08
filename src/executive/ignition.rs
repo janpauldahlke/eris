@@ -166,6 +166,14 @@ pub async fn run_ignition_sequence(
         }
     }
 
+    // Seed default runtime skills into the workspace vault (seed-only; never overwrite).
+    let seed_report = crate::skills::seed_runtime_skills(workspace_root).await?;
+    tracing::info!(
+        copied = seed_report.copied,
+        skipped_existing = seed_report.skipped_existing,
+        "Runtime skills seeded during ignition"
+    );
+
     // 4. The Cure (Identity Generation)
     let identity_path = workspace_root.join("00_Invariants/Identity.md");
     let mut identity_content = format!(

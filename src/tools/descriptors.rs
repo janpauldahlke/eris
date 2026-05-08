@@ -27,6 +27,8 @@ pub struct ToolDescriptor {
     pub examples_good: Vec<ToolExample>,
     #[serde(default)]
     pub examples_bad: Vec<ToolExample>,
+    #[serde(default)]
+    pub suggested_skills: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]

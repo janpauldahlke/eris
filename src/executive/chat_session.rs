@@ -350,6 +350,15 @@ pub async fn start_chat_session(
         max_total_chars: config.vault_search_max_total_chars,
         max_file_bytes: config.vault_search_max_file_bytes,
     }));
+    gatekeeper.register(Arc::new(crate::tools::skills::SkillsListTool {
+        workspace_root: workspace_root.clone(),
+    }));
+    gatekeeper.register(Arc::new(crate::tools::skills::SkillsReadTool {
+        workspace_root: workspace_root.clone(),
+    }));
+    gatekeeper.register(Arc::new(crate::tools::skills::SkillsCreateTool {
+        workspace_root: workspace_root.clone(),
+    }));
     gatekeeper.register(Arc::new(crate::tools::agenda::AgendaPushTool {
         workspace_root: workspace_root.clone(),
     }));

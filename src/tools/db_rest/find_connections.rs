@@ -12,6 +12,7 @@ use crate::tools::traits::Tool;
 use crate::util::ApiHttpClient;
 
 const MAX_JOURNEYS: usize = 3;
+const MAX_TRANSIENT_RETRIES: usize = 1;
 
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -71,15 +72,59 @@ impl Tool for DbFindConnectionsTool {
         validate_when_iso(when)?;
 
         let arrival = matches!(parsed.time_constraint, TimeConstraint::Arrival);
-        open_transport::run_find_connections(
-            self.api.as_ref(),
-            self.name(),
-            from,
-            to,
-            when,
-            arrival,
-            MAX_JOURNEYS,
-        )
-        .await
+        let mut last_err: Option<FcpError> = None;
+        for attempt in 0..=MAX_TRANSIENT_RETRIES {
+            match open_transport::run_find_connections(
+                self.api.as_ref(),
+                self.name(),
+                from,
+                to,
+                when,
+                arrival,
+                MAX_JOURNEYS,
+            )
+            .await
+            {
+                Ok(ok) => {
+                    if attempt > 0 {
+                        tracing::info!(
+                            attempt,
+                            "db:find_connections recovered after transient retry"
+                        );
+                    }
+                    return Ok(ok);
+                }
+                Err(err) if is_transient_db_fault(&err) && attempt < MAX_TRANSIENT_RETRIES => {
+                    tracing::warn!(
+                        attempt,
+                        error = %err,
+                        "db:find_connections transient fault; retrying once with same intent"
+                    );
+                    last_err = Some(err);
+                }
+                Err(err) => return Err(err),
+            }
+        }
+        Err(last_err.unwrap_or_else(|| FcpError::ToolFault {
+            tool_name: self.name().to_string(),
+            reason: "db:find_connections exhausted retries".to_string(),
+        }))
+    }
+}
+
+fn is_transient_db_fault(err: &FcpError) -> bool {
+    match err {
+        FcpError::NetworkFault(_) => true,
+        FcpError::ToolFault { reason, .. } => {
+            let lower = reason.to_ascii_lowercase();
+            lower.contains("timeout")
+                || lower.contains("tempor")
+                || lower.contains("upstream")
+                || lower.contains("502")
+                || lower.contains("503")
+                || lower.contains("504")
+                || lower.contains("connection reset")
+        }
+        _ => false,
     }
 }

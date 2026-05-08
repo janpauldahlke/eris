@@ -44,6 +44,9 @@ impl Gatekeeper {
                     | "vault:read"
                     | "vault:list"
                     | "vault:search"
+                    | "skills:list"
+                    | "skills:read"
+                    | "skills:create"
                     | "agenda:push"
                     | "agenda:list"
                     | "agenda:remove"
@@ -81,6 +84,9 @@ impl Gatekeeper {
                     | "vault:write"
                     | "vault:list"
                     | "vault:search"
+                    | "skills:list"
+                    | "skills:read"
+                    | "skills:create"
                     | "agenda:list"
                     | "agenda:complete"
                     | "agenda:remove"
@@ -453,6 +459,9 @@ mod tests {
             "vault:write",
             "vault:list",
             "vault:search",
+            "skills:list",
+            "skills:read",
+            "skills:create",
             "agenda:push",
             "agenda:list",
             "agenda:complete",

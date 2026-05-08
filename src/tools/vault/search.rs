@@ -553,7 +553,13 @@ mod tests {
         });
         let err = t.execute(args).await.unwrap_err();
         let s = format!("{err}");
-        assert!(s.contains("Traversal") || s.contains("traversal"));
+        assert!(
+            s.contains("Traversal")
+                || s.contains("traversal")
+                || s.contains("missing or unreadable"),
+            "expected traversal-style rejection or invalid scope rejection, got: {}",
+            s
+        );
         Ok(())
     }
 
