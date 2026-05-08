@@ -8,7 +8,7 @@ use crate::orchestrator::tool_router::ToolRouter;
 use crate::presentation::{AgentStateUpdate, SessionEvent};
 use crate::tools::Gatekeeper;
 use crate::tools::ToolDescriptorRegistry;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -109,6 +109,8 @@ pub struct Orchestrator<E: LlmEngine> {
     pub(super) moltbook_browse_ledger: Option<MoltbookBrowseLedger>,
     /// Per-`step()` consecutive failure counts for `(tool_name, intent_id)` on repeatable tools (Moltbook latch).
     pub(super) tool_repeat_failure_streak: HashMap<String, u8>,
+    /// Tool names that failed in the current `step()`; used to prioritize recovery JIT skill guidance.
+    pub(super) step_failed_tools: HashSet<String>,
 }
 
 impl<E: LlmEngine> Orchestrator<E> {
@@ -201,6 +203,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             promotion_suppressed_during_step,
             moltbook_browse_ledger: None,
             tool_repeat_failure_streak: HashMap::new(),
+            step_failed_tools: HashSet::new(),
         }
     }
 

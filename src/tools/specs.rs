@@ -539,8 +539,9 @@ rationale = "User pasted a URL; use web:fetch instead."
     r#"descriptor_version = 1
 tool_name = "db:find_connections"
 short_description = "Up to three train/transit connections in Germany between two named places, with delays and platforms when available."
-when_to_use = "Use when the user asks for train or transit connections, departure times, ICE/IC/RE options, next trains between two cities or stations, or arrival by a given time. Requires explicit timezone on `when`. When this tool is offered, the system prompt includes `[SESSION_REFERENCE_TIME]` with the session wall clock—use its calendar year for bare dates (no year given). Prefer clearer station names (e.g. Hamburg Hbf) if a city is ambiguous."
+when_to_use = "Use when the user asks for train or transit connections, departure times, ICE/IC/RE options, next trains between two cities or stations, or arrival by a given time. Requires explicit timezone on `when`. When this tool is offered, the system prompt includes `[SESSION_REFERENCE_TIME]` with the session wall clock—use its calendar year for bare dates (no year given). Prefer clearer station names (e.g. Hamburg Hbf) if a city is ambiguous. On transient upstream faults, preserve original from/to/when intent and retry with bounded attempts."
 when_not_to_use = "Do not use for arbitrary URLs or web pages (use web:fetch). Do not use for current weather (use weather:current). Do not invent station ids; pass human-readable from/to strings only."
+suggested_skills = ["db-connections-recovery"]
 routing_hints = [
     "train from",
     "train to",
@@ -653,8 +654,9 @@ rationale = "message_id is required."
     r#"descriptor_version = 1
 tool_name = "mail:write"
 short_description = "Send an email via Gmail."
-when_to_use = "Use to compose and send an email. Requires to, subject, and body. Optionally cc and bcc."
-when_not_to_use = "Do not use to read or check mail. Do not use without explicit user intent to send."
+when_to_use = "Use to compose and send an email. Requires to, subject, and body. Optionally cc and bcc. Before sending, verify the recipient from vault or committed memory (vault:search/vault:read or memory:query) rather than guessing addresses."
+when_not_to_use = "Do not use to read or check mail. Do not use without explicit user intent to send. Never fabricate recipient emails (for example user@example.com placeholders)."
+suggested_skills = ["mail-recipient-verify"]
 routing_hints = [
     "send email",
     "compose mail",
@@ -865,6 +867,62 @@ rationale = "Narrows scan to one subtree."
 name = "empty_query"
 args = { query = "" }
 rationale = "query cannot be empty."
+"#,
+    r#"descriptor_version = 1
+tool_name = "skills:list"
+short_description = "List available skill metadata from 10_Topology/skills (id, title, priority, triggers)."
+when_to_use = "Use when the user asks what skills exist, wants a skills index, or wants to inspect available skill IDs before reading one."
+when_not_to_use = "Do not use to load full skill procedures; use skills:read for one specific skill id."
+routing_hints = ["list skills", "what skills are available", "show skills", "skill index", "available skills"]
+
+[[examples_good]]
+name = "list_skills"
+args = {}
+rationale = "Returns structured metadata for each vault skill."
+
+[[examples_bad]]
+name = "read_instead_of_list"
+args = { id = "mail-recipient-verify" }
+rationale = "skills:list takes no id; use skills:read."
+"#,
+    r#"descriptor_version = 1
+tool_name = "skills:read"
+short_description = "Read one skill by id from 10_Topology/skills and return structured fields including body."
+when_to_use = "Use when the user asks to inspect a specific skill's procedure/details by id."
+when_not_to_use = "Do not use without a concrete id. Do not use to discover all skills; use skills:list first."
+routing_hints = ["read skill", "show skill", "open skill", "inspect skill", "skill details", "skill by id"]
+
+[[examples_good]]
+name = "read_skill"
+args = { id = "mail-recipient-verify" }
+rationale = "Loads one skill and returns parsed fields."
+
+[[examples_bad]]
+name = "missing_id"
+args = {}
+rationale = "id is required."
+"#,
+    r#"descriptor_version = 1
+tool_name = "skills:create"
+short_description = "Create or overwrite a skill file in 10_Topology/skills with strict validation."
+when_to_use = "Use when the user explicitly asks to create a new skill file, and the workflow is reusable and procedural. Use overwrite=true only when replacing an existing skill intentionally."
+when_not_to_use = "Do not use for one-off notes, arbitrary markdown dumping, or secret-bearing content. Do not overwrite existing skills unless explicitly requested."
+routing_hints = ["create skill", "new skill", "write skill", "add skill", "author skill", "update skill with overwrite"]
+
+[[examples_good]]
+name = "create_skill"
+args = { id = "team-email-safety", title = "Email safety", priority = "mandatory", triggers = ["mail:write"], body = "Never guess recipient addresses.", overwrite = false }
+rationale = "Creates a validated new skill."
+
+[[examples_good]]
+name = "overwrite_skill"
+args = { id = "team-email-safety", title = "Email safety v2", priority = "mandatory", triggers = ["mail:write", "vault:search"], body = "Verify recipients from vault first.", overwrite = true }
+rationale = "Explicit replacement with overwrite flag."
+
+[[examples_bad]]
+name = "implicit_overwrite"
+args = { id = "team-email-safety", title = "x", priority = "mandatory", triggers = ["mail:write"], body = "x" }
+rationale = "If id exists, overwrite=false will fail; caller must be explicit."
 "#,
     r#"descriptor_version = 1
 tool_name = "moltbook:register"

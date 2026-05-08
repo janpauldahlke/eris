@@ -20,6 +20,7 @@ pub mod ingest;
 pub mod memory;
 pub mod orchestrator;
 pub mod presentation;
+pub mod skills;
 pub mod telemetry;
 pub mod tools;
 pub mod ui;

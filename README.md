@@ -216,6 +216,9 @@ Representative **`routing_hints`** (say things _like_ this—the model still dec
 | **mail:digest**            | summarize email, today’s mail, digest, recap inbox                                                               |
 | **mail:delete**            | delete email, trash message, discard                                                                             |
 | **mail:move**              | move to folder, label email, file under, move to spam                                                            |
+| **skills:list**            | list skills, what skills are available, show skills, skill index                                                 |
+| **skills:read**            | read skill, show skill details, inspect skill by id                                                              |
+| **skills:create**          | create skill, add skill, author skill, update skill with overwrite                                               |
 | **calendar:list**          | Google Calendar, meetings today, this week’s schedule, appointments, what’s on my calendar, list events, am I free |
 | **calendar:get**           | open this calendar event, event details by id, full meeting JSON, read Google Calendar event                      |
 | **calendar:create**        | add calendar event, schedule meeting, block time, create Google Calendar appointment                              |

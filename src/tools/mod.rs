@@ -10,6 +10,7 @@ pub mod memory;
 pub mod moltbook;
 pub mod news;
 pub mod routing_phrases;
+pub mod skills;
 pub mod specs;
 pub mod system;
 pub mod traits;

@@ -219,6 +219,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                     self.broadcast_state().await;
                 }
                 Err(err) => {
+                    self.step_failed_tools.insert(tool_name.clone());
                     tracing::error!(
                         tool = %tool_name,
                         intent_id = %intent_id,

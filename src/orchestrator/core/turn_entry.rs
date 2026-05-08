@@ -194,4 +194,237 @@ impl<E: LlmEngine> Orchestrator<E> {
             sections.join("\n\n")
         ))
     }
+
+    pub(super) async fn build_skill_jit_guidance(
+        &self,
+        state: &AgentState,
+        router_matches: &[String],
+        targeted_tools: &HashSet<String>,
+        failed_tools: &HashSet<String>,
+    ) -> Result<Option<String>> {
+        let Some(registry) = self.descriptor_registry.as_ref() else {
+            return Ok(None);
+        };
+        let allowed_names = self
+            .gatekeeper
+            .get_allowed_tools(state)
+            .into_iter()
+            .filter_map(|t| {
+                t.get("function")
+                    .and_then(|f| f.get("name"))
+                    .and_then(|n| n.as_str())
+                    .map(|s| s.to_string())
+            })
+            .collect::<HashSet<_>>();
+        let mut candidate_tools = HashSet::<String>::new();
+        for name in router_matches {
+            if allowed_names.contains(name) {
+                candidate_tools.insert(name.clone());
+            }
+        }
+        for name in targeted_tools {
+            if allowed_names.contains(name) {
+                candidate_tools.insert(name.clone());
+            }
+        }
+        for name in failed_tools {
+            if allowed_names.contains(name) {
+                candidate_tools.insert(name.clone());
+            }
+        }
+        let mut selected_skill_ids = Vec::<String>::new();
+        if candidate_tools.iter().any(|n| n == "mail:write") {
+            selected_skill_ids.push("mail-recipient-verify".to_string());
+        }
+        for tool_name in candidate_tools {
+            if let Some(desc) = registry.get(&tool_name) {
+                for skill in &desc.suggested_skills {
+                    selected_skill_ids.push(skill.clone());
+                }
+            }
+        }
+        selected_skill_ids.retain(|id| is_operational_skill_id(id));
+        if selected_skill_ids.is_empty() {
+            return Ok(None);
+        }
+        let Some(workspace_root) = self.context_assembler.core_dir.parent() else {
+            return Ok(None);
+        };
+        let max_chars = (self.descriptor_jit_max_chars / 2).max(500);
+        crate::skills::build_jit_skill_guidance(workspace_root, &selected_skill_ids, max_chars).await
+    }
+}
+
+fn is_operational_skill_id(id: &str) -> bool {
+    !matches!(id, "skill-authoring-meta")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::AppConfig;
+    use crate::engine::{EngineResponse, LlmEngine, Message};
+    use crate::memory::ephemeral::EphemeralMemory;
+    use crate::orchestrator::context::ContextViewSettings;
+    use crate::tools::Gatekeeper;
+    use crate::tools::traits::Tool;
+    use async_trait::async_trait;
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use tokio::sync::mpsc;
+
+    struct StubEngine;
+
+    #[async_trait]
+    impl LlmEngine for StubEngine {
+        async fn generate(
+            &self,
+            _stack: &[Message],
+            _available_tools_json: &str,
+            _stream_tx: Option<mpsc::UnboundedSender<String>>,
+        ) -> Result<EngineResponse> {
+            Ok(EngineResponse {
+                content: "{}".into(),
+                prompt_tokens: 0,
+                generated_tokens: 0,
+            })
+        }
+    }
+
+    #[derive(JsonSchema, Deserialize)]
+    struct EmptyArgs {}
+
+    struct MailWriteProbeTool;
+    struct DbFindProbeTool;
+
+    #[async_trait]
+    impl Tool for MailWriteProbeTool {
+        fn name(&self) -> &'static str {
+            "mail:write"
+        }
+        fn description(&self) -> &'static str {
+            "probe"
+        }
+        fn parameters_schema(&self) -> schemars::schema::RootSchema {
+            schemars::schema_for!(EmptyArgs)
+        }
+        async fn execute(&self, _args: serde_json::Value) -> Result<String> {
+            Ok("ok".to_string())
+        }
+    }
+
+    #[async_trait]
+    impl Tool for DbFindProbeTool {
+        fn name(&self) -> &'static str {
+            "db:find_connections"
+        }
+        fn description(&self) -> &'static str {
+            "probe"
+        }
+        fn parameters_schema(&self) -> schemars::schema::RootSchema {
+            schemars::schema_for!(EmptyArgs)
+        }
+        async fn execute(&self, _args: serde_json::Value) -> Result<String> {
+            Ok("ok".to_string())
+        }
+    }
+
+    async fn test_orchestrator_with_skills() -> (Orchestrator<StubEngine>, tempfile::TempDir) {
+        let root = tempfile::tempdir().expect("tempdir");
+        let workspace_root = root.path().join("ws");
+        tokio::fs::create_dir_all(&workspace_root)
+            .await
+            .expect("workspace create");
+        crate::skills::seed_runtime_skills(&workspace_root)
+            .await
+            .expect("seed skills");
+
+        let mut gatekeeper = Gatekeeper::new();
+        gatekeeper.register(Arc::new(MailWriteProbeTool));
+        gatekeeper.register(Arc::new(DbFindProbeTool));
+
+        let (_tx, interrupt_rx) = tokio::sync::watch::channel(());
+        let (_id_tx, id_rx) = tokio::sync::watch::channel(Arc::from("identity"));
+
+        let orch = Orchestrator::new(
+            StubEngine,
+            gatekeeper,
+            Arc::new(EphemeralMemory::new("ws".to_string())),
+            root.path(),
+            "ws",
+            3,
+            5,
+            0.8,
+            4096,
+            3,
+            4000,
+            false,
+            0,
+            interrupt_rx,
+            None,
+            None,
+            Some(Arc::new(
+                crate::tools::ToolDescriptorRegistry::load_embedded()
+                    .expect("descriptor registry"),
+            )),
+            ContextViewSettings::default(),
+            Arc::new(AppConfig::default()),
+            id_rx,
+            Arc::new(AtomicBool::new(false)),
+        );
+        (orch, root)
+    }
+
+    #[tokio::test]
+    async fn skill_guidance_none_when_no_candidates() {
+        let (orch, _root) = test_orchestrator_with_skills().await;
+        let none = orch
+            .build_skill_jit_guidance(
+                &AgentState::Chat,
+                &[],
+                &HashSet::new(),
+                &HashSet::new(),
+            )
+            .await
+            .expect("skill guidance");
+        assert!(none.is_none());
+    }
+
+    #[tokio::test]
+    async fn skill_guidance_includes_failed_db_recovery() {
+        let (orch, _root) = test_orchestrator_with_skills().await;
+        let mut failed = HashSet::new();
+        failed.insert("db:find_connections".to_string());
+        let out = orch
+            .build_skill_jit_guidance(&AgentState::Chat, &[], &HashSet::new(), &failed)
+            .await
+            .expect("skill guidance")
+            .expect("some");
+        assert!(out.contains("db-connections-recovery"));
+    }
+
+    #[tokio::test]
+    async fn skill_guidance_includes_mail_mandatory_on_router_hit() {
+        let (orch, _root) = test_orchestrator_with_skills().await;
+        let out = orch
+            .build_skill_jit_guidance(
+                &AgentState::Chat,
+                &["mail:write".to_string()],
+                &HashSet::new(),
+                &HashSet::new(),
+            )
+            .await
+            .expect("skill guidance")
+            .expect("some");
+        assert!(out.contains("mail-recipient-verify"));
+        assert!(!out.contains("example.com"));
+    }
+
+    #[test]
+    fn operational_skill_filter_excludes_meta_skill() {
+        assert!(!super::is_operational_skill_id("skill-authoring-meta"));
+        assert!(super::is_operational_skill_id("mail-recipient-verify"));
+    }
 }

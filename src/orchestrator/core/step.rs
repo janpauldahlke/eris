@@ -34,6 +34,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         let turn_seq = self.turn_seq;
         self.moltbook_browse_ledger = None;
         self.tool_repeat_failure_streak.clear();
+        self.step_failed_tools.clear();
         // No `info_span!().entered()` here: `EnteredSpan` is not `Send` and `step()` awaits
         // inside `tokio::spawn`. Correlation uses `turn_seq` on every routing event instead.
 
@@ -251,6 +252,21 @@ impl<E: LlmEngine> Orchestrator<E> {
                 self.chat_stack.push(crate::engine::Message {
                     role: "system".to_string(),
                     content: jit_guidance,
+                });
+            }
+            if tools_needed
+                && let Some(skill_guidance) = self
+                    .build_skill_jit_guidance(
+                        &self.state,
+                        &pre_llm_matched_tools,
+                        &targeted_tools,
+                        &self.step_failed_tools,
+                    )
+                    .await?
+            {
+                self.chat_stack.push(crate::engine::Message {
+                    role: "system".to_string(),
+                    content: skill_guidance,
                 });
             }
 
