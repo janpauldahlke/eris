@@ -64,6 +64,7 @@ impl Tool for ClockTimerTool {
             fire_at_unix: fire_at,
             label: args.label.clone(),
             agenda_task_id: None,
+            agenda_kind: None,
         });
         save_alarms(&path, &alarms).await?;
         let _ = self.reschedule_tx.send(());

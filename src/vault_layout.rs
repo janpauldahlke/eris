@@ -29,6 +29,12 @@ pub fn alarms_json(workspace_root: &Path) -> PathBuf {
     tools_dir(workspace_root).join("alarms.json")
 }
 
+/// Cached `vault:taglist` snapshot built once at chat startup and rebuilt lazily after
+/// successful `vault:write` calls under `30_Synthesis/`.
+pub fn taglist_json(workspace_root: &Path) -> PathBuf {
+    tools_dir(workspace_root).join("taglist.json")
+}
+
 pub fn telemetry_logs_dir(workspace_root: &Path) -> PathBuf {
     fcp_dir(workspace_root).join("telemetry").join("logs")
 }

@@ -20,7 +20,8 @@ use crate::executive::setup_welder::IgnitionWorkspaceHint;
 use crate::memory::ephemeral::EphemeralMemory;
 use crate::orchestrator::core::Orchestrator;
 use crate::presentation::{
-    InputSource, SYSTEM_ALARM_PREFIX, SessionEvent, UserAction, UserIngress,
+    InputSource, SYSTEM_ALARM_PREFIX, SYSTEM_SELF_REMINDER_PREFIX, SessionEvent, UserAction,
+    UserIngress,
 };
 use crate::tools::Gatekeeper;
 use crate::ui::discord::DiscordTypingCtl;
@@ -331,6 +332,25 @@ pub async fn start_chat_session(
         }
     }
 
+    let taglist_cache = crate::tools::vault::TaglistCache::into_arc();
+    {
+        let workspace_for_build = workspace_root.clone();
+        tokio::spawn(async move {
+            match crate::tools::vault::taglist_index::build_and_persist(&workspace_for_build).await
+            {
+                Ok(snap) => tracing::info!(
+                    event = "fcp.vault.taglist.startup_built",
+                    note_count = snap.note_count,
+                    tag_count = snap.tags.len(),
+                    "vault:taglist startup snapshot built"
+                ),
+                Err(e) => tracing::warn!(
+                    error = %e,
+                    "vault:taglist startup build failed (will retry on first call)"
+                ),
+            }
+        });
+    }
     gatekeeper.register(Arc::new(crate::tools::vault::VaultReadTool {
         workspace_root: workspace_root.clone(),
         read_limit,
@@ -338,6 +358,7 @@ pub async fn start_chat_session(
     gatekeeper.register(Arc::new(crate::tools::vault::VaultWriteTool {
         workspace_root: workspace_root.clone(),
         max_content_chars: config.num_ctx * 3,
+        taglist_cache: Arc::clone(&taglist_cache),
     }));
     gatekeeper.register(Arc::new(crate::tools::vault::VaultListTool {
         workspace_root: workspace_root.clone(),
@@ -349,6 +370,10 @@ pub async fn start_chat_session(
         snippet_radius_lines: config.vault_search_snippet_radius_lines,
         max_total_chars: config.vault_search_max_total_chars,
         max_file_bytes: config.vault_search_max_file_bytes,
+    }));
+    gatekeeper.register(Arc::new(crate::tools::vault::VaultTaglistTool {
+        workspace_root: workspace_root.clone(),
+        cache: Arc::clone(&taglist_cache),
     }));
     gatekeeper.register(Arc::new(crate::tools::skills::SkillsListTool {
         workspace_root: workspace_root.clone(),
@@ -366,6 +391,10 @@ pub async fn start_chat_session(
         workspace_root: workspace_root.clone(),
     }));
     gatekeeper.register(Arc::new(crate::tools::agenda::AgendaRemindAtTool {
+        workspace_root: workspace_root.clone(),
+        reschedule_tx: alarm_reschedule_tx.clone(),
+    }));
+    gatekeeper.register(Arc::new(crate::tools::agenda::AgendaRemindSelfTool {
         workspace_root: workspace_root.clone(),
         reschedule_tx: alarm_reschedule_tx.clone(),
     }));
@@ -760,6 +789,80 @@ pub async fn start_chat_session(
                             );
                             orchestrator.broadcast_state().await;
                             tracing::info!("Agenda-linked alarm turn");
+                            if let Err(e) = orchestrator.step(None).await {
+                                if matches!(e, FcpError::Interrupted) {
+                                    tracing::info!("Orchestrator interrupted during alarm turn");
+                                    continue;
+                                }
+                                let err_msg = format!("[FATAL ERROR] Orchestrator halted: {}", e);
+                                tracing::error!(error = %e, "Orchestrator fatal error");
+                                let _ = presentation_tx_err
+                                    .send(SessionEvent::SystemError(err_msg))
+                                    .await;
+                                break;
+                            }
+                            orchestrator.broadcast_state().await;
+                        }
+                        UserAction::AgendaSelfPrompt {
+                            agenda_task_id,
+                            label,
+                            plan,
+                            checklist,
+                            alarm_record_id,
+                            seconds_late,
+                        } => {
+                            let trimmed = label.trim().to_string();
+                            if trimmed.is_empty() {
+                                continue;
+                            }
+                            let late_note = if seconds_late > 60 {
+                                format!(" (~{} min late)", seconds_late / 60)
+                            } else {
+                                String::new()
+                            };
+                            let checklist_block = if checklist.is_empty() {
+                                "- [ ] (no checklist provided; execute plan directly)".to_string()
+                            } else {
+                                checklist
+                                    .iter()
+                                    .map(|step| format!("- [ ] {}", step))
+                                    .collect::<Vec<_>>()
+                                    .join("\n")
+                            };
+                            let content = format!(
+                                "{}{}{}\n\n\
+                                [SELF_REMINDER_PLAN]\n\
+                                {}\n\
+                                [/SELF_REMINDER_PLAN]\n\n\
+                                [SELF_REMINDER_CHECKLIST]\n\
+                                {}\n\
+                                [/SELF_REMINDER_CHECKLIST]\n\n\
+                                Execute this plan autonomously now. When finished, call agenda:complete for task_id below with a concise result_summary.\n\
+                                If you need another cycle, call agenda:remind_self with the same task_id and an updated plan/checklist.\n\n\
+                                [AGENDA_SELF task_id={} alarm_id={} late_sec={}]",
+                                SYSTEM_SELF_REMINDER_PREFIX,
+                                trimmed,
+                                late_note,
+                                plan.trim(),
+                                checklist_block,
+                                agenda_task_id,
+                                alarm_record_id,
+                                seconds_late
+                            );
+                            orchestrator.chat_stack.push(crate::engine::Message {
+                                role: "user".to_string(),
+                                content,
+                            });
+                            orchestrator.state = crate::orchestrator::state::AgentState::Chat;
+                            last_input_time.store(
+                                std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_secs())
+                                    .unwrap_or(0),
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                            orchestrator.broadcast_state().await;
+                            tracing::info!("Agenda self-reminder alarm turn");
                             if let Err(e) = orchestrator.step(None).await {
                                 if matches!(e, FcpError::Interrupted) {
                                     tracing::info!("Orchestrator interrupted during alarm turn");

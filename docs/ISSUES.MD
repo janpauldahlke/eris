@@ -43,4 +43,7 @@ I'm glad you're looking into the sandbox. If I can have a 'scratchpad'—a place
 
 1. introduce a new reminder type, for the agent. give it a broader hint field, so he can plan steps for himself and checklist them.
 2. could we provide a vault:treeview so he can see files, what would this give us. the 30_Synthesis are only UUIDs and not directly recognizable by filename.
+
+- we decided to give him an overview of all possible tags, this allows him to not guess search terms in the vault but to activly see what is already exissting. maybe like vault:taglist supported by adding a skill about how to use the vault
+
 3. he desires a sandbox to write pyhtong and execute it. this is like a code sandbox for python. this would make him pretty OP since it would break the cage, but on the other hand he could solve harder puzzles or problems by himself

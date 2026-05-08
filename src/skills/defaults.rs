@@ -4,6 +4,10 @@ pub const DB_CONNECTIONS_RECOVERY_RAW: &str =
     include_str!("defaults/db-connections-recovery.md");
 pub const SKILL_AUTHORING_META_RAW: &str =
     include_str!("defaults/skill-authoring-meta.md");
+pub const AGENDA_SELF_LOOP_RAW: &str =
+    include_str!("defaults/agenda-self-loop.md");
+pub const VAULT_ORIENTATION_RAW: &str =
+    include_str!("defaults/vault-orientation.md");
 
 #[derive(Debug, Clone)]
 pub struct EmbeddedSkill {
@@ -11,7 +15,7 @@ pub struct EmbeddedSkill {
     pub raw: &'static str,
 }
 
-pub fn embedded_defaults() -> [EmbeddedSkill; 3] {
+pub fn embedded_defaults() -> [EmbeddedSkill; 5] {
     [
         EmbeddedSkill {
             file_name: "mail-recipient-verify.md",
@@ -24,6 +28,14 @@ pub fn embedded_defaults() -> [EmbeddedSkill; 3] {
         EmbeddedSkill {
             file_name: "skill-authoring-meta.md",
             raw: SKILL_AUTHORING_META_RAW,
+        },
+        EmbeddedSkill {
+            file_name: "agenda-self-loop.md",
+            raw: AGENDA_SELF_LOOP_RAW,
+        },
+        EmbeddedSkill {
+            file_name: "vault-orientation.md",
+            raw: VAULT_ORIENTATION_RAW,
         },
     ]
 }

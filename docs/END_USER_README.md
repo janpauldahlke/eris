@@ -133,6 +133,28 @@ For flags (`--web`, workspace overrides, verbosity), run:
 eris chat --help
 ```
 
+## 4.1 Practical prompts for new tools
+
+Two useful additions for day-to-day operation:
+
+- **`vault:taglist`** — browse synthesis taxonomy before guessing keywords:
+  - “Show me the synthesis tag map.”
+  - “List top 20 tags.”
+  - “Show only tags starting with `agent`.”
+  - “Give me notes for tag `sandbox`.”
+
+  Notes:
+  - Scope is currently `30_Synthesis/` only (frontmatter tags).
+  - Eris caches this at `.fcp/tools/taglist.json`.
+  - If you edited notes outside Eris and need a fresh map, ask with refresh intent (e.g. “refresh tag map”).
+
+- **`agenda:remind_self`** — autonomous loop reminders with plan/checklist:
+  - “Set a self reminder in 10 minutes: description `check architecture`, plan `review top tags then summarize`, checklist `[clock:now, vault:taglist, vault:read]`.”
+
+  Notes:
+  - Use this when the agent should continue a workflow on its own.
+  - Use normal “remind me at/in …” for user-facing reminders where Done/Snooze interaction is desired.
+
 ---
 
 ## 5. Where to read more

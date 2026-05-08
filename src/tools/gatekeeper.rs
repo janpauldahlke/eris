@@ -44,6 +44,7 @@ impl Gatekeeper {
                     | "vault:read"
                     | "vault:list"
                     | "vault:search"
+                    | "vault:taglist"
                     | "skills:list"
                     | "skills:read"
                     | "skills:create"
@@ -51,6 +52,7 @@ impl Gatekeeper {
                     | "agenda:list"
                     | "agenda:remove"
                     | "agenda:remind_at"
+                    | "agenda:remind_self"
                     | "web:artifact_query"
                     | "system:health"
                     | "clock:now"
@@ -84,6 +86,7 @@ impl Gatekeeper {
                     | "vault:write"
                     | "vault:list"
                     | "vault:search"
+                    | "vault:taglist"
                     | "skills:list"
                     | "skills:read"
                     | "skills:create"
@@ -91,6 +94,7 @@ impl Gatekeeper {
                     | "agenda:complete"
                     | "agenda:remove"
                     | "agenda:remind_at"
+                    | "agenda:remind_self"
                     | "web:fetch"
                     | "news:today"
                     | "web:artifact_query"
@@ -459,6 +463,7 @@ mod tests {
             "vault:write",
             "vault:list",
             "vault:search",
+            "vault:taglist",
             "skills:list",
             "skills:read",
             "skills:create",
@@ -467,6 +472,7 @@ mod tests {
             "agenda:complete",
             "agenda:remove",
             "agenda:remind_at",
+            "agenda:remind_self",
             "web:fetch",
             "news:today",
             "web:artifact_query",

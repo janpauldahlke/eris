@@ -45,13 +45,29 @@ pub struct UserIngress {
 /// Prefix applied by the orchestrator when turning [`UserAction::SystemInject`] into a `user` line.
 pub const SYSTEM_ALARM_PREFIX: &str = "[SYSTEM OVERRIDE - ALARM TRIGGERED]: ";
 
-/// Alarm notification from the scheduler: plain timer/wall, or agenda-linked (needs confirmation flow).
+/// Prefix applied by the orchestrator when turning [`UserAction::AgendaSelfPrompt`] into a `user` line.
+/// The agent reads this as instruction to autonomously execute the stored plan + checklist (no Done/Snooze prompt).
+pub const SYSTEM_SELF_REMINDER_PREFIX: &str = "[SYSTEM OVERRIDE - SELF REMINDER]: ";
+
+/// Alarm notification from the scheduler: plain timer/wall, agenda-linked (user Done/Snooze flow),
+/// or agent self-driven (the SELF_REMINDER protocol — agent executes plan + checklist autonomously).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AlarmPayload {
     Plain(String),
     AgendaLinked {
         agenda_task_id: String,
         label: String,
+        alarm_record_id: String,
+        /// Seconds after scheduled fire (e.g. app was offline).
+        seconds_late: u64,
+    },
+    AgendaSelfPrompt {
+        agenda_task_id: String,
+        label: String,
+        /// Free-text instructional payload the agent stored when scheduling.
+        plan: String,
+        /// Optional ordered steps; rendered to the agent as `- [ ] step` lines.
+        checklist: Vec<String>,
         alarm_record_id: String,
         /// Seconds after scheduled fire (e.g. app was offline).
         seconds_late: u64,
@@ -70,6 +86,17 @@ pub enum UserAction {
     AgendaAlarmPending {
         agenda_task_id: String,
         label: String,
+        alarm_record_id: String,
+        seconds_late: u64,
+    },
+    /// Agent self-driven alarm: orchestrator injects SELF_REMINDER framing with the stored plan
+    /// + checklist; agent executes autonomously and calls `agenda:complete` (or extends with
+    /// `agenda:remind_self`) on its own — no Done/Snooze prompt to the user.
+    AgendaSelfPrompt {
+        agenda_task_id: String,
+        label: String,
+        plan: String,
+        checklist: Vec<String>,
         alarm_record_id: String,
         seconds_late: u64,
     },
@@ -133,12 +160,35 @@ mod tests {
                 alarm_record_id: "a1".into(),
                 seconds_late: 0,
             },
+            UserAction::AgendaSelfPrompt {
+                agenda_task_id: "t2".into(),
+                label: "browse".into(),
+                plan: "open the home and skim".into(),
+                checklist: vec!["clock:now".into(), "moltbook:home".into()],
+                alarm_record_id: "a2".into(),
+                seconds_late: 3,
+            },
         ];
         for a in cases {
             let j = serde_json::to_string(&a).expect("serialize UserAction");
             let back: UserAction = serde_json::from_str(&j).expect("deserialize UserAction");
             assert_eq!(a, back);
         }
+    }
+
+    #[test]
+    fn alarm_payload_json_roundtrip_self_prompt() {
+        let payload = AlarmPayload::AgendaSelfPrompt {
+            agenda_task_id: "t".into(),
+            label: "L".into(),
+            plan: "P".into(),
+            checklist: vec!["a".into(), "b".into()],
+            alarm_record_id: "ar".into(),
+            seconds_late: 0,
+        };
+        let j = serde_json::to_string(&payload).expect("serialize AlarmPayload");
+        let back: AlarmPayload = serde_json::from_str(&j).expect("deserialize AlarmPayload");
+        assert_eq!(payload, back);
     }
 
     #[test]
