@@ -42,6 +42,7 @@ percent-encoding = "2.3"
 sysinfo = "0.38.4"
 sha2 = "0.10"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+tempfile = "3.27.0"
 notify = "6.1"
 base64 = "0.22"
 jsonwebtoken = "9"

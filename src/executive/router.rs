@@ -250,6 +250,210 @@ pub async fn execute_command(
                 }
             }
         }
+        Commands::Benchmark {
+            suite,
+            format,
+            compare,
+            diff,
+            diff_files,
+            diff_vaults,
+            list,
+            trend,
+            isolation,
+            output,
+            no_dry_run,
+            i_understand_risks,
+            no_cleanup,
+        } => {
+            // Safety check: require explicit acknowledgment to disable dry-run
+            if no_dry_run && !i_understand_risks {
+                return Err(FcpError::Config(
+                    "Disabling dry-run mode requires --i-understand-risks flag. \
+                     This may allow external side effects.".to_string()
+                ));
+            }
+
+            // Parse isolation mode
+            let isolation_mode = isolation.parse::<crate::benchmark::IsolationMode>()
+                .map_err(|e| FcpError::Config(format!("Invalid isolation mode: {}", e)))?;
+
+            if diff.as_ref().is_some() && diff_files.as_ref().is_some() {
+                return Err(FcpError::Config(
+                    "Use either --diff (same vault, run IDs) or --diff-files (two JSON paths), not both."
+                        .into(),
+                ));
+            }
+
+            // Latest report from each vault directory (siblings under cwd).
+            if let Some(names) = diff_vaults {
+                if names.len() != 2 {
+                    return Err(FcpError::Config(
+                        "--diff-vaults requires exactly two vault directory names".into(),
+                    ));
+                }
+                let cwd = std::env::current_dir().map_err(|e| {
+                    FcpError::Io(std::io::Error::other(format!(
+                        "Could not read working directory: {e}"
+                    )))
+                })?;
+                let baseline_root = cwd.join(names[0].trim());
+                let current_root = cwd.join(names[1].trim());
+                for (label, p) in [("baseline", &baseline_root), ("current", &current_root)] {
+                    if !p.is_dir() {
+                        return Err(FcpError::Config(format!(
+                            "--diff-vaults {label}: not a directory: {}",
+                            p.display()
+                        )));
+                    }
+                }
+
+                let baseline_storage =
+                    crate::benchmark::BenchmarkStorage::for_vault(&baseline_root)?;
+                let current_storage =
+                    crate::benchmark::BenchmarkStorage::for_vault(&current_root)?;
+
+                let baseline = baseline_storage.load_latest().map_err(|e| {
+                    FcpError::Config(format!(
+                        "Could not load latest benchmark for baseline vault {} (run a benchmark there first): {}",
+                        baseline_root.display(),
+                        e
+                    ))
+                })?;
+                let current = current_storage.load_latest().map_err(|e| {
+                    FcpError::Config(format!(
+                        "Could not load latest benchmark for current vault {} (run a benchmark there first): {}",
+                        current_root.display(),
+                        e
+                    ))
+                })?;
+
+                let comparison =
+                    crate::benchmark::reporter::ReportGenerator::comparison(&baseline, &current);
+                println!("{}", comparison);
+                println!(
+                    "\nCompared latest runs:\n  baseline ← {}\n  current  ← {}",
+                    baseline_root.display(),
+                    current_root.display()
+                );
+                return Ok(());
+            }
+
+            // Compare arbitrary report files (cross-vault / cross-model)
+            if let Some(paths) = diff_files {
+                if paths.len() != 2 {
+                    return Err(FcpError::Config(
+                        "--diff-files requires exactly two JSON paths".into(),
+                    ));
+                }
+                let baseline_path = &paths[0];
+                let current_path = &paths[1];
+                let baseline = crate::benchmark::storage::load_report_from_file(baseline_path)?;
+                let current = crate::benchmark::storage::load_report_from_file(current_path)?;
+                let comparison =
+                    crate::benchmark::reporter::ReportGenerator::comparison(&baseline, &current);
+                println!("{}", comparison);
+                return Ok(());
+            }
+
+            // Handle list mode
+            if list {
+                let storage = crate::benchmark::BenchmarkStorage::for_vault(&config.active_vault())?;
+                let reports = storage.list_reports()?;
+
+                println!("\nAvailable benchmark runs:");
+                println!("{}", "─".repeat(80));
+                println!("{:<25} {:<20} {:<12} {:<8} {}",
+                    "Timestamp", "Model", "Suite", "Quality", "Run ID");
+                println!("{}", "─".repeat(80));
+
+                for info in reports {
+                    println!("{}", info.format_for_list());
+                }
+
+                println!("{}", "─".repeat(80));
+                println!("\nSame vault:     eris benchmark --diff '<run-id-1>..<run-id-2>'");
+                println!("Sibling vaults: eris benchmark --diff-vaults <dir-a> <dir-b>   (from parent folder)");
+                println!("Cross-file:     eris benchmark --diff-files BASELINE.json CURRENT.json");
+                return Ok(());
+            }
+
+            // Handle trend mode
+            if let Some(count) = trend {
+                let storage = crate::benchmark::BenchmarkStorage::for_vault(&config.active_vault())?;
+                let reports = storage.get_trend_reports(count)?;
+
+                if reports.len() < 2 {
+                    println!("Need at least 2 runs for trend analysis (found {})", reports.len());
+                    return Ok(());
+                }
+
+                let trend_output = crate::benchmark::reporter::ReportGenerator::generate_trend_report(&reports);
+                println!("{}", trend_output);
+
+                if let Some(path) = output {
+                    let md = crate::benchmark::reporter::ReportGenerator::generate_trend_report(&reports);
+                    tokio::fs::write(&path, md).await?;
+                    println!("Trend report saved to: {}", path.display());
+                }
+
+                return Ok(());
+            }
+
+            // Handle diff mode
+            if let Some(diff_arg) = diff {
+                let storage = crate::benchmark::BenchmarkStorage::for_vault(&config.active_vault())?;
+                let (baseline_id, current_id) = crate::benchmark::storage::parse_diff_argument(&diff_arg)?;
+
+                let baseline = storage.load_report(&baseline_id)?;
+                let current = storage.load_report(&current_id)?;
+
+                let comparison = crate::benchmark::reporter::ReportGenerator::comparison(&baseline, &current);
+                println!("{}", comparison);
+                return Ok(());
+            }
+
+            // Normal benchmark run
+            println!("Starting benchmark: suite={}, format={}, isolation={}",
+                suite, format, isolation);
+
+            // Run the benchmark
+            let report = crate::benchmark::run_benchmark(
+                &config,
+                &suite,
+                &format,
+                compare,
+                output.clone(),
+                isolation_mode,
+            ).await?;
+
+            // Save report to storage
+            let storage = crate::benchmark::BenchmarkStorage::for_vault(&config.active_vault())?;
+            storage.save_report(&report)?;
+
+            // Handle comparison with previous run if requested
+            if compare {
+                match storage.load_latest() {
+                    Ok(previous) => {
+                        if previous.run_id != report.run_id {
+                            let comparison = crate::benchmark::reporter::ReportGenerator::comparison(
+                                &previous, &report
+                            );
+                            println!("\n{}", comparison);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Could not load previous run for comparison: {}", e);
+                    }
+                }
+            }
+
+            // Handle no_cleanup flag
+            if no_cleanup {
+                tracing::warn!("--no-cleanup specified: benchmark artifacts retained for debugging");
+            }
+
+            Ok(())
+        }
         Commands::Run { prompt } => {
             let _ = prompt;
             Ok(())

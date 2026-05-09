@@ -4,7 +4,8 @@ use crate::executive::error::{FcpError, Result};
 use crate::executive::peripherals::{ollama_reachable, qdrant_reachable};
 
 pub async fn run_preflight_checks(command: &Commands, config: &AppConfig) -> Result<()> {
-    if matches!(command, Commands::Chat { .. }) {
+    // Chat and Benchmark manage their own peripheral lifecycle
+    if matches!(command, Commands::Chat { .. } | Commands::Benchmark { .. }) {
         return Ok(());
     }
 
