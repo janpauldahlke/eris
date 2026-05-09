@@ -3,6 +3,7 @@
 use crate::benchmark::{
     BenchmarkHarness, BenchmarkReport, IsolationMode, QualityMetrics, SpeedMetrics, SuiteRegistry,
 };
+use crate::benchmark::metrics::{StepTiming, SuiteSpeedAggregate};
 use crate::config::AppConfig;
 use crate::engine::ollama::OllamaClient;
 use crate::engine::token_metrics;
@@ -238,10 +239,12 @@ pub async fn run_benchmark(
     // Run all scenarios (real orchestrator + LLM per step)
     println!("[benchmark] Running {} scenarios...", suite.len());
     let mut scenario_results = Vec::new();
-    
+    let mut suite_timing_steps: Vec<StepTiming> = Vec::new();
+    let mut suite_timing_scenarios: u32 = 0;
+
     for (idx, scenario) in suite.scenarios.iter().enumerate() {
         println!("[benchmark] Scenario {}/{}: {}", idx + 1, suite.len(), scenario.name);
-        
+
         match harness
             .run_scenario_with_orchestrator(
                 &mut orchestrator,
@@ -250,9 +253,13 @@ pub async fn run_benchmark(
             )
             .await
         {
-            Ok(result) => {
+            Ok((result, step_timings)) => {
                 let status = if result.succeeded { "✓ PASS" } else { "✗ FAIL" };
                 println!("[benchmark]   {} ({}ms)", status, result.duration.as_millis());
+                if result.succeeded {
+                    suite_timing_scenarios = suite_timing_scenarios.saturating_add(1);
+                    suite_timing_steps.extend(step_timings);
+                }
                 scenario_results.push(result);
             }
             Err(e) => {
@@ -310,6 +317,9 @@ pub async fn run_benchmark(
         );
     }
 
+    let suite_speed =
+        SuiteSpeedAggregate::from_step_samples(&suite_timing_steps, suite_timing_scenarios);
+
     // Build report
     let report = BenchmarkReport {
         run_id: crate::benchmark::storage::sanitize_run_id_for_path(&format!(
@@ -322,6 +332,7 @@ pub async fn run_benchmark(
         suite: suite_name.to_string(),
         quality: quality_metrics,
         speed: speed_sample,
+        suite_speed,
         isolation_mode: format!("{:?}", isolation_mode),
         cleanup_report: crate::benchmark::CleanupConfirmation {
             temp_vault_cleaned: cleanup_report.will_auto_cleanup,
@@ -416,6 +427,29 @@ fn print_console_report(report: &BenchmarkReport) {
     println!("║  Generation phase:      {:6} ms                                   ║",
         report.speed.eval_duration.as_millis());
     println!("╠══════════════════════════════════════════════════════════════════╣");
+    println!("║  SUITE TIMING (passed scenarios only; mean per user step)        ║");
+    println!("╠══════════════════════════════════════════════════════════════════╣");
+    if report.suite_speed.step_samples > 0 {
+        println!(
+            "║  Steps averaged:      {:3}  ({} scenarios)                       ║",
+            report.suite_speed.step_samples, report.suite_speed.contributing_scenarios
+        );
+        println!(
+            "║  Mean LLM ms/step:    {:6.0}                                       ║",
+            report.suite_speed.mean_llm_ms
+        );
+        println!(
+            "║  Mean tool ms/step:   {:6.0}                                       ║",
+            report.suite_speed.mean_tool_ms
+        );
+        println!(
+            "║  Mean total ms/step:  {:6.0}                                       ║",
+            report.suite_speed.mean_total_ms
+        );
+    } else {
+        println!("║  (no passed scenarios — no suite timing aggregate)               ║");
+    }
+    println!("╠══════════════════════════════════════════════════════════════════╣");
     println!("║  SCENARIO RESULTS                                                ║");
     println!("╠══════════════════════════════════════════════════════════════════╣");
     println!("║  Scenarios run:     {:3}                                         ║",
@@ -467,6 +501,30 @@ fn generate_markdown_report(report: &BenchmarkReport) -> String {
     md.push_str(&format!("| Timeout Rate | {:.1}% |\n", report.quality.timeout_rate()));
     md.push_str(&format!("| **Overall Quality Score** | **{:.1}%** |\n\n", 
         report.quality.overall_quality_score()));
+
+    md.push_str("## Suite timing (passed scenarios)\n\n");
+    md.push_str("Means over orchestrator `step()` completions from **successful scenarios only** (different pass rates ⇒ different workload mixes between models).\n\n");
+    if report.suite_speed.step_samples > 0 {
+        md.push_str("| Metric | Value |\n|--------|-------|\n");
+        md.push_str(&format!(
+            "| Step samples | {} ({} scenarios) |\n",
+            report.suite_speed.step_samples, report.suite_speed.contributing_scenarios
+        ));
+        md.push_str(&format!(
+            "| Mean LLM ms / step | {:.0} |\n",
+            report.suite_speed.mean_llm_ms
+        ));
+        md.push_str(&format!(
+            "| Mean tool ms / step | {:.0} |\n",
+            report.suite_speed.mean_tool_ms
+        ));
+        md.push_str(&format!(
+            "| Mean total ms / step | {:.0} |\n\n",
+            report.suite_speed.mean_total_ms
+        ));
+    } else {
+        md.push_str("*No successful scenarios — no aggregate.*\n\n");
+    }
 
     md.push_str("## Scenario Results\n\n");
     md.push_str("| Scenario | Status | Rounds | Duration |\n");

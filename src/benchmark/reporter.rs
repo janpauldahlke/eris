@@ -109,6 +109,40 @@ impl ReportGenerator {
 
         output.push_str(&format!("\n{}", "─".repeat(68)));
 
+        output.push_str(&format!("\n  {:^64}", "SUITE TIMING (passed scenarios)"));
+        output.push_str(&format!("\n{}", "─".repeat(68)));
+        if report.suite_speed.step_samples > 0 {
+            output.push_str(&format!(
+                "\n  {:.<40} {:>8} steps",
+                "Samples (user steps)",
+                report.suite_speed.step_samples
+            ));
+            output.push_str(&format!(
+                "\n  {:.<40} {:>8} scenarios",
+                "Contributing scenarios",
+                report.suite_speed.contributing_scenarios
+            ));
+            output.push_str(&format!(
+                "\n  {:.<40} {:>8.0} ms",
+                "Mean LLM ms / step",
+                report.suite_speed.mean_llm_ms
+            ));
+            output.push_str(&format!(
+                "\n  {:.<40} {:>8.0} ms",
+                "Mean tool ms / step",
+                report.suite_speed.mean_tool_ms
+            ));
+            output.push_str(&format!(
+                "\n  {:.<40} {:>8.0} ms",
+                "Mean total ms / step",
+                report.suite_speed.mean_total_ms
+            ));
+        } else {
+            output.push_str("\n  (No passed scenarios — no suite timing aggregate.)");
+        }
+
+        output.push_str(&format!("\n{}", "─".repeat(68)));
+
         // Scenario Results
         output.push_str(&format!("\n  {:^64}", "SCENARIO RESULTS"));
         output.push_str(&format!("\n{}", "─".repeat(68)));
@@ -256,6 +290,30 @@ impl ReportGenerator {
             "| Total Throughput | {:.1} tok/s |\n\n",
             report.speed.total_throughput()
         ));
+
+        md.push_str("## Suite timing (passed scenarios)\n\n");
+        md.push_str("Means over completed `Orchestrator::step` turns from scenarios that **passed** only.\n\n");
+        if report.suite_speed.step_samples > 0 {
+            md.push_str("| Metric | Value |\n|--------|-------|\n");
+            md.push_str(&format!(
+                "| Step samples | {} ({} scenarios) |\n",
+                report.suite_speed.step_samples, report.suite_speed.contributing_scenarios
+            ));
+            md.push_str(&format!(
+                "| Mean LLM ms / step | {:.0} |\n",
+                report.suite_speed.mean_llm_ms
+            ));
+            md.push_str(&format!(
+                "| Mean tool ms / step | {:.0} |\n",
+                report.suite_speed.mean_tool_ms
+            ));
+            md.push_str(&format!(
+                "| Mean total ms / step | {:.0} |\n\n",
+                report.suite_speed.mean_total_ms
+            ));
+        } else {
+            md.push_str("*No successful scenarios — no aggregate.*\n\n");
+        }
 
         // Scenario results
         md.push_str("## Scenario Results\n\n");
@@ -448,6 +506,38 @@ impl ReportGenerator {
         ));
         output.push_str("\n  (Probe = single minimal chat; streaming TTFT not measured.)");
 
+        output.push_str(&format!("\n{}", "─".repeat(70)));
+        output.push_str(&format!("\n  {:^66}", "SUITE TIMING (passed scenarios only)"));
+        output.push_str(&format!("\n{}", "─".repeat(70)));
+        output.push_str(&format!(
+            "\n  {:.<35} {:>8.0}  {:>8.0}  {:>+6.0}",
+            "Mean LLM ms / user step",
+            baseline.suite_speed.mean_llm_ms,
+            current.suite_speed.mean_llm_ms,
+            current.suite_speed.mean_llm_ms - baseline.suite_speed.mean_llm_ms
+        ));
+        output.push_str(&format!(
+            "\n  {:.<35} {:>8.0}  {:>8.0}  {:>+6.0}",
+            "Mean tool ms / user step",
+            baseline.suite_speed.mean_tool_ms,
+            current.suite_speed.mean_tool_ms,
+            current.suite_speed.mean_tool_ms - baseline.suite_speed.mean_tool_ms
+        ));
+        output.push_str(&format!(
+            "\n  {:.<35} {:>8.0}  {:>8.0}  {:>+6.0}",
+            "Mean total ms / user step",
+            baseline.suite_speed.mean_total_ms,
+            current.suite_speed.mean_total_ms,
+            current.suite_speed.mean_total_ms - baseline.suite_speed.mean_total_ms
+        ));
+        output.push_str(&format!(
+            "\n  Step samples....................... {:>8}  {:>8}",
+            baseline.suite_speed.step_samples, current.suite_speed.step_samples
+        ));
+        output.push_str(
+            "\n  (Different pass rates ⇒ different scenario subsets — not apples-to-apples workload.)",
+        );
+
         // Scenario comparison
         output.push_str(&format!("\n{}", "─".repeat(70)));
         output.push_str(&format!("\n  {:^66}", "SCENARIO COMPARISON"));
@@ -540,6 +630,7 @@ mod tests {
     use super::*;
     use crate::benchmark::metrics::{
         BenchmarkReport, CleanupConfirmation, QualityMetrics, ScenarioResult, SpeedMetrics,
+        SuiteSpeedAggregate,
     };
     use std::time::Duration;
 
@@ -577,6 +668,13 @@ mod tests {
                 generated_tokens: 50,
                 ..Default::default()
             },
+            suite_speed: SuiteSpeedAggregate {
+                step_samples: 6,
+                contributing_scenarios: 3,
+                mean_llm_ms: 1200.0,
+                mean_tool_ms: 100.0,
+                mean_total_ms: 3500.0,
+            },
             isolation_mode: "Strict".to_string(),
             cleanup_report: CleanupConfirmation {
                 temp_vault_cleaned: true,
@@ -597,6 +695,7 @@ mod tests {
         assert!(output.contains("SAFETY CHECKLIST"));
         assert!(output.contains("QUALITY METRICS"));
         assert!(output.contains("SPEED METRICS"));
+        assert!(output.contains("SUITE TIMING"));
         assert!(output.contains("SCENARIO RESULTS"));
     }
 
@@ -608,6 +707,7 @@ mod tests {
         assert!(md.contains("# Benchmark Report: test-model"));
         assert!(md.contains("## Quality Metrics"));
         assert!(md.contains("## Speed Metrics"));
+        assert!(md.contains("## Suite timing"));
         assert!(md.contains("## Scenario Results"));
     }
 

@@ -415,6 +415,7 @@ mod tests {
             suite: "quick".to_string(),
             quality: QualityMetrics::default(),
             speed: SpeedMetrics::default(),
+            suite_speed: crate::benchmark::metrics::SuiteSpeedAggregate::default(),
             isolation_mode: "Strict".to_string(),
             cleanup_report: CleanupConfirmation::default(),
         }

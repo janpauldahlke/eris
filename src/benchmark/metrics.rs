@@ -275,6 +275,47 @@ pub struct SpeedMetrics {
     pub total_duration: Duration,
 }
 
+/// One completed user turn: values mirror [`crate::orchestrator::core::Orchestrator`] after `step()` returns
+/// (`last_llm_ms` sums intra-turn LLM generations; `last_total_ms` is wall time for the whole turn).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StepTiming {
+    pub llm_ms: u64,
+    pub tool_ms: u64,
+    pub total_ms: u64,
+}
+
+/// Mean orchestrator timings over **user steps from scenarios that passed only** (survivorship bias possible).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SuiteSpeedAggregate {
+    /// Steps included in the means (`contributing_scenarios` × steps per scenario, varying).
+    pub step_samples: u32,
+    /// Scenarios that passed and contributed at least one step sample.
+    pub contributing_scenarios: u32,
+    pub mean_llm_ms: f64,
+    pub mean_tool_ms: f64,
+    pub mean_total_ms: f64,
+}
+
+impl SuiteSpeedAggregate {
+    /// Build from per-step samples (only from successful scenarios).
+    pub fn from_step_samples(samples: &[StepTiming], contributing_scenarios: u32) -> Self {
+        if samples.is_empty() {
+            return Self::default();
+        }
+        let n = samples.len() as f64;
+        let sum_llm: u64 = samples.iter().map(|s| s.llm_ms).sum();
+        let sum_tool: u64 = samples.iter().map(|s| s.tool_ms).sum();
+        let sum_total: u64 = samples.iter().map(|s| s.total_ms).sum();
+        Self {
+            step_samples: samples.len() as u32,
+            contributing_scenarios,
+            mean_llm_ms: sum_llm as f64 / n,
+            mean_tool_ms: sum_tool as f64 / n,
+            mean_total_ms: sum_total as f64 / n,
+        }
+    }
+}
+
 impl SpeedMetrics {
     /// Calculate prompt throughput (tokens/second).
     pub fn prompt_throughput(&self) -> f64 {
@@ -318,8 +359,11 @@ pub struct BenchmarkReport {
     pub suite: String,
     /// Quality metrics.
     pub quality: QualityMetrics,
-    /// Speed metrics (averaged across scenarios).
+    /// Single minimal Ollama chat probe (tok/s from Ollama `final_data`).
     pub speed: SpeedMetrics,
+    /// Mean orchestrator timing per user step, **successful scenarios only** (see [`SuiteSpeedAggregate`]).
+    #[serde(default)]
+    pub suite_speed: SuiteSpeedAggregate,
     /// Isolation mode used.
     pub isolation_mode: String,
     /// Cleanup report.

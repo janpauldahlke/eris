@@ -13,7 +13,10 @@ pub mod suite;
 
 pub use harness::BenchmarkHarness;
 pub use isolation::{BenchmarkIsolation, CleanupReport, IsolationMode, SideEffectFilter, ToolRiskLevel};
-pub use metrics::{BenchmarkReport, CleanupConfirmation, FailureAnalysis, FailureType, QualityMetrics, SpeedMetrics};
+pub use metrics::{
+    BenchmarkReport, CleanupConfirmation, FailureAnalysis, FailureType, QualityMetrics, SpeedMetrics,
+    StepTiming, SuiteSpeedAggregate,
+};
 pub use mutation_tracker::{CleanupGuard, MutationTracker, VaultWriteRecord};
 pub use reporter::ReportGenerator;
 pub use runner::run_benchmark;

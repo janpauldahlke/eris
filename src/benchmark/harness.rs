@@ -2,6 +2,7 @@
 
 use crate::benchmark::suite::{Scenario, ScenarioResult, Step, SuccessCriteria};
 use crate::benchmark::{CleanupReport, IsolationMode, QualityMetrics, SideEffectFilter};
+use crate::benchmark::metrics::StepTiming;
 use crate::engine::ollama::OllamaClient;
 use crate::engine::Message;
 use crate::executive::error::Result;
@@ -48,7 +49,7 @@ impl BenchmarkHarness {
         orchestrator: &mut Orchestrator<OllamaClient>,
         scenario: &Scenario,
         scenario_timeout_floor_secs: u64,
-    ) -> Result<ScenarioResult> {
+    ) -> Result<(ScenarioResult, Vec<StepTiming>)> {
         let timeout_secs = scenario
             .timeout_seconds
             .max(scenario_timeout_floor_secs)
@@ -61,8 +62,8 @@ impl BenchmarkHarness {
         )
         .await;
 
-        let result = match executed {
-            Ok(step_result) => step_result,
+        let (result, timings) = match executed {
+            Ok(pair) => pair,
             Err(_) => {
                 tracing::warn!(
                     scenario = %scenario.name,
@@ -71,20 +72,23 @@ impl BenchmarkHarness {
                 );
                 let mut m = QualityMetrics::default();
                 m.record_timeout();
-                ScenarioResult {
-                    scenario_name: scenario.name.clone(),
-                    succeeded: false,
-                    rounds_taken: 0,
-                    max_rounds: scenario.steps.iter().map(|s| s.max_rounds).sum(),
-                    steps_completed: 0,
-                    total_steps: scenario.steps.len() as u32,
-                    duration: started.elapsed(),
-                    metrics: m,
-                    error_message: Some(format!(
-                        "Exceeded scenario timeout of {}s",
-                        timeout_secs
-                    )),
-                }
+                (
+                    ScenarioResult {
+                        scenario_name: scenario.name.clone(),
+                        succeeded: false,
+                        rounds_taken: 0,
+                        max_rounds: scenario.steps.iter().map(|s| s.max_rounds).sum(),
+                        steps_completed: 0,
+                        total_steps: scenario.steps.len() as u32,
+                        duration: started.elapsed(),
+                        metrics: m,
+                        error_message: Some(format!(
+                            "Exceeded scenario timeout of {}s",
+                            timeout_secs
+                        )),
+                    },
+                    Vec::new(),
+                )
             }
         };
 
@@ -93,15 +97,16 @@ impl BenchmarkHarness {
             global.merge(&result.metrics);
         }
 
-        Ok(result)
+        Ok((result, timings))
     }
 
     async fn execute_scenario(
         orchestrator: &mut Orchestrator<OllamaClient>,
         scenario: &Scenario,
         started: Instant,
-    ) -> ScenarioResult {
+    ) -> (ScenarioResult, Vec<StepTiming>) {
         let mut scenario_metrics = QualityMetrics::default();
+        let mut step_timings = Vec::new();
 
         orchestrator.chat_stack.clear();
         orchestrator.state = AgentState::Idle;
@@ -128,18 +133,27 @@ impl BenchmarkHarness {
                     error = %e,
                     "Orchestrator step failed during benchmark"
                 );
-                return ScenarioResult {
-                    scenario_name: scenario.name.clone(),
-                    succeeded: false,
-                    rounds_taken,
-                    max_rounds: scenario.steps.iter().map(|s| s.max_rounds).sum(),
-                    steps_completed,
-                    total_steps: scenario.steps.len() as u32,
-                    duration: started.elapsed(),
-                    metrics: scenario_metrics,
-                    error_message: Some(format!("{}", e)),
-                };
+                return (
+                    ScenarioResult {
+                        scenario_name: scenario.name.clone(),
+                        succeeded: false,
+                        rounds_taken,
+                        max_rounds: scenario.steps.iter().map(|s| s.max_rounds).sum(),
+                        steps_completed,
+                        total_steps: scenario.steps.len() as u32,
+                        duration: started.elapsed(),
+                        metrics: scenario_metrics,
+                        error_message: Some(format!("{}", e)),
+                    },
+                    step_timings,
+                );
             }
+
+            step_timings.push(StepTiming {
+                llm_ms: orchestrator.last_llm_ms,
+                tool_ms: orchestrator.last_tool_ms,
+                total_ms: orchestrator.last_total_ms,
+            });
 
             rounds_taken = rounds_taken.saturating_add(orchestrator.tool_rounds as u32);
 
@@ -191,17 +205,20 @@ impl BenchmarkHarness {
             Some("One or more steps did not satisfy tool expectations".into())
         };
 
-        ScenarioResult {
-            scenario_name: scenario.name.clone(),
-            succeeded,
-            rounds_taken,
-            max_rounds: scenario.steps.iter().map(|s| s.max_rounds).sum(),
-            steps_completed,
-            total_steps: scenario.steps.len() as u32,
-            duration,
-            metrics: scenario_metrics,
-            error_message,
-        }
+        (
+            ScenarioResult {
+                scenario_name: scenario.name.clone(),
+                succeeded,
+                rounds_taken,
+                max_rounds: scenario.steps.iter().map(|s| s.max_rounds).sum(),
+                steps_completed,
+                total_steps: scenario.steps.len() as u32,
+                duration,
+                metrics: scenario_metrics,
+                error_message,
+            },
+            step_timings,
+        )
     }
 
     pub async fn metrics(&self) -> QualityMetrics {
