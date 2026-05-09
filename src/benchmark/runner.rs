@@ -382,89 +382,178 @@ pub async fn run_benchmark(
     Ok(report)
 }
 
-/// Print console table report.
+/// Fixed layout width for terminal readability (no fragile box corners).
+const BENCH_CONSOLE_W: usize = 76;
+
+fn bench_sep_line(ch: char) {
+    println!("{}", std::iter::repeat(ch).take(BENCH_CONSOLE_W).collect::<String>());
+}
+
+fn bench_section(title: &str) {
+    println!();
+    bench_sep_line('─');
+    println!(" {}", title);
+    bench_sep_line('─');
+}
+
+/// Truncate by Unicode scalar boundaries for display.
+fn bench_trunc_display(s: &str, max_chars: usize) -> String {
+    let count = s.chars().count();
+    if count <= max_chars {
+        return s.to_string();
+    }
+    let take = max_chars.saturating_sub(1);
+    format!("{}…", s.chars().take(take).collect::<String>())
+}
+
+/// Label (left, fixed width) + value.
+fn bench_kv(label: &str, value: &str) {
+    const LABEL_W: usize = 34;
+    let lb = bench_trunc_display(label, LABEL_W);
+    println!("  {:<lw$}  {}", lb, value, lw = LABEL_W);
+}
+
+/// Print console report (aligned columns; works with long model names).
 fn print_console_report(report: &BenchmarkReport) {
     println!();
-    println!("╔══════════════════════════════════════════════════════════════════╗");
-    println!("║  ERIS CAPABILITY BENCHMARK                                       ║");
-    println!("╠══════════════════════════════════════════════════════════════════╣");
-    println!("║  Model: {:58} ║", report.model_name);
-    println!("║  Suite: {:58} ║", report.suite);
-    println!("║  Run ID: {:57} ║", report.run_id);
-    println!("╠══════════════════════════════════════════════════════════════════╣");
-    println!("║  SAFETY CHECKLIST                                                ║");
-    println!("╠══════════════════════════════════════════════════════════════════╣");
-    println!("║  {} External side effects: BLOCKED                               ║",
-        if report.cleanup_report.all_cleaned() { "✓" } else { "✗" });
-    println!("║  {} Temp vault: cleaned                                          ║",
-        if report.cleanup_report.temp_vault_cleaned { "✓" } else { "✗" });
-    println!("║  ✓ Staged memories: {} removed                                   ║",
-        report.cleanup_report.staged_memories_removed);
-    println!("╠══════════════════════════════════════════════════════════════════╣");
-    println!("║  QUALITY METRICS                                                 ║");
-    println!("╠══════════════════════════════════════════════════════════════════╣");
-    println!("║  JSON Parse Success:      {:6.1}%                                ║",
-        report.quality.json_success_rate());
-    println!("║  Recovery Success:        {:6.1}%                                ║",
-        report.quality.recovery_success_rate());
-    println!("║  Tool Valid Rate:          {:6.1}%                                ║",
-        report.quality.tool_valid_rate());
-    println!("║  Timeout Rate:            {:6.1}%                                ║",
-        report.quality.timeout_rate());
-    println!("║  Overall Quality Score:   {:6.1}%                                ║",
-        report.quality.overall_quality_score());
-    println!("╠══════════════════════════════════════════════════════════════════╣");
-    println!("║  SPEED (Ollama probe + real scenario LLM/tool work below)        ║");
-    println!("╠══════════════════════════════════════════════════════════════════╣");
-    println!("║  Prompt throughput:    {:6.1} tok/s                             ║",
-        report.speed.prompt_throughput());
-    println!("║  Generation throughput:{:6.1} tok/s                             ║",
-        report.speed.generation_throughput());
-    println!("║  Total request (wall):  {:6} ms                                   ║",
-        report.speed.total_duration.as_millis());
-    println!("║  Prompt eval phase:     {:6} ms                                   ║",
-        report.speed.prompt_eval_duration.as_millis());
-    println!("║  Generation phase:      {:6} ms                                   ║",
-        report.speed.eval_duration.as_millis());
-    println!("╠══════════════════════════════════════════════════════════════════╣");
-    println!("║  SUITE TIMING (passed scenarios only; mean per user step)        ║");
-    println!("╠══════════════════════════════════════════════════════════════════╣");
+    bench_sep_line('=');
+    println!(
+        "  ERIS BENCHMARK   ·   {}   ·   {}",
+        report.suite,
+        bench_trunc_display(&report.model_name, 44)
+    );
+    bench_sep_line('=');
+    println!();
+    bench_kv("Model", &bench_trunc_display(&report.model_name, 120));
+    bench_kv("Suite", &report.suite);
+    bench_kv("Run ID", &report.run_id);
+
+    bench_section("SAFETY");
+    bench_kv(
+        "External side effects blocked",
+        if report.cleanup_report.all_cleaned() {
+            "yes"
+        } else {
+            "no"
+        },
+    );
+    bench_kv(
+        "Temp vault cleaned",
+        if report.cleanup_report.temp_vault_cleaned {
+            "yes"
+        } else {
+            "no"
+        },
+    );
+    bench_kv(
+        "Staged memories removed",
+        &format!("{}", report.cleanup_report.staged_memories_removed),
+    );
+
+    bench_section("QUALITY (aggregate)");
+    bench_kv(
+        "JSON parse success",
+        &format!("{:.1} %", report.quality.json_success_rate()),
+    );
+    bench_kv(
+        "Recovery success",
+        &format!("{:.1} %", report.quality.recovery_success_rate()),
+    );
+    bench_kv(
+        "Tool valid rate",
+        &format!("{:.1} %", report.quality.tool_valid_rate()),
+    );
+    bench_kv(
+        "Timeout rate",
+        &format!("{:.1} %", report.quality.timeout_rate()),
+    );
+    bench_kv(
+        "Overall quality score",
+        &format!("{:.1} %", report.quality.overall_quality_score()),
+    );
+
+    bench_section("SPEED PROBE (single minimal Ollama chat)");
+    bench_kv(
+        "Prompt throughput",
+        &format!("{:.1} tok/s", report.speed.prompt_throughput()),
+    );
+    bench_kv(
+        "Generation throughput",
+        &format!("{:.1} tok/s", report.speed.generation_throughput()),
+    );
+    bench_kv(
+        "Total wall",
+        &format!("{} ms", report.speed.total_duration.as_millis()),
+    );
+    bench_kv(
+        "Prompt eval phase",
+        &format!("{} ms", report.speed.prompt_eval_duration.as_millis()),
+    );
+    bench_kv(
+        "Generation phase",
+        &format!("{} ms", report.speed.eval_duration.as_millis()),
+    );
+    println!("  (Probe is one chat round — not the full suite average.)");
+
+    bench_section("SUITE TIMING (passed scenarios only)");
     if report.suite_speed.step_samples > 0 {
-        println!(
-            "║  Steps averaged:      {:3}  ({} scenarios)                       ║",
-            report.suite_speed.step_samples, report.suite_speed.contributing_scenarios
+        bench_kv(
+            "Step samples",
+            &format!(
+                "{}  ({} passing scenarios)",
+                report.suite_speed.step_samples,
+                report.suite_speed.contributing_scenarios
+            ),
+        );
+        bench_kv(
+            "Mean LLM ms / user step",
+            &format!("{:.0}", report.suite_speed.mean_llm_ms),
+        );
+        bench_kv(
+            "Mean tool ms / user step",
+            &format!("{:.0}", report.suite_speed.mean_tool_ms),
+        );
+        bench_kv(
+            "Mean total ms / user step",
+            &format!("{:.0}", report.suite_speed.mean_total_ms),
         );
         println!(
-            "║  Mean LLM ms/step:    {:6.0}                                       ║",
-            report.suite_speed.mean_llm_ms
-        );
-        println!(
-            "║  Mean tool ms/step:   {:6.0}                                       ║",
-            report.suite_speed.mean_tool_ms
-        );
-        println!(
-            "║  Mean total ms/step:  {:6.0}                                       ║",
-            report.suite_speed.mean_total_ms
+            "  (Means omit failed scenarios — see summary when pass rates differ across models.)"
         );
     } else {
-        println!("║  (no passed scenarios — no suite timing aggregate)               ║");
+        println!("  (No passed scenarios — no suite timing aggregate.)");
     }
-    println!("╠══════════════════════════════════════════════════════════════════╣");
-    println!("║  SCENARIO RESULTS                                                ║");
-    println!("╠══════════════════════════════════════════════════════════════════╣");
-    println!("║  Scenarios run:     {:3}                                         ║",
-        report.quality.scenario_results.len());
-    println!("║  Successful:        {:3}                                         ║",
-        report.quality.scenario_results.iter().filter(|r| r.succeeded).count());
-    println!("║  Failed:           {:3}                                         ║",
-        report.quality.scenario_results.iter().filter(|r| !r.succeeded).count());
-    println!("╚══════════════════════════════════════════════════════════════════╝");
+
+    let total = report.quality.scenario_results.len();
+    let passed = report
+        .quality
+        .scenario_results
+        .iter()
+        .filter(|r| r.succeeded)
+        .count();
+    let failed = total.saturating_sub(passed);
+    let pass_pct = if total > 0 {
+        100.0 * (passed as f64) / (total as f64)
+    } else {
+        0.0
+    };
+
+    bench_section("SUMMARY");
+    bench_kv("Scenarios passed", &format!("{} / {}", passed, total));
+    bench_kv("Pass rate", &format!("{:.1} %", pass_pct));
+    bench_kv("Failed", &format!("{}", failed));
+
+    bench_sep_line('=');
     println!();
-    println!("  Report saved to: .fcp/benchmarks/{}.json", report.run_id);
+    println!(
+        "  Report file:  .fcp/benchmarks/{}.json",
+        report.run_id
+    );
     println!();
-    println!("  View with:  eris benchmark --list");
-    println!("  Compare (this vault): eris benchmark --diff '<run-id>..<run-id>'");
-    println!("  Compare (two files):  eris benchmark --diff-files BASE.json OTHER.json");
+    println!("  eris benchmark --list");
+    println!("  eris benchmark --diff '<baseline-run-id>..<current-run-id>'");
+    println!("  eris benchmark --diff-files BASE.json OTHER.json");
+    println!("  eris benchmark --diff-vaults <vault-a> <vault-b>   (from parent of vault dirs)");
     println!();
 }
 
