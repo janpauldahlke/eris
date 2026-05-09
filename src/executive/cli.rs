@@ -30,6 +30,71 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug, PartialEq, Clone)]
 pub enum Commands {
+    /// Run model capability benchmarks (quality, reliability, speed)
+    Benchmark {
+        /// Benchmark suite to run (quick, standard, comprehensive)
+        #[arg(short, long, default_value = "standard")]
+        suite: String,
+
+        /// Output format (table, json, markdown)
+        #[arg(short, long, default_value = "table")]
+        format: String,
+
+        /// Compare with previous run or another model
+        #[arg(long)]
+        compare: bool,
+
+        /// Compare two runs **in this vault only** by run ID (format: run-id-1..run-id-2).
+        /// For reports under other vaults, use `--diff-files` instead.
+        #[arg(long)]
+        diff: Option<String>,
+
+        /// Compare two saved report JSON files (any path). Baseline first, current second.
+        /// Example: `--diff-files ../vaults/nemo/.fcp/benchmarks/a.json ../vaults/gemma/.fcp/benchmarks/b.json`
+        #[arg(long = "diff-files", num_args = 2, value_names = ["BASELINE_JSON", "CURRENT_JSON"])]
+        diff_files: Option<Vec<PathBuf>>,
+
+        /// Compare **latest** saved reports from two vault directories (folder names relative to cwd).
+        /// Example (from parent of `gemma/` and `nemo/`): `--diff-vaults gemma nemo`
+        #[arg(
+            long = "diff-vaults",
+            alias = "diff-siblings",
+            num_args = 2,
+            value_names = ["BASELINE_VAULT_DIR", "CURRENT_VAULT_DIR"],
+            conflicts_with_all = ["diff", "diff_files"],
+            group = "action"
+        )]
+        diff_vaults: Option<Vec<String>>,
+
+        /// List all benchmark runs for this vault
+        #[arg(long, group = "action")]
+        list: bool,
+
+        /// Generate trend report from last N runs
+        #[arg(long, group = "action")]
+        trend: Option<usize>,
+
+        /// Isolation mode (strict, relaxed, unsafe)
+        #[arg(long, default_value = "strict")]
+        isolation: String,
+
+        /// Output file path (optional)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Disable dry-run mode (requires --i-understand-risks)
+        #[arg(long)]
+        no_dry_run: bool,
+
+        /// Acknowledge risks of disabling dry-run
+        #[arg(long)]
+        i_understand_risks: bool,
+
+        /// Keep benchmark artifacts for debugging
+        #[arg(long)]
+        no_cleanup: bool,
+    },
+
     /// Boot the Layer 2 Subconscious and enter the interactive loop
     Chat {
         /// Browser UI: localhost HTTP server with SSE (see `web_bind_addr` / `web_port` in `.fcp/config.toml`).
@@ -123,6 +188,97 @@ mod tests {
         match result.unwrap_err() {
             FcpError::Config(_) => (),
             _ => panic!("Expected Config error on invalid CLI arguments"),
+        }
+    }
+
+    // Benchmark command tests
+    #[test]
+    fn test_cli_benchmark_default() {
+        let args = vec!["eris", "benchmark"];
+        let cli = parse_from(args).unwrap();
+        
+        if let Commands::Benchmark { suite, format, isolation, no_dry_run, .. } = cli.command {
+            assert_eq!(suite, "standard");
+            assert_eq!(format, "table");
+            assert_eq!(isolation, "strict");
+            assert!(!no_dry_run); // Default is dry-run
+        } else {
+            panic!("Expected Benchmark subcommand");
+        }
+    }
+
+    #[test]
+    fn test_cli_benchmark_suite_selection() {
+        let args = vec!["eris", "benchmark", "--suite", "quick"];
+        let cli = parse_from(args).unwrap();
+        
+        if let Commands::Benchmark { suite, .. } = cli.command {
+            assert_eq!(suite, "quick");
+        } else {
+            panic!("Expected Benchmark subcommand");
+        }
+    }
+
+    #[test]
+    fn test_cli_benchmark_output_format() {
+        let args = vec!["eris", "benchmark", "--format", "json"];
+        let cli = parse_from(args).unwrap();
+        
+        if let Commands::Benchmark { format, .. } = cli.command {
+            assert_eq!(format, "json");
+        } else {
+            panic!("Expected Benchmark subcommand");
+        }
+    }
+
+    #[test]
+    fn test_cli_benchmark_list_mode() {
+        let args = vec!["eris", "benchmark", "--list"];
+        let cli = parse_from(args).unwrap();
+        
+        if let Commands::Benchmark { list, .. } = cli.command {
+            assert!(list);
+        } else {
+            panic!("Expected Benchmark subcommand");
+        }
+    }
+
+    #[test]
+    fn test_cli_benchmark_isolation_mode() {
+        let args = vec!["eris", "benchmark", "--isolation", "relaxed"];
+        let cli = parse_from(args).unwrap();
+        
+        if let Commands::Benchmark { isolation, .. } = cli.command {
+            assert_eq!(isolation, "relaxed");
+        } else {
+            panic!("Expected Benchmark subcommand");
+        }
+    }
+
+    #[test]
+    fn test_cli_benchmark_diff_vaults() {
+        let args = vec![
+            "eris",
+            "benchmark",
+            "--diff-vaults",
+            "gemma",
+            "nemo",
+        ];
+        let cli = parse_from(args).unwrap();
+
+        if let Commands::Benchmark {
+            diff_vaults,
+            suite,
+            ..
+        } = cli.command
+        {
+            assert_eq!(
+                diff_vaults,
+                Some(vec!["gemma".to_string(), "nemo".to_string()])
+            );
+            assert_eq!(suite, "standard");
+        } else {
+            panic!("Expected Benchmark subcommand");
         }
     }
 }

@@ -121,6 +121,128 @@ Common flags (see `eris chat --help`):
 
 Verbose tracing: **`-V`**, **`-VV`**.
 
+## Benchmarking
+
+Measure **protocol quality**, **tool use**, and **latency** on your real stack: benchmarks drive the same **orchestrator + gatekeeper + Ollama** path as interactive chat (user prompts → full turns with tools), not a standalone mock loop. Use saved JSON under **`<vault>/.fcp/benchmarks/`** to compare models or track regressions over time.
+
+---
+
+### What runs
+
+| Piece | Role |
+| ----- | ---- |
+| **Scenario harness** | For each scenario step: push a user line, run `Orchestrator::step`, then score assistant JSON (`tool_calls`, `message_to_user`) against expectations. |
+| **Speed probe** | One Ollama chat round-trip for throughput / timing labels (complements scenario wall time). |
+| **Artifacts** | JSON (and optional Markdown) reports keyed by timestamp + model name; `--list` shows runs for the **current vault cwd**. |
+
+**Duration** depends on model size, GPU, and suite size — count **full LLM turns**, not seconds. Treat published “~N minute” estimates as rough when moving between hardware.
+
+---
+
+### Suites
+
+Run from your vault directory (`cd` into the vault that owns `.fcp/config.toml`).
+
+| Suite | Scenarios | Intent |
+| ----- | --------- | ------ |
+| **`quick`** | 5 | Sanity: JSON protocol, memory stage, vault read, system health, clock. |
+| **`standard`** | 9 | **`quick`** plus multi-hop chains, memory query, adversarial noise. |
+| **`comprehensive`** | 15 | **`standard`** plus unicode / nested JSON / large listings / recovery / branching. |
+
+```bash
+eris benchmark                          # same as --suite standard
+eris benchmark --suite quick
+eris benchmark --suite comprehensive
+```
+
+Common flags: **`--format`** `table` \| `json` \| `markdown`, **`--output`** `<path>` (write report file), **`--isolation`** `strict` \| `relaxed` \| `unsafe`.
+
+**VRAM / RAM after a run:** when **`unload_ollama_models_on_chat_exit`** is `true` in `.fcp/config.toml` (default), Eris runs **`ollama stop`** for the chat and embedding models after a benchmark finishes — same behavior as exiting chat when Ollama was already running on the host. If Eris itself spawned an `ollama serve` child for the run, that process is torn down instead and unload is skipped.
+
+**Per-scenario time budget:** set **`benchmark_scenario_timeout_secs`** in `.fcp/config.toml` (default **120**). The harness uses `max(that value, each scenario’s built-in timeout)`, so slow models (large weights, layer offloading, CPU offload) get enough wall time without editing scenario sources. Align it with **`generation_timeout_secs`** if you raise LLM ceilings.
+
+---
+
+### Safety and isolation
+
+- **Gatekeeper + isolation mode** limit which tools can run (mutating mail/Moltbook/calendar-style tools are blocked in **`strict`**).
+- **Benchmarks use your configured vault** (`active_vault` / cwd): scenarios read real paths like `00_Invariants/Identity.md`. Do not assume a throwaway copy unless you point `eris` at an isolated vault directory.
+- Optional **`--compare`** after a run loads the **previous** saved report for the same vault and prints a diff table.
+
+Modes:
+
+| Mode | Meaning |
+| ---- | ------- |
+| **`strict`** (default) | Safe tools only (e.g. memory:\*, vault read/search/list, system:\*, clock:\*). |
+| **`relaxed`** | Adds read-only external families where configured (e.g. weather, wiki). |
+| **`unsafe`** | Widest tool surface; only use with **`--no-dry-run`** and **`--i-understand-risks`** when you accept real side effects. |
+
+---
+
+### Listing, comparing, trends
+
+```bash
+# Index of runs for this vault (shows run IDs for --diff)
+eris benchmark --list
+
+# Same vault: two run IDs from --list (baseline .. current)
+eris benchmark --diff '2026-05-09_12-45-30_model-a..2026-05-09_14-30-22_model-b'
+
+# Two sibling vault folders (cwd = parent of both): compare each vault's *latest* saved report
+cd vaults
+eris benchmark --diff-vaults gemma nemo
+
+# Alias
+eris benchmark --diff-siblings gemma nemo
+
+# Explicit JSON paths (any machine / naming)
+eris benchmark --diff-files ./vault-a/.fcp/benchmarks/baseline.json ./vault-b/.fcp/benchmarks/current.json
+
+# Trend table from the last N saved reports (optional Markdown file)
+eris benchmark --trend 10
+eris benchmark --trend 10 --output quality-trend.md
+```
+
+After a normal run, **`--compare`** diffs against the latest stored report (see “Safety” above).
+
+---
+
+### Metrics (report summary)
+
+| Area | Examples |
+| ---- | -------- |
+| **Quality** | JSON parse success rate, tool-call validity, timeouts, scenario pass/fail. |
+| **Speed** | Probe-based prompt/gen throughput and phase timings (see report footnotes for definitions). |
+| **Scenarios** | Per-scenario duration, rounds, and success bit — useful for “model A nails multi-hop, model B does not”. |
+
+---
+
+### Example: two models, two vaults
+
+Run benchmarks inside each vault (each vault has its own `.fcp/config.toml` / model):
+
+```bash
+cd vaults/gemma && eris benchmark --suite standard
+cd ../nemo      && eris benchmark --suite standard
+```
+
+Compare **latest** reports without hand-picking paths — from the **parent** of the vault directories:
+
+```bash
+cd vaults
+eris benchmark --diff-vaults gemma nemo
+```
+
+Or compare explicit JSON files:
+
+```bash
+eris benchmark --diff-files \
+  vaults/gemma/.fcp/benchmarks/<run-id>.json \
+  vaults/nemo/.fcp/benchmarks/<run-id>.json
+```
+
+The CLI prints a side-by-side comparison (quality + speed columns); use JSON exports for dashboards or CI.
+
 ## Program flow
 
 **Mental model — data and interaction flow** (one chat turn, simplified):
