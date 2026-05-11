@@ -44,7 +44,7 @@ pub fn fallback_triggers(tool_name: &str) -> &'static str {
             "finishing tasks, mark done, complete task, check off, task finished, I did it"
         }
         "web:fetch" => {
-            "fetching URLs, web search, look up online, check website, browse internet, search the web, what is happening, news, look this up"
+            "fetching URLs, web search, look up online, check website, browse internet, search the web, look this up, open this link"
         }
         "news:today" => {
             "todays headlines, top stories, morning briefing, news digest, breaking news, front page news, what is in the news today, latest headlines from homepage, politics news science business economics technology sport world uk health section"

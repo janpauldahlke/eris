@@ -365,7 +365,7 @@ tool_name = "web:fetch"
 short_description = "Fetch and sanitize a webpage into an artifact receipt; includes ranked outbound link hints (HTML anchors, image URLs filtered heuristically)."
 when_to_use = "Use for URL retrieval; the receipt lists heuristic article-style links—prefer those over inventing paths from image filenames. Then use web:artifact_query for buffered text."
 when_not_to_use = "Do not use for local file reads or direct semantic vault search."
-routing_hints = ["open website", "read web page", "fetch url", "news from"]
+routing_hints = ["open website", "read web page", "fetch url", "look up this url", "browse a link"]
 
 [[examples_good]]
 name = "fetch_url"
@@ -386,7 +386,7 @@ rationale = "URL must start with http:// or https://."
 tool_name = "news:today"
 short_description = "Fetch a news homepage and return ranked headline links; optionally deep-fetch a few top articles in one call (reuses the web:fetch pipeline internally)."
 when_to_use = "Use for today's headlines, top stories, or a news digest from a single homepage. Default listing URL is https://www.bbc.com/ (BBC home mix) when args omit homepage_url and category—configure news_today_site_base + news_today_default_homepage if needed. Pass category (politics, science, business, sport, world, uk, technology, health) for section listings built from site_base + path (no hardcoded origin in the tool). Prefer over repeating identical web:fetch in the same turn (duplicates are suppressed). Set deep_fetch_top_n (1–3) for article bodies."
-when_not_to_use = "Do not use for a one-off non-listing URL (use web:fetch). Not available when web:fetch is deprecated in config."
+when_not_to_use = "Do not use for a one-off non-listing URL when web:fetch is registered (use web:fetch). Not registered when news_today_enabled is false in config (independent of web_fetch_deprecated)."
 routing_hints = ["todays news", "headlines", "top stories", "morning news", "news digest", "breaking news", "what is happening", "front page", "politics headlines", "science news", "business news", "economics news", "world news", "uk news"]
 
 [[examples_good]]

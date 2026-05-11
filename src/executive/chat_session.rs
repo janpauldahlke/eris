@@ -391,6 +391,8 @@ pub async fn start_chat_session(
             ephemeral.clone(),
             semantic_arc.clone(),
         )));
+    }
+    if config.news_today_enabled {
         gatekeeper.register(Arc::new(crate::tools::news::NewsTodayTool::new(
             config.web_fetch_timeout_secs,
             effective_web_fetch_max_bytes,
@@ -409,6 +411,8 @@ pub async fn start_chat_session(
                 allowed_hosts: config.news_today_allowed_hosts.clone(),
             },
         )));
+    } else {
+        tracing::info!("news:today disabled by config — not registered");
     }
     gatekeeper.register(Arc::new(crate::tools::web::WebArtifactQueryTool {
         ephemeral: ephemeral.clone(),

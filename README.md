@@ -85,6 +85,7 @@ Registration is explicit: ask Eris to register on Moltbook with a name and descr
 | Discord     | `[discord]` table                               | Optional; needs `bot_token` + app id + channel when `enabled = true`      |
 | Google WS   | `[google]` (`enabled`, `service_account_key`, `impersonate_user`) | Optional `mail:*` + `calendar:*`; Cloud APIs + Admin domain-wide delegation |
 | Moltbook    | `[moltbook]` (`enabled`, `api_key_file`)        | Optional `moltbook:*`; prefer `MOLTBOOK_API_KEY` or an operator-owned credentials file |
+| Web fetch / headlines | `web_fetch_deprecated`, `news_today_enabled`, optional `news_today_site_base` / `news_today_default_homepage` | `web:fetch` (generic URL) vs **`news:today`** (homepage headlines + optional deep articles); toggles are independent—see `AppConfig` in `src/config.rs` |
 
 Figment also merges `FCP_` environment variables over TOML (e.g. `FCP_WORKSPACE`, `FCP_LOG_LEVEL`, `FCP_USER_NAME`). For other fields, match `AppConfig` in `[src/config.rs](src/config.rs)` to the env key shape your Figment build expects.
 
@@ -295,7 +296,7 @@ You interact through the **TUI**, a **localhost web page**, and/or **Discord**; 
 
 ## Natural language → tool routing (phrase compendium)
 
-Tool choice is **not** parsed from rigid commands. The orchestrator’s **ToolRouter** (`[src/orchestrator/tool_router.rs](src/orchestrator/tool_router.rs)`) embeds your text with the same model as vector memory (`embed_model_name` in config, default `nomic-embed-text`) and compares it to **precomputed** vectors—one per tool built from the tool name, JSON-schema description, and (when present) **`routing_hints`** from the embedded TOML descriptors in `[src/tools/specs.rs](src/tools/specs.rs)`. If a tool has no descriptor hints, **`routing_phrases::fallback_triggers`** in `[src/tools/routing_phrases.rs](src/tools/routing_phrases.rs)` supplies compile-time “typical phrasing” for embeddings and the slim phrase compendium. Tools whose **cosine similarity** meets `tool_match_threshold` in `.fcp/config.toml` (default **0.50**) are surfaced to the LLM.
+Tool choice is **not** parsed from rigid commands. The orchestrator’s **ToolRouter** (`[src/orchestrator/tool_router.rs](src/orchestrator/tool_router.rs)`) embeds your text with the same model as vector memory (`embed_model_name` in config, default `nomic-embed-text`) and compares it to **precomputed** vectors—one per tool built from the tool name, JSON-schema description, and (when present) **`routing_hints`** from the embedded TOML descriptors in `[src/tools/specs.rs](src/tools/specs.rs)`. If a tool has no descriptor hints, **`routing_phrases::fallback_triggers`** in `[src/tools/routing_phrases.rs](src/tools/routing_phrases.rs)` supplies compile-time “typical phrasing” for embeddings and the slim phrase compendium. Tools whose **cosine similarity** meets `tool_match_threshold` in `.fcp/config.toml` (default **0.50**) are surfaced to the LLM. **`news:today`** is already in `specs.rs`; in slim tool mode the **`[FCP_TOOL_PHRASE_MAP]`** snippet is generated at runtime from registered tools plus those descriptors ([`src/orchestrator/context/compendium.rs`](src/orchestrator/context/compendium.rs)), not from the README table below.
 
 The **gatekeeper** only enforces **state** and **JSON Schema** on tool calls (`[src/tools/gatekeeper.rs](src/tools/gatekeeper.rs)`); it does not map phrases to tools.
 
@@ -322,7 +323,8 @@ Representative **`routing_hints`** (say things _like_ this—the model still dec
 | **agenda:remove**          | remove task, cancel agenda, delete from list, drop task, never mind                                              |
 | **agenda:remind_at**       | remind me at/in/about, remember to, nudge/ping me at, snooze, on my agenda or todo list, task reminder           |
 | **agenda:complete**        | task done, complete task, mark done, finished the …                                                              |
-| **(deprecated) web:fetch** | open website, read web page, fetch URL, news from — plus URLs and the lexical phrases above                      |
+| **web:fetch**              | open website, read web page, fetch a URL, look up this link — plus pasted URLs and lexical web wording (when not deprecated) |
+| **news:today**             | today’s headlines, top stories, morning briefing, news digest, breaking news, front page, politics/science/business/world/UK sections; homepage listing + optional top-article fetch (not for arbitrary one-off URLs—use **web:fetch** when enabled) |
 | **web:artifact_query**     | search fetched page, query artifact, find in web artifact                                                        |
 | **system:health**          | health check, system status, CPU/memory usage, Ollama status, diagnostics                                        |
 | **clock:now**              | what time is it, current time, timezone, date and time                                                           |

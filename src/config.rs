@@ -184,6 +184,10 @@ fn default_web_fetch_user_agent() -> String {
         .to_string()
 }
 
+fn default_news_today_enabled() -> bool {
+    true
+}
+
 fn default_news_today_max_headlines() -> usize {
     12
 }
@@ -285,9 +289,12 @@ pub struct AppConfig {
     /// Max characters for the `[ACTIVE_STAGED_MEMORY]` block injected into system prompts; `0` disables.
     #[serde(default = "default_staged_memory_prompt_max_chars")]
     pub staged_memory_prompt_max_chars: usize,
-    /// When true, `web:fetch` is stripped from tool allowlists (deprecated in favor of other flows).
+    /// When true, `web:fetch` is not registered. Independent of [`Self::news_today_enabled`].
     #[serde(default)]
     pub web_fetch_deprecated: bool,
+    /// When false, `news:today` is not registered. Independent of [`Self::web_fetch_deprecated`].
+    #[serde(default = "default_news_today_enabled")]
+    pub news_today_enabled: bool,
     /// Qdrant gRPC endpoint URL (semantic memory / `memory:query`).
     pub qdrant_url: String,
     /// Qdrant collection name. Computed at runtime: `fcp_vault_v2_{workspace}`.
@@ -886,6 +893,7 @@ impl Default for AppConfig {
             turn_end_mention_enabled: default_turn_end_mention_enabled(),
             staged_memory_prompt_max_chars: default_staged_memory_prompt_max_chars(),
             web_fetch_deprecated: false,
+            news_today_enabled: default_news_today_enabled(),
             qdrant_url: "http://localhost:6334".into(),
             qdrant_collection_v2: "fcp_vault_v2_default".into(),
             snapshot_interval_secs: 300,
