@@ -17,5 +17,20 @@ pub fn alarm_payload_to_user_action(payload: AlarmPayload) -> UserAction {
             alarm_record_id,
             seconds_late,
         },
+        AlarmPayload::AgendaSelfPrompt {
+            agenda_task_id,
+            label,
+            plan,
+            checklist,
+            alarm_record_id,
+            seconds_late,
+        } => UserAction::AgendaSelfPrompt {
+            agenda_task_id,
+            label,
+            plan,
+            checklist,
+            alarm_record_id,
+            seconds_late,
+        },
     }
 }

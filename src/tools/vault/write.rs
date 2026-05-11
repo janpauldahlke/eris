@@ -3,9 +3,12 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::fs::{self, OpenOptions};
 use tokio::io::AsyncWriteExt;
 
+use super::taglist_cache::TaglistCache;
+use super::taglist_index::is_synthesis_md_path;
 use crate::executive::error::{FcpError, Result};
 use crate::tools::traits::Tool;
 use crate::tools::validation::validate_path_is_mutable;
@@ -30,6 +33,9 @@ pub struct VaultWriteArgs {
 pub struct VaultWriteTool {
     pub workspace_root: PathBuf,
     pub max_content_chars: usize,
+    /// Shared with `VaultTaglistTool`: flipped on successful writes under `30_Synthesis/*.md` so
+    /// the next `vault:taglist` call rebuilds and persists.
+    pub taglist_cache: Arc<TaglistCache>,
 }
 
 #[async_trait]
@@ -130,6 +136,10 @@ impl Tool for VaultWriteTool {
             .map_err(FcpError::Io)?;
         file.flush().await.map_err(FcpError::Io)?;
 
+        if is_synthesis_md_path(&final_relative_path_string) {
+            self.taglist_cache.mark_dirty();
+        }
+
         Ok(format!(
             "SUCCESS: File written and routed to {}",
             final_relative_path_string
@@ -148,6 +158,7 @@ mod tests {
         let tool = VaultWriteTool {
             workspace_root: dir.path().to_path_buf(),
             max_content_chars: 100_000,
+            taglist_cache: TaglistCache::into_arc(),
         };
 
         let args = serde_json::json!({
@@ -175,6 +186,7 @@ mod tests {
         let tool = VaultWriteTool {
             workspace_root: dir.path().to_path_buf(),
             max_content_chars: 100_000,
+            taglist_cache: TaglistCache::into_arc(),
         };
 
         let args = serde_json::json!({
@@ -194,6 +206,7 @@ mod tests {
         let tool = VaultWriteTool {
             workspace_root: dir.path().to_path_buf(),
             max_content_chars: 100_000,
+            taglist_cache: TaglistCache::into_arc(),
         };
 
         let args = serde_json::json!({
@@ -212,6 +225,48 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(written, "---\ntags:\n  - 10_Episodic/visuals\n---\n...");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn synthesis_write_marks_taglist_cache_dirty() -> Result<()> {
+        let dir = tempdir().unwrap();
+        let cache = TaglistCache::into_arc();
+        let tool = VaultWriteTool {
+            workspace_root: dir.path().to_path_buf(),
+            max_content_chars: 100_000,
+            taglist_cache: Arc::clone(&cache),
+        };
+
+        let args = serde_json::json!({
+            "relative_path": "30_Synthesis/uuid-1/r0001.md",
+            "content": "---\ntags:\n  - sandbox\n---\nhello",
+            "mode": "overwrite"
+        });
+
+        let _ = tool.execute(args).await?;
+        assert!(cache.is_dirty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn non_synthesis_write_does_not_dirty_taglist_cache() -> Result<()> {
+        let dir = tempdir().unwrap();
+        let cache = TaglistCache::into_arc();
+        let tool = VaultWriteTool {
+            workspace_root: dir.path().to_path_buf(),
+            max_content_chars: 100_000,
+            taglist_cache: Arc::clone(&cache),
+        };
+
+        let args = serde_json::json!({
+            "relative_path": "20_Discourse/Tasks.md",
+            "content": "## row\nresult: ok",
+            "mode": "append"
+        });
+
+        let _ = tool.execute(args).await?;
+        assert!(!cache.is_dirty(), "expected non-synthesis write to leave taglist clean");
         Ok(())
     }
 }

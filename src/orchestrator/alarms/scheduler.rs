@@ -9,7 +9,26 @@ use tokio_util::sync::CancellationToken;
 
 use crate::executive::error::Result;
 use crate::presentation::{AlarmPayload, SessionEvent};
+use crate::tools::agenda::{AgendaTask, AgendaTaskKind, SelfReminderPlan};
 use crate::tools::clock::{AlarmRecord, load_alarms, save_alarms};
+
+async fn load_self_plan_for_task(
+    workspace_root: &std::path::Path,
+    agenda_task_id: &str,
+) -> Option<SelfReminderPlan> {
+    let agenda_path = crate::vault_layout::agenda_json(workspace_root);
+    let content = tokio::fs::read_to_string(&agenda_path).await.ok()?;
+    if content.trim().is_empty() {
+        return None;
+    }
+    let tasks: Vec<AgendaTask> = serde_json::from_str(&content).ok()?;
+    let row = tasks.into_iter().find(|t| t.id == agenda_task_id)?;
+    if row.kind != AgendaTaskKind::SelfDriven {
+        return None;
+    }
+    let raw = row.plan?;
+    serde_json::from_str(&raw).ok()
+}
 
 fn unix_now_secs() -> u64 {
     std::time::SystemTime::now()
@@ -39,6 +58,7 @@ fn sleep_until_next(alarms: &[AlarmRecord]) -> Duration {
 }
 
 async fn fire_due_and_persist(
+    workspace_root: &std::path::Path,
     path: &std::path::Path,
     presentation_tx: &mpsc::Sender<SessionEvent>,
 ) -> Result<()> {
@@ -56,11 +76,31 @@ async fn fire_due_and_persist(
     save_alarms(path, &remaining).await?;
     for a in due {
         let payload = if let Some(tid) = a.agenda_task_id.clone() {
-            AlarmPayload::AgendaLinked {
-                agenda_task_id: tid,
-                label: a.label,
-                alarm_record_id: a.id,
-                seconds_late: now.saturating_sub(a.fire_at_unix),
+            if a.agenda_kind.as_deref() == Some("self") {
+                if let Some(plan) = load_self_plan_for_task(workspace_root, &tid).await {
+                    AlarmPayload::AgendaSelfPrompt {
+                        agenda_task_id: tid,
+                        label: a.label,
+                        plan: plan.hint,
+                        checklist: plan.checklist,
+                        alarm_record_id: a.id,
+                        seconds_late: now.saturating_sub(a.fire_at_unix),
+                    }
+                } else {
+                    AlarmPayload::AgendaLinked {
+                        agenda_task_id: tid,
+                        label: a.label,
+                        alarm_record_id: a.id,
+                        seconds_late: now.saturating_sub(a.fire_at_unix),
+                    }
+                }
+            } else {
+                AlarmPayload::AgendaLinked {
+                    agenda_task_id: tid,
+                    label: a.label,
+                    alarm_record_id: a.id,
+                    seconds_late: now.saturating_sub(a.fire_at_unix),
+                }
             }
         } else {
             AlarmPayload::Plain(a.label)
@@ -95,7 +135,7 @@ pub fn spawn_alarm_scheduler(
             tokio::select! {
                 biased;
                 _ = tokio::time::sleep(sleep_for) => {
-                    if let Err(e) = fire_due_and_persist(&path, &presentation_tx).await {
+                    if let Err(e) = fire_due_and_persist(&workspace_root, &path, &presentation_tx).await {
                         tracing::warn!(error = %e, "alarm scheduler: fire/persist failed");
                     }
                 }
@@ -108,4 +148,66 @@ pub fn spawn_alarm_scheduler(
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn fire_due_self_alarm_emits_agenda_self_prompt() {
+        let dir = tempdir().expect("tmpdir");
+        let tools_dir = crate::vault_layout::tools_dir(dir.path());
+        tokio::fs::create_dir_all(&tools_dir)
+            .await
+            .expect("create tools dir");
+
+        let agenda_path = crate::vault_layout::agenda_json(dir.path());
+        tokio::fs::write(
+            &agenda_path,
+            r#"[{"id":"self1","created_at":1,"description":"loop task","status":"pending","alarm_id":"alarm1","kind":"self_driven","plan":"{\"hint\":\"continue the loop\",\"checklist\":[\"clock:now\",\"agenda:list\"]}"}]"#,
+        )
+        .await
+        .expect("seed agenda");
+
+        let now = unix_now_secs();
+        let alarms_path = crate::vault_layout::alarms_json(dir.path());
+        tokio::fs::write(
+            &alarms_path,
+            format!(
+                r#"[{{"id":"alarm1","fire_at_unix":{},"label":"loop task","agenda_task_id":"self1","agenda_kind":"self"}}]"#,
+                now.saturating_sub(1)
+            ),
+        )
+        .await
+        .expect("seed alarms");
+
+        let (tx, mut rx) = mpsc::channel::<SessionEvent>(4);
+        fire_due_and_persist(dir.path(), &alarms_path, &tx)
+            .await
+            .expect("fire due");
+
+        let ev = rx.recv().await.expect("one session event");
+        match ev {
+            SessionEvent::SystemAlarm(AlarmPayload::AgendaSelfPrompt {
+                agenda_task_id,
+                label,
+                plan,
+                checklist,
+                ..
+            }) => {
+                assert_eq!(agenda_task_id, "self1");
+                assert_eq!(label, "loop task");
+                assert_eq!(plan, "continue the loop");
+                assert_eq!(checklist, vec!["clock:now".to_string(), "agenda:list".to_string()]);
+            }
+            other => panic!("unexpected alarm payload: {other:?}"),
+        }
+
+        let persisted = tokio::fs::read_to_string(&alarms_path)
+            .await
+            .expect("read alarms");
+        assert_eq!(persisted.trim(), "[]");
+    }
 }

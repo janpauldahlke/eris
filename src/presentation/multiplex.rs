@@ -130,6 +130,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn multiplex_relays_self_prompt_alarm_to_user_action() {
+        let (pres_tx, pres_rx) = mpsc::channel::<SessionEvent>(8);
+        let (ua_tx, mut ua_rx) = mpsc::channel::<UserAction>(8);
+        let _jh = spawn_presentation_multiplex(
+            pres_rx,
+            PresentationMultiplexTargets {
+                web_broadcast: None,
+                terminal: None,
+                terminal_omit_system_alarm: false,
+                user_action_tx: ua_tx,
+                discord_outbound: None,
+            },
+        );
+
+        pres_tx
+            .send(SessionEvent::SystemAlarm(AlarmPayload::AgendaSelfPrompt {
+                agenda_task_id: "t1".into(),
+                label: "loop".into(),
+                plan: "continue".into(),
+                checklist: vec!["clock:now".into(), "agenda:list".into()],
+                alarm_record_id: "a1".into(),
+                seconds_late: 0,
+            }))
+            .await
+            .expect("send self alarm");
+        drop(pres_tx);
+
+        let action = ua_rx.recv().await.expect("alarm action");
+        assert!(matches!(
+            action,
+            UserAction::AgendaSelfPrompt {
+                agenda_task_id,
+                label,
+                plan,
+                checklist,
+                alarm_record_id,
+                seconds_late
+            } if agenda_task_id == "t1"
+                && label == "loop"
+                && plan == "continue"
+                && checklist == vec!["clock:now".to_string(), "agenda:list".to_string()]
+                && alarm_record_id == "a1"
+                && seconds_late == 0
+        ));
+
+        let _ = _jh.await;
+    }
+
+    #[tokio::test]
     async fn user_transcript_line_broadcast_not_discord_queue() {
         use std::time::Duration;
 

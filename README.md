@@ -313,6 +313,7 @@ Representative **`routing_hints`** (say things _like_ this—the model still dec
 | **vault:list**             | list files, show directory, browse folder, what files exist                                                      |
 | **vault:read**             | read file, open note, show file, inspect markdown                                                                |
 | **vault:write**            | save note, write file, append note, create markdown                                                              |
+| **vault:taglist**          | list vault tags, map of tags, tag frequencies, synthesis taxonomy, notes under tag                                |
 | **memory:query**           | search memory, do you remember, what is my name, who am I, user preferences, my identity, recall context         |
 | **memory:stage**           | remember this, stage memory, temporary memory, hold in staging                                                   |
 | **memory:staged_list**     | show staged memory, list staged ids, what is staged                                                              |
@@ -322,6 +323,7 @@ Representative **`routing_hints`** (say things _like_ this—the model still dec
 | **agenda:list**            | show tasks, list agenda, pending tasks                                                                           |
 | **agenda:remove**          | remove task, cancel agenda, delete from list, drop task, never mind                                              |
 | **agenda:remind_at**       | remind me at/in/about, remember to, nudge/ping me at, snooze, on my agenda or todo list, task reminder           |
+| **agenda:remind_self**     | set a self reminder, resume this workflow in 10 minutes, self-driven loop, wake me with checklist/plan            |
 | **agenda:complete**        | task done, complete task, mark done, finished the …                                                              |
 | **web:fetch**              | open website, read web page, fetch a URL, look up this link — plus pasted URLs and lexical web wording (when not deprecated) |
 | **news:today**             | today’s headlines, top stories, morning briefing, news digest, breaking news, front page, politics/science/business/world/UK sections; homepage listing + optional top-article fetch (not for arbitrary one-off URLs—use **web:fetch** when enabled) |
@@ -355,6 +357,12 @@ Representative **`routing_hints`** (say things _like_ this—the model still dec
 | **moltbook:dm**            | Moltbook DM, direct messages, inbox, DM request, reply to Moltbook message                                       |
 
 To change operator-facing routing text, prefer **`routing_hints`** in `[src/tools/specs.rs](src/tools/specs.rs)`; for tools without TOML hints, edit **`fallback_triggers`** in `[src/tools/routing_phrases.rs](src/tools/routing_phrases.rs)`. The lexical phrase lists inside `tool_router.rs` remain for URL/page detection and short-input guards (not the full tool roster).
+
+## New agenda + vault flows
+
+- **`agenda:remind_self`** creates a self-driven reminder cycle (plan + optional checklist) that wakes the agent with `SELF REMINDER` framing when the alarm fires; use it for autonomous multi-step follow-up, not user Done/Snooze reminders.
+- **`vault:taglist`** provides a taxonomy map for `30_Synthesis/` frontmatter tags (`tag -> count`, optional paths) so you can browse “unknown unknowns” before running keyword search.
+- `vault:taglist` cache is persisted at `.fcp/tools/taglist.json`, built once at startup, and lazily rebuilt after successful `vault:write` operations under `30_Synthesis/*.md` (or via `refresh: true`).
 
 ## Copyright
 

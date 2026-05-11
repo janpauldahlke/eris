@@ -207,6 +207,8 @@ impl Tool for AgendaRemindAtTool {
                     description: d,
                     status: "pending".to_string(),
                     alarm_id: None,
+                    kind: super::AgendaTaskKind::User,
+                    plan: None,
                 });
             }
         }
@@ -232,6 +234,7 @@ impl Tool for AgendaRemindAtTool {
             fire_at_unix: fire_at,
             label: label.clone(),
             agenda_task_id: Some(task_id.clone()),
+            agenda_kind: Some("user".to_string()),
         });
         save_alarms(&alarms_path, &alarms).await?;
 

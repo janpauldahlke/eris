@@ -63,6 +63,8 @@ impl Tool for AgendaPushTool {
             description: args.description,
             status: "pending".to_string(),
             alarm_id: None,
+            kind: super::AgendaTaskKind::User,
+            plan: None,
         });
 
         let new_content =

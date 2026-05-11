@@ -147,6 +147,44 @@ args = { task_id = "a03e", minutes = 10, hour = 9, minute = 0 }
 rationale = "Provide either minutes or hour+minute, not both."
 "#,
     r#"descriptor_version = 1
+tool_name = "agenda:remind_self"
+short_description = "Create or update a self-driven agenda row and link it to a fire time in .fcp/tools/alarms.json; on fire, the agent gets a structured SELF_REMINDER payload (plan + checklist) and executes autonomously."
+when_to_use = "Use for multi-step background loops where the agent should resume work on its own: provide task_id or new description, required plan text, optional checklist, and minutes or hour:minute. Best for recurring browse/research/checkpoint cycles where Done/Snooze prompting to the user is not desired."
+when_not_to_use = "Do not use for normal user reminders that should ask Done/Snooze (use agenda:remind_at). Do not use for generic label-only countdowns (use clock:timer) or wake-only wall alarms (use clock:alarm)."
+routing_hints = [
+    "plan for myself",
+    "remind myself with steps",
+    "set up a self loop",
+    "agent self reminder",
+    "wake me with checklist",
+    "continue this later automatically",
+    "resume this workflow in 10 minutes",
+    "self-driven reminder",
+    "loop this task autonomously",
+    "come back to this with checklist",
+]
+
+[[examples_good]]
+name = "new_self_loop_minutes"
+args = { description = "Moltbook cycle until 18:30", plan = "Open home, scan 3 threads, welcome newcomers, then summarize.", checklist = ["clock:now", "moltbook:home", "moltbook:search", "moltbook:comment"], minutes = 5 }
+rationale = "Creates a self-driven agenda row and alarm with structured plan."
+
+[[examples_good]]
+name = "extend_existing_self_loop"
+args = { task_id = "a03e", plan = "Resume research: read latest notes then stage summary.", checklist = ["vault:read", "memory:stage"], hour = 17, minute = 45 }
+rationale = "Reuses existing row by task_id and reschedules with updated plan/checklist."
+
+[[examples_bad]]
+name = "missing_plan"
+args = { description = "continue", minutes = 10 }
+rationale = "plan is required."
+
+[[examples_bad]]
+name = "both_schedules"
+args = { description = "continue", plan = "x", minutes = 10, hour = 9, minute = 0 }
+rationale = "Provide either minutes or hour+minute, not both."
+"#,
+    r#"descriptor_version = 1
 tool_name = "memory:commit"
 short_description = "Commit one staged memory to vault and semantic index."
 when_to_use = "Use when the user asked to save permanently, keep in the vault, or finalize staged content to disk; or in a later turn after staging when they want it persisted."
@@ -867,6 +905,44 @@ rationale = "Narrows scan to one subtree."
 name = "empty_query"
 args = { query = "" }
 rationale = "query cannot be empty."
+"#,
+    r#"descriptor_version = 1
+tool_name = "vault:taglist"
+short_description = "Synthesis-only frontmatter tag map: returns tag→count (and optional paths) for notes under 30_Synthesis/. Lets you orient before guessing keywords for vault:search."
+when_to_use = "Use to discover what topics/tags exist in the synthesis vault and where the gravity of recent discourse sits, without having to invent a search keyword. Pair top_k or prefix to scan the taxonomy; pass tag to drill into the file paths under one tag and follow up with vault:read."
+when_not_to_use = "Do not use for full-text matching across notes (use vault:search). Do not use for non-synthesis folders (00_Invariants, 10_Topology, 20_Discourse, 99_USER_UPLOADED) — they are intentionally skipped because they do not yet use consistent frontmatter. Do not use to read or write notes."
+routing_hints = [
+    "map of tags",
+    "which tags exist",
+    "list vault tags",
+    "tag taxonomy",
+    "tag frequencies",
+    "where is the gravity",
+    "notes about tag",
+    "synthesis tag map",
+    "browse vault topics",
+    "what have we been discussing",
+]
+
+[[examples_good]]
+name = "browse_top_tags"
+args = { top_k = 25 }
+rationale = "Shows the densest tags first; default compact form."
+
+[[examples_good]]
+name = "drill_into_tag"
+args = { tag = "sandbox" }
+rationale = "Returns synthesis paths whose frontmatter contains this tag; case-insensitive."
+
+[[examples_good]]
+name = "prefix_filter_with_paths"
+args = { prefix = "agent", include_paths = true }
+rationale = "Find tags starting with 'agent' and the notes under each."
+
+[[examples_bad]]
+name = "use_for_full_text"
+args = { tag = "I need files mentioning database migration" }
+rationale = "Tag must be a frontmatter tag, not a phrase — use vault:search for full text."
 "#,
     r#"descriptor_version = 1
 tool_name = "skills:list"

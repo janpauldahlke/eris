@@ -25,6 +25,10 @@ pub struct AlarmRecord {
     /// When set, this alarm is tied to a row in `.fcp/tools/agenda.json` for confirmation/removal flows.
     #[serde(default)]
     pub agenda_task_id: Option<String>,
+    /// Routes the fire payload at scheduler time: `Some("self")` triggers `AlarmPayload::AgendaSelfPrompt`
+    /// (agent self-execution), anything else (or `None`) keeps the legacy user-confirm flow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agenda_kind: Option<String>,
 }
 
 /// Next local wall-clock fire time for hour:minute (24h). If that time already passed today, tomorrow.
