@@ -184,6 +184,10 @@ fn default_web_fetch_user_agent() -> String {
         .to_string()
 }
 
+fn default_news_today_enabled() -> bool {
+    true
+}
+
 fn default_news_today_max_headlines() -> usize {
     12
 }
@@ -236,6 +240,12 @@ pub struct AppConfig {
     pub ollama_low_vram: Option<bool>,
     /// Max seconds to wait for a single LLM generation (connect + stream).
     pub generation_timeout_secs: u64,
+    /// Floor for `eris benchmark` per-scenario wall clock: effective timeout is
+    /// `max(scenario.timeout_seconds from the suite, this value)`. Use this for slow or layer-offloaded
+    /// models so harness `tokio::time::timeout` matches your LLM budget (often set similar to
+    /// [`Self::generation_timeout_secs`]). Default **120**.
+    #[serde(default = "default_benchmark_scenario_timeout_secs")]
+    pub benchmark_scenario_timeout_secs: u64,
     /// Forwarded to Ollama on each chat request as `.think(...)` in `OllamaClient::generate` (`ollama-rs` `ChatMessageRequest`). `false` (default) turns off the separate thinking/reasoning channel for models that support it—saves tokens and RAM versus `true`. TOML key name is historical; unrelated to `engine::router::ReasoningRouter`.
     pub enable_reasoning_fsm: bool,
     /// Fraction of estimated context fill (0.0–1.0) at which rolling condensation runs.
@@ -279,9 +289,12 @@ pub struct AppConfig {
     /// Max characters for the `[ACTIVE_STAGED_MEMORY]` block injected into system prompts; `0` disables.
     #[serde(default = "default_staged_memory_prompt_max_chars")]
     pub staged_memory_prompt_max_chars: usize,
-    /// When true, `web:fetch` is stripped from tool allowlists (deprecated in favor of other flows).
+    /// When true, `web:fetch` is not registered. Independent of [`Self::news_today_enabled`].
     #[serde(default)]
     pub web_fetch_deprecated: bool,
+    /// When false, `news:today` is not registered. Independent of [`Self::web_fetch_deprecated`].
+    #[serde(default = "default_news_today_enabled")]
+    pub news_today_enabled: bool,
     /// Qdrant gRPC endpoint URL (semantic memory / `memory:query`).
     pub qdrant_url: String,
     /// Qdrant collection name. Computed at runtime: `fcp_vault_v2_{workspace}`.
@@ -467,6 +480,10 @@ fn default_ollama_daemon() -> DaemonCommand {
 
 fn default_unload_ollama_models_on_chat_exit() -> bool {
     true
+}
+
+fn default_benchmark_scenario_timeout_secs() -> u64 {
+    120
 }
 
 /// Default peripheral spawn: `qdrant` with no args (container/binary default config).
@@ -856,6 +873,7 @@ impl Default for AppConfig {
             ollama_main_gpu: None,
             ollama_low_vram: None,
             generation_timeout_secs: 120,
+            benchmark_scenario_timeout_secs: default_benchmark_scenario_timeout_secs(),
             enable_reasoning_fsm: false,
             condensation_threshold: 0.5,
             condensation_target: 300,
@@ -875,6 +893,7 @@ impl Default for AppConfig {
             turn_end_mention_enabled: default_turn_end_mention_enabled(),
             staged_memory_prompt_max_chars: default_staged_memory_prompt_max_chars(),
             web_fetch_deprecated: false,
+            news_today_enabled: default_news_today_enabled(),
             qdrant_url: "http://localhost:6334".into(),
             qdrant_collection_v2: "fcp_vault_v2_default".into(),
             snapshot_interval_secs: 300,
@@ -1216,6 +1235,10 @@ mod tests {
         assert_eq!(parsed_config.ollama_daemon.command, "ollama");
         assert_eq!(parsed_config.ollama_daemon.args, vec!["serve"]);
         assert_eq!(parsed_config.unload_ollama_models_on_chat_exit, true);
+        assert_eq!(
+            parsed_config.benchmark_scenario_timeout_secs,
+            default_benchmark_scenario_timeout_secs()
+        );
         assert_eq!(parsed_config.qdrant_daemon.command, "qdrant");
         assert!(parsed_config.qdrant_daemon.args.is_empty());
         assert!(parsed_config.apis.is_empty());
@@ -1250,6 +1273,16 @@ mod tests {
     fn default_config_has_v2_collection_name() {
         let c = AppConfig::default();
         assert_eq!(c.qdrant_collection_v2, "fcp_vault_v2_default");
+    }
+
+    #[test]
+    fn default_benchmark_scenario_timeout_is_120() {
+        let c = AppConfig::default();
+        assert_eq!(c.benchmark_scenario_timeout_secs, 120);
+        assert_eq!(
+            c.benchmark_scenario_timeout_secs,
+            default_benchmark_scenario_timeout_secs()
+        );
     }
 
     #[test]

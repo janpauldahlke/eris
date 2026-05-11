@@ -12,6 +12,7 @@ use crate::config::AppConfig;
 use crate::executive::cli::Cli;
 use crate::executive::router::execute_command;
 
+pub mod benchmark;
 pub mod config;
 pub mod engine;
 pub mod executive;

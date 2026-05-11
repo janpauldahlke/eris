@@ -85,6 +85,7 @@ Registration is explicit: ask Eris to register on Moltbook with a name and descr
 | Discord     | `[discord]` table                               | Optional; needs `bot_token` + app id + channel when `enabled = true`      |
 | Google WS   | `[google]` (`enabled`, `service_account_key`, `impersonate_user`) | Optional `mail:*` + `calendar:*`; Cloud APIs + Admin domain-wide delegation |
 | Moltbook    | `[moltbook]` (`enabled`, `api_key_file`)        | Optional `moltbook:*`; prefer `MOLTBOOK_API_KEY` or an operator-owned credentials file |
+| Web fetch / headlines | `web_fetch_deprecated`, `news_today_enabled`, optional `news_today_site_base` / `news_today_default_homepage` | `web:fetch` (generic URL) vs **`news:today`** (homepage headlines + optional deep articles); toggles are independent—see `AppConfig` in `src/config.rs` |
 
 Figment also merges `FCP_` environment variables over TOML (e.g. `FCP_WORKSPACE`, `FCP_LOG_LEVEL`, `FCP_USER_NAME`). For other fields, match `AppConfig` in `[src/config.rs](src/config.rs)` to the env key shape your Figment build expects.
 
@@ -120,6 +121,128 @@ Common flags (see `eris chat --help`):
 - **`--web`** — localhost web chat (Axum + SSE) instead of ratatui.
 
 Verbose tracing: **`-V`**, **`-VV`**.
+
+## Benchmarking
+
+Measure **protocol quality**, **tool use**, and **latency** on your real stack: benchmarks drive the same **orchestrator + gatekeeper + Ollama** path as interactive chat (user prompts → full turns with tools), not a standalone mock loop. Use saved JSON under **`<vault>/.fcp/benchmarks/`** to compare models or track regressions over time.
+
+---
+
+### What runs
+
+| Piece | Role |
+| ----- | ---- |
+| **Scenario harness** | For each scenario step: push a user line, run `Orchestrator::step`, then score assistant JSON (`tool_calls`, `message_to_user`) against expectations. |
+| **Speed probe** | One Ollama chat round-trip for throughput / timing labels (complements scenario wall time). |
+| **Artifacts** | JSON (and optional Markdown) reports keyed by timestamp + model name; `--list` shows runs for the **current vault cwd**. |
+
+**Duration** depends on model size, GPU, and suite size — count **full LLM turns**, not seconds. Treat published “~N minute” estimates as rough when moving between hardware.
+
+---
+
+### Suites
+
+Run from your vault directory (`cd` into the vault that owns `.fcp/config.toml`).
+
+| Suite | Scenarios | Intent |
+| ----- | --------- | ------ |
+| **`quick`** | 5 | Sanity: JSON protocol, memory stage, vault read, system health, clock. |
+| **`standard`** | 9 | **`quick`** plus multi-hop chains, memory query, adversarial noise. |
+| **`comprehensive`** | 15 | **`standard`** plus unicode / nested JSON / large listings / recovery / branching. |
+
+```bash
+eris benchmark                          # same as --suite standard
+eris benchmark --suite quick
+eris benchmark --suite comprehensive
+```
+
+Common flags: **`--format`** `table` \| `json` \| `markdown`, **`--output`** `<path>` (write report file), **`--isolation`** `strict` \| `relaxed` \| `unsafe`.
+
+**VRAM / RAM after a run:** when **`unload_ollama_models_on_chat_exit`** is `true` in `.fcp/config.toml` (default), Eris runs **`ollama stop`** for the chat and embedding models after a benchmark finishes — same behavior as exiting chat when Ollama was already running on the host. If Eris itself spawned an `ollama serve` child for the run, that process is torn down instead and unload is skipped.
+
+**Per-scenario time budget:** set **`benchmark_scenario_timeout_secs`** in `.fcp/config.toml` (default **120**). The harness uses `max(that value, each scenario’s built-in timeout)`, so slow models (large weights, layer offloading, CPU offload) get enough wall time without editing scenario sources. Align it with **`generation_timeout_secs`** if you raise LLM ceilings.
+
+---
+
+### Safety and isolation
+
+- **Gatekeeper + isolation mode** limit which tools can run (mutating mail/Moltbook/calendar-style tools are blocked in **`strict`**).
+- **Benchmarks use your configured vault** (`active_vault` / cwd): scenarios read real paths like `00_Invariants/Identity.md`. Do not assume a throwaway copy unless you point `eris` at an isolated vault directory.
+- Optional **`--compare`** after a run loads the **previous** saved report for the same vault and prints a diff table.
+
+Modes:
+
+| Mode | Meaning |
+| ---- | ------- |
+| **`strict`** (default) | Safe tools only (e.g. memory:\*, vault read/search/list, system:\*, clock:\*). |
+| **`relaxed`** | Adds read-only external families where configured (e.g. weather, wiki). |
+| **`unsafe`** | Widest tool surface; only use with **`--no-dry-run`** and **`--i-understand-risks`** when you accept real side effects. |
+
+---
+
+### Listing, comparing, trends
+
+```bash
+# Index of runs for this vault (shows run IDs for --diff)
+eris benchmark --list
+
+# Same vault: two run IDs from --list (baseline .. current)
+eris benchmark --diff '2026-05-09_12-45-30_model-a..2026-05-09_14-30-22_model-b'
+
+# Two sibling vault folders (cwd = parent of both): compare each vault's *latest* saved report
+cd vaults
+eris benchmark --diff-vaults gemma nemo
+
+# Alias
+eris benchmark --diff-siblings gemma nemo
+
+# Explicit JSON paths (any machine / naming)
+eris benchmark --diff-files ./vault-a/.fcp/benchmarks/baseline.json ./vault-b/.fcp/benchmarks/current.json
+
+# Trend table from the last N saved reports (optional Markdown file)
+eris benchmark --trend 10
+eris benchmark --trend 10 --output quality-trend.md
+```
+
+After a normal run, **`--compare`** diffs against the latest stored report (see “Safety” above).
+
+---
+
+### Metrics (report summary)
+
+| Area | Examples |
+| ---- | -------- |
+| **Quality** | JSON parse success rate, tool-call validity, timeouts, scenario pass/fail. |
+| **Speed** | Probe-based prompt/gen throughput and phase timings (see report footnotes for definitions). |
+| **Scenarios** | Per-scenario duration, rounds, and success bit — useful for “model A nails multi-hop, model B does not”. |
+
+---
+
+### Example: two models, two vaults
+
+Run benchmarks inside each vault (each vault has its own `.fcp/config.toml` / model):
+
+```bash
+cd vaults/gemma && eris benchmark --suite standard
+cd ../nemo      && eris benchmark --suite standard
+```
+
+Compare **latest** reports without hand-picking paths — from the **parent** of the vault directories:
+
+```bash
+cd vaults
+eris benchmark --diff-vaults gemma nemo
+```
+
+Or compare explicit JSON files:
+
+```bash
+eris benchmark --diff-files \
+  vaults/gemma/.fcp/benchmarks/<run-id>.json \
+  vaults/nemo/.fcp/benchmarks/<run-id>.json
+```
+
+The CLI prints a side-by-side comparison (quality + speed columns); use JSON exports for dashboards or CI.
 
 ## Program flow
 
@@ -173,7 +296,7 @@ You interact through the **TUI**, a **localhost web page**, and/or **Discord**; 
 
 ## Natural language → tool routing (phrase compendium)
 
-Tool choice is **not** parsed from rigid commands. The orchestrator’s **ToolRouter** (`[src/orchestrator/tool_router.rs](src/orchestrator/tool_router.rs)`) embeds your text with the same model as vector memory (`embed_model_name` in config, default `nomic-embed-text`) and compares it to **precomputed** vectors—one per tool built from the tool name, JSON-schema description, and (when present) **`routing_hints`** from the embedded TOML descriptors in `[src/tools/specs.rs](src/tools/specs.rs)`. If a tool has no descriptor hints, **`routing_phrases::fallback_triggers`** in `[src/tools/routing_phrases.rs](src/tools/routing_phrases.rs)` supplies compile-time “typical phrasing” for embeddings and the slim phrase compendium. Tools whose **cosine similarity** meets `tool_match_threshold` in `.fcp/config.toml` (default **0.50**) are surfaced to the LLM.
+Tool choice is **not** parsed from rigid commands. The orchestrator’s **ToolRouter** (`[src/orchestrator/tool_router.rs](src/orchestrator/tool_router.rs)`) embeds your text with the same model as vector memory (`embed_model_name` in config, default `nomic-embed-text`) and compares it to **precomputed** vectors—one per tool built from the tool name, JSON-schema description, and (when present) **`routing_hints`** from the embedded TOML descriptors in `[src/tools/specs.rs](src/tools/specs.rs)`. If a tool has no descriptor hints, **`routing_phrases::fallback_triggers`** in `[src/tools/routing_phrases.rs](src/tools/routing_phrases.rs)` supplies compile-time “typical phrasing” for embeddings and the slim phrase compendium. Tools whose **cosine similarity** meets `tool_match_threshold` in `.fcp/config.toml` (default **0.50**) are surfaced to the LLM. **`news:today`** is already in `specs.rs`; in slim tool mode the **`[FCP_TOOL_PHRASE_MAP]`** snippet is generated at runtime from registered tools plus those descriptors ([`src/orchestrator/context/compendium.rs`](src/orchestrator/context/compendium.rs)), not from the README table below.
 
 The **gatekeeper** only enforces **state** and **JSON Schema** on tool calls (`[src/tools/gatekeeper.rs](src/tools/gatekeeper.rs)`); it does not map phrases to tools.
 
@@ -190,6 +313,7 @@ Representative **`routing_hints`** (say things _like_ this—the model still dec
 | **vault:list**             | list files, show directory, browse folder, what files exist                                                      |
 | **vault:read**             | read file, open note, show file, inspect markdown                                                                |
 | **vault:write**            | save note, write file, append note, create markdown                                                              |
+| **vault:taglist**          | list vault tags, map of tags, tag frequencies, synthesis taxonomy, notes under tag                                |
 | **memory:query**           | search memory, do you remember, what is my name, who am I, user preferences, my identity, recall context         |
 | **memory:stage**           | remember this, stage memory, temporary memory, hold in staging                                                   |
 | **memory:staged_list**     | show staged memory, list staged ids, what is staged                                                              |
@@ -201,8 +325,8 @@ Representative **`routing_hints`** (say things _like_ this—the model still dec
 | **agenda:remind_at**       | remind me at/in/about, remember to, nudge/ping me at, snooze, on my agenda or todo list, task reminder           |
 | **agenda:remind_self**     | set a self reminder, resume this workflow in 10 minutes, self-driven loop, wake me with checklist/plan            |
 | **agenda:complete**        | task done, complete task, mark done, finished the …                                                              |
-| **vault:taglist**          | list vault tags, map of tags, tag frequencies, synthesis taxonomy, notes under tag                                |
-| **(deprecated) web:fetch** | open website, read web page, fetch URL, news from — plus URLs and the lexical phrases above                      |
+| **web:fetch**              | open website, read web page, fetch a URL, look up this link — plus pasted URLs and lexical web wording (when not deprecated) |
+| **news:today**             | today’s headlines, top stories, morning briefing, news digest, breaking news, front page, politics/science/business/world/UK sections; homepage listing + optional top-article fetch (not for arbitrary one-off URLs—use **web:fetch** when enabled) |
 | **web:artifact_query**     | search fetched page, query artifact, find in web artifact                                                        |
 | **system:health**          | health check, system status, CPU/memory usage, Ollama status, diagnostics                                        |
 | **clock:now**              | what time is it, current time, timezone, date and time                                                           |
