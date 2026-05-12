@@ -395,3 +395,9 @@ vault-write-args ::= "{" ws "\"relative_path\":" ws string ws ","
 Phases 0 through 6 are sequential dependencies. Phase 7 is optional/stretch. Phase 8 runs in parallel with later phases.
 
 Estimated scope: ~2500 lines of new Rust, ~300 lines of modified Rust, ~200 lines of docs. No existing tests break. ~40 new tests across all phases.
+
+### note from user
+
+the current llama ccp is here, but we might change this later and handle it in the config as mentioned in later steps
+
+`/Users/jandahlke/dev/hagbards_stuff/_utils/llama.cpp`
