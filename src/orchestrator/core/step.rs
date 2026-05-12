@@ -179,7 +179,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             }
             let moltbook_overlay = moltbook_overlay_latched;
 
-            let system_prompt = if !tools_needed {
+            let mut system_prompt = if !tools_needed {
                 self.context_assembler
                     .assemble_conversational(&self.state, &self.ephemeral, moltbook_overlay)
                     .await?
@@ -248,34 +248,41 @@ impl<E: LlmEngine> Orchestrator<E> {
                     .await?
             };
             tracing::debug!(prompt_len = system_prompt.len(), "System prompt assembled");
-            Self::upsert_system_prompt(&mut self.chat_stack, system_prompt);
-            if tools_needed
-                && let Some(jit_guidance) = self.build_descriptor_jit_guidance(
+
+            // Compute JIT guidance before mutating chat_stack (immutable borrows only).
+            let jit_guidance = if tools_needed {
+                self.build_descriptor_jit_guidance(
                     &self.state,
                     &pre_llm_matched_tools,
                     &targeted_tools,
                 )
-            {
-                self.chat_stack.push(crate::engine::Message {
-                    role: "system".to_string(),
-                    content: jit_guidance,
-                });
+            } else {
+                None
+            };
+            let skill_guidance = if tools_needed {
+                self.build_skill_jit_guidance(
+                    &self.state,
+                    &pre_llm_matched_tools,
+                    &targeted_tools,
+                    &self.step_failed_tools,
+                )
+                .await?
+            } else {
+                None
+            };
+
+            // Merge JIT/skill guidance into the system prompt so all system
+            // content stays at index 0.  Strict chat templates (Qwen / llama.cpp)
+            // reject system messages after non-system messages.
+            if let Some(jit) = jit_guidance {
+                system_prompt.push_str("\n\n---\n\n");
+                system_prompt.push_str(&jit);
             }
-            if tools_needed
-                && let Some(skill_guidance) = self
-                    .build_skill_jit_guidance(
-                        &self.state,
-                        &pre_llm_matched_tools,
-                        &targeted_tools,
-                        &self.step_failed_tools,
-                    )
-                    .await?
-            {
-                self.chat_stack.push(crate::engine::Message {
-                    role: "system".to_string(),
-                    content: skill_guidance,
-                });
+            if let Some(skill) = skill_guidance {
+                system_prompt.push_str("\n\n---\n\n");
+                system_prompt.push_str(&skill);
             }
+            Self::upsert_system_prompt(&mut self.chat_stack, system_prompt);
 
             if self.config.optimize_context_proactive_condensation {
                 let est = estimate_stack_tokens(&self.chat_stack);

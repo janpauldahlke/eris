@@ -59,9 +59,13 @@ struct ChatCompletionRequest {
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     n_predict: Option<i32>,
-    // Phase 4: grammar field
     #[serde(skip_serializing_if = "Option::is_none")]
     grammar: Option<String>,
+    /// Forwarded to the Jinja chat template inside llama-server.
+    /// `{"enable_thinking": false}` suppresses Qwen3 `<think>` tokens so the
+    /// GBNF grammar can constrain output from token 0.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chat_template_kwargs: Option<serde_json::Value>,
 }
 
 #[derive(Serialize)]
@@ -96,6 +100,61 @@ struct DeltaContent {
 struct Usage {
     prompt_tokens: Option<usize>,
     completion_tokens: Option<usize>,
+}
+
+/// Normalize messages for chat templates that require all system content at
+/// the beginning (e.g. Qwen).  Merge leading consecutive system messages into
+/// one; re-role any later system messages as "user" so the wire payload never
+/// violates the "system-only-at-start" invariant.
+fn normalize_system_messages(messages: Vec<ChatMsg>) -> Vec<ChatMsg> {
+    if messages.is_empty() {
+        return messages;
+    }
+
+    let leading_system_count = messages
+        .iter()
+        .take_while(|m| m.role == "system")
+        .count();
+
+    let mut out = Vec::with_capacity(messages.len());
+
+    if leading_system_count > 1 {
+        let merged: String = messages[..leading_system_count]
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n---\n\n");
+        out.push(ChatMsg {
+            role: "system".to_string(),
+            content: merged,
+        });
+    } else if leading_system_count == 1 {
+        out.push(ChatMsg {
+            role: messages[0].role.clone(),
+            content: messages[0].content.clone(),
+        });
+    }
+
+    let mut had_stray = false;
+    for m in messages.into_iter().skip(leading_system_count) {
+        if m.role == "system" {
+            had_stray = true;
+            out.push(ChatMsg {
+                role: "user".to_string(),
+                content: format!("[System] {}", m.content),
+            });
+        } else {
+            out.push(m);
+        }
+    }
+
+    if had_stray {
+        tracing::warn!(
+            "llama_cpp: stray system messages after non-system rows re-roled as user for strict chat template"
+        );
+    }
+
+    out
 }
 
 async fn stream_sse_response(
@@ -166,16 +225,25 @@ impl LlmEngine for LlamaCppClient {
         _available_tools_json: &str,
         stream_tx: Option<mpsc::UnboundedSender<String>>,
     ) -> Result<EngineResponse> {
-        let messages: Vec<ChatMsg> = stack
+        let raw_messages: Vec<ChatMsg> = stack
             .iter()
             .map(|m| ChatMsg {
                 role: m.role.clone(),
                 content: m.content.clone(),
             })
             .collect();
+        let messages = normalize_system_messages(raw_messages);
 
         let use_stream = stream_tx.is_some();
         let message_count = messages.len();
+
+        let chat_template_kwargs = if self.grammar.is_some()
+            && !self.config.enable_reasoning_fsm
+        {
+            Some(serde_json::json!({ "enable_thinking": false }))
+        } else {
+            None
+        };
 
         let request_body = ChatCompletionRequest {
             messages,
@@ -183,6 +251,7 @@ impl LlmEngine for LlamaCppClient {
             temperature: Some(0.7),
             n_predict: Some(-1),
             grammar: self.grammar.clone(),
+            chat_template_kwargs,
         };
 
         let model_label = self
@@ -626,5 +695,131 @@ mod tests {
         });
         let result = LlamaCppClient::new(bad_config);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn chat_template_kwargs_serialized_when_grammar_and_reasoning_disabled() {
+        let req = ChatCompletionRequest {
+            messages: vec![ChatMsg {
+                role: "user".into(),
+                content: "hi".into(),
+            }],
+            stream: false,
+            temperature: Some(0.7),
+            n_predict: Some(-1),
+            grammar: Some("root ::= \"{}\"".into()),
+            chat_template_kwargs: Some(serde_json::json!({ "enable_thinking": false })),
+        };
+        let json = serde_json::to_value(&req).expect("serialize");
+        let kwargs = &json["chat_template_kwargs"];
+        assert_eq!(kwargs["enable_thinking"], false);
+    }
+
+    #[test]
+    fn chat_template_kwargs_omitted_when_none() {
+        let req = ChatCompletionRequest {
+            messages: vec![],
+            stream: false,
+            temperature: None,
+            n_predict: None,
+            grammar: None,
+            chat_template_kwargs: None,
+        };
+        let json = serde_json::to_value(&req).expect("serialize");
+        assert!(json.get("chat_template_kwargs").is_none());
+    }
+
+    mod normalize_system_messages_tests {
+        use super::super::{ChatMsg, normalize_system_messages};
+
+        fn sys(s: &str) -> ChatMsg {
+            ChatMsg {
+                role: "system".into(),
+                content: s.into(),
+            }
+        }
+        fn user(s: &str) -> ChatMsg {
+            ChatMsg {
+                role: "user".into(),
+                content: s.into(),
+            }
+        }
+        fn asst(s: &str) -> ChatMsg {
+            ChatMsg {
+                role: "assistant".into(),
+                content: s.into(),
+            }
+        }
+
+        #[test]
+        fn empty_stack_unchanged() {
+            let out = normalize_system_messages(vec![]);
+            assert!(out.is_empty());
+        }
+
+        #[test]
+        fn single_system_at_front_unchanged() {
+            let out = normalize_system_messages(vec![sys("prompt"), user("hi")]);
+            assert_eq!(out.len(), 2);
+            assert_eq!(out[0].role, "system");
+            assert_eq!(out[0].content, "prompt");
+            assert_eq!(out[1].role, "user");
+        }
+
+        #[test]
+        fn multiple_leading_systems_merged() {
+            let out = normalize_system_messages(vec![
+                sys("main"),
+                sys("rolling summary"),
+                user("hi"),
+            ]);
+            assert_eq!(out.len(), 2);
+            assert_eq!(out[0].role, "system");
+            assert!(out[0].content.contains("main"));
+            assert!(out[0].content.contains("rolling summary"));
+            assert_eq!(out[1].role, "user");
+        }
+
+        #[test]
+        fn stray_system_after_user_reroled() {
+            let out = normalize_system_messages(vec![
+                sys("prompt"),
+                user("hello"),
+                asst("hi back"),
+                sys("Tool 'x:y' succeeded: data"),
+            ]);
+            assert_eq!(out.len(), 4);
+            assert_eq!(out[0].role, "system");
+            assert_eq!(out[3].role, "user");
+            assert!(out[3].content.starts_with("[System]"));
+            assert!(out[3].content.contains("Tool 'x:y' succeeded: data"));
+        }
+
+        #[test]
+        fn realistic_tool_turn_stack() {
+            let out = normalize_system_messages(vec![
+                sys("prompt"),
+                user("weather?"),
+                asst("{tool_calls: ...}"),
+                sys("Tool 'weather:get' succeeded: 25°C"),
+                sys("POST_TOOL_GUIDANCE"),
+                sys("JIT guidance"),
+            ]);
+            assert_eq!(out[0].role, "system");
+            assert_eq!(out[0].content, "prompt");
+            for m in &out[1..] {
+                assert_ne!(m.role, "system", "no system messages after index 0");
+            }
+            assert_eq!(out[3].role, "user");
+            assert!(out[3].content.contains("weather:get"));
+        }
+
+        #[test]
+        fn no_system_messages_at_all() {
+            let out = normalize_system_messages(vec![user("hi"), asst("hello")]);
+            assert_eq!(out.len(), 2);
+            assert_eq!(out[0].role, "user");
+            assert_eq!(out[1].role, "assistant");
+        }
     }
 }
