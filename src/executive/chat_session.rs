@@ -257,6 +257,12 @@ pub async fn start_chat_session(
         }
     };
 
+    crate::memory::semantic::validate_embedding_provider_vs_qdrant(
+        config.as_ref(),
+        embed_provider.dimensions(),
+    )
+    .await?;
+
     let ephemeral = Arc::new(EphemeralMemory::new(config.workspace.clone()));
     let connect_attempts = config.semantic_brain_connect_attempts;
     let connect_retry_ms = config.semantic_brain_connect_retry_delay_ms;

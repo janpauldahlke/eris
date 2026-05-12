@@ -5,8 +5,9 @@ use crate::ingest::truncate_char_boundary;
 use qdrant_client::Qdrant;
 use qdrant_client::qdrant::{
     Condition, CreateCollectionBuilder, CreateFieldIndexCollectionBuilder, DeletePointsBuilder,
-    Direction, Distance, FieldType, Filter, OrderBy, PointStruct, ScrollPointsBuilder,
-    SearchPointsBuilder, UpsertPointsBuilder, VectorParamsBuilder,
+    Direction, Distance, FieldType, Filter, GetCollectionInfoResponse, OrderBy, PointStruct,
+    ScrollPointsBuilder, SearchPointsBuilder, UpsertPointsBuilder, VectorParamsBuilder,
+    vectors_config::Config as VectorSchemaConfig,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -67,6 +68,69 @@ pub(crate) const VAULT_INGEST_SUBDIRS_V2: &[&str] = &[
     "20_Discourse",
     "30_Synthesis",
 ];
+
+/// Extract dense vector size from Qdrant collection info (named or single vector).
+#[must_use]
+pub fn vector_dim_from_collection_info(info: &GetCollectionInfoResponse) -> Option<usize> {
+    let ci = info.result.as_ref()?;
+    let cfg = ci.config.as_ref()?;
+    let params = cfg.params.as_ref()?;
+    let vc = params.vectors_config.as_ref()?;
+    match &vc.config {
+        Some(VectorSchemaConfig::Params(p)) => Some(p.size as usize),
+        Some(VectorSchemaConfig::ParamsMap(m)) => m.map.values().next().map(|p| p.size as usize),
+        None => None,
+    }
+}
+
+/// When the collection exists, returns its configured vector dimension; otherwise `None`.
+pub async fn collection_vector_dimensions(config: &AppConfig) -> Result<Option<usize>> {
+    let client = Qdrant::from_url(&config.qdrant_url)
+        .build()
+        .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
+    let name = config.qdrant_collection_v2.as_str();
+    let exists = client
+        .collection_exists(name)
+        .await
+        .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
+    if !exists {
+        return Ok(None);
+    }
+    let info = client
+        .collection_info(name)
+        .await
+        .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
+    Ok(vector_dim_from_collection_info(&info))
+}
+
+/// Fails fast when an existing Qdrant collection dimension disagrees with the embedding provider.
+pub(crate) fn embedding_dims_agree_or_config_err(
+    embed_dims: usize,
+    coll_dims: Option<usize>,
+    collection_name: &str,
+) -> Result<()> {
+    match coll_dims {
+        None => Ok(()),
+        Some(d) if d == embed_dims => Ok(()),
+        Some(d) => Err(FcpError::Config(format!(
+            "Embedding dimension mismatch: provider produces {embed_dims}-dim vectors, \
+             but Qdrant collection '{collection_name}' is configured for {d}-dim. \
+             Either use a compatible embedding model or recreate the collection.",
+        ))),
+    }
+}
+
+/// Compares embedding width with an existing Qdrant collection (after gRPC lookup).
+pub async fn validate_embedding_provider_vs_qdrant(
+    config: &AppConfig,
+    embed_dims: usize,
+) -> Result<()> {
+    embedding_dims_agree_or_config_err(
+        embed_dims,
+        collection_vector_dimensions(config).await?,
+        config.qdrant_collection_v2.as_str(),
+    )
+}
 
 /// One vector hit before formatting for the LLM.
 #[derive(Debug, Clone)]
@@ -1408,5 +1472,55 @@ Hello there."#;
         assert_eq!(qdrant_oversample_limit(5, false, cap, mult, floor), 5);
         assert_eq!(qdrant_oversample_limit(5, true, cap, mult, floor), 125);
         assert_eq!(qdrant_oversample_limit(100, true, cap, mult, floor), 200);
+    }
+
+    #[test]
+    fn vector_dim_from_collection_info_reads_params_size() {
+        use qdrant_client::qdrant::{
+            CollectionConfig, CollectionInfo, CollectionParams, GetCollectionInfoResponse,
+            VectorParams, VectorsConfig,
+        };
+        let vp = VectorParams {
+            size: 384,
+            distance: 0,
+            hnsw_config: None,
+            quantization_config: None,
+            on_disk: None,
+            datatype: None,
+            multivector_config: None,
+        };
+        let mut vconf = VectorsConfig::default();
+        vconf.config = Some(VectorSchemaConfig::Params(vp));
+        let params = CollectionParams {
+            shard_number: 1,
+            on_disk_payload: false,
+            vectors_config: Some(vconf),
+            replication_factor: None,
+            write_consistency_factor: None,
+            read_fan_out_factor: None,
+            sharding_method: None,
+            sparse_vectors_config: None,
+            read_fan_out_delay_ms: None,
+        };
+        let mut cc = CollectionConfig::default();
+        cc.params = Some(params);
+        let mut ci = CollectionInfo::default();
+        ci.config = Some(cc);
+        let mut info = GetCollectionInfoResponse::default();
+        info.result = Some(ci);
+        assert_eq!(vector_dim_from_collection_info(&info), Some(384));
+    }
+
+    #[test]
+    fn dimension_mismatch_fails_fast() {
+        let err = embedding_dims_agree_or_config_err(768, Some(384), "fcp_vault_v2_default")
+            .expect_err("expected mismatch");
+        match err {
+            FcpError::Config(msg) => {
+                assert!(msg.contains("768"), "{msg}");
+                assert!(msg.contains("384"), "{msg}");
+            }
+            e => panic!("unexpected error: {:?}", e),
+        }
     }
 }

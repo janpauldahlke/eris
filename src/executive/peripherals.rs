@@ -785,6 +785,16 @@ pub async fn ollama_reachable(ollama_host: &str) -> bool {
     )
 }
 
+/// `GET {base_url}/health` with a short timeout (llama-server readiness).
+pub async fn llama_server_reachable(base_url: &str) -> bool {
+    let client = reqwest::Client::new();
+    let health_url = format!("{}/health", base_url.trim_end_matches('/'));
+    matches!(
+        timeout(Duration::from_secs(2), client.get(health_url).send()).await,
+        Ok(Ok(res)) if res.status().is_success()
+    )
+}
+
 pub async fn qdrant_reachable(qdrant_url: &str) -> bool {
     let addr = match parse_socket_addr(qdrant_url, 6334) {
         Ok(v) => v,

@@ -39,6 +39,12 @@ impl EmbeddingProvider for OllamaEmbedding {
     async fn embed(&self, text: &str) -> Result<Vec<f32>> {
         let request =
             GenerateEmbeddingsRequest::new(self.model.clone(), text.to_string().into());
+        tracing::debug!(
+            engine = "ollama",
+            model = %self.model,
+            input_len = text.len(),
+            "Sending embedding request to Ollama"
+        );
         let response = self
             .ollama
             .generate_embeddings(request)
@@ -89,6 +95,12 @@ impl LlamaCppEmbedding {
 impl EmbeddingProvider for LlamaCppEmbedding {
     async fn embed(&self, text: &str) -> Result<Vec<f32>> {
         let body = serde_json::json!({ "input": text });
+        tracing::debug!(
+            engine = "llamacpp",
+            model = %self.embed_url,
+            input_len = text.len(),
+            "Sending embedding request to llama-server"
+        );
         let resp = self
             .http
             .post(&self.embed_url)

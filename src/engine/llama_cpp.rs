@@ -5,7 +5,7 @@ use crate::executive::error::{FcpError, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, watch};
 
 use crate::engine::token_metrics::LlmTokenSnapshot;
@@ -175,6 +175,7 @@ impl LlmEngine for LlamaCppClient {
             .collect();
 
         let use_stream = stream_tx.is_some();
+        let message_count = messages.len();
 
         let request_body = ChatCompletionRequest {
             messages,
@@ -183,6 +184,24 @@ impl LlmEngine for LlamaCppClient {
             n_predict: Some(-1),
             grammar: self.grammar.clone(),
         };
+
+        let model_label = self
+            .config
+            .llama_cpp
+            .as_ref()
+            .and_then(|lc| lc.chat_model_path.file_name())
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown.gguf");
+        let gen_started = Instant::now();
+
+        tracing::info!(
+            engine = "llamacpp",
+            model = %model_label,
+            message_count,
+            timeout_secs = self.config.generation_timeout_secs,
+            streaming = use_stream,
+            "Sending chat request to llama-server"
+        );
 
         let response = self
             .http
@@ -244,6 +263,17 @@ impl LlmEngine for LlamaCppClient {
         };
 
         token_metrics::publish(&self.token_metrics_tx, prompt_tokens, generated_tokens);
+
+        let generation_ms = gen_started.elapsed().as_millis() as u64;
+        tracing::info!(
+            engine = "llamacpp",
+            model = %model_label,
+            prompt_tokens,
+            completion_tokens = generated_tokens,
+            generation_ms,
+            content_len = content.len(),
+            "llama-server chat response complete"
+        );
 
         Ok(EngineResponse {
             content,
@@ -315,6 +345,43 @@ mod tests {
         assert_eq!(result.content, "Hello, world!");
         assert_eq!(result.prompt_tokens, 10);
         assert_eq!(result.generated_tokens, 5);
+    }
+
+    #[tokio::test]
+    async fn token_metrics_publish_llamacpp() {
+        let mock_server = MockServer::start().await;
+        let body = serde_json::json!({
+            "choices": [{"message": {"content": "done"}}],
+            "usage": {"prompt_tokens": 42, "completion_tokens": 7}
+        });
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .mount(&mock_server)
+            .await;
+
+        let (tx, rx) = token_metrics::channel();
+        let reader = token_metrics::TokenMetricsReader::new(rx);
+        let chat_url = format!("{}/v1/chat/completions", mock_server.uri());
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .expect("http client");
+        let client = LlamaCppClient {
+            http,
+            chat_url,
+            config: Arc::new(AppConfig::default()),
+            token_metrics_tx: Some(tx),
+            grammar: None,
+        };
+        let stack = vec![Message {
+            role: "user".into(),
+            content: "Hi".into(),
+        }];
+        client.generate(&stack, "", None).await.expect("generate");
+        let snap = reader.snapshot();
+        assert_eq!(snap.prompt_tokens, 42);
+        assert_eq!(snap.generated_tokens, 7);
     }
 
     #[tokio::test]

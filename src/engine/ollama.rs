@@ -83,6 +83,7 @@ impl LlmEngine for OllamaClient {
         }
 
         tracing::info!(
+            engine = "ollama",
             model = %self.config.model_name,
             message_count = chat_messages.len(),
             timeout_secs = self.config.generation_timeout_secs,
@@ -179,8 +180,10 @@ impl LlmEngine for OllamaClient {
                         (0, 0)
                     };
                     tracing::info!(
+                        engine = "ollama",
+                        model = %self.config.model_name,
                         prompt_tokens,
-                        generated_tokens,
+                        completion_tokens = generated_tokens,
                         content_len = content.len(),
                         "Ollama non-stream response received"
                     );
