@@ -1,12 +1,10 @@
+use crate::engine::EmbeddingProvider;
 use crate::executive::error::{FcpError, Result};
 use crate::tools::ToolDescriptorRegistry;
-use ollama_rs::Ollama;
-use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use std::sync::Arc;
 
 pub struct ToolRouter {
-    ollama: Arc<Ollama>,
-    embed_model: String,
+    embed: Arc<dyn EmbeddingProvider>,
     tool_embeddings: Vec<(String, Vec<f32>)>,
     threshold: f32,
 }
@@ -93,8 +91,7 @@ impl ToolRouter {
     }
 
     pub async fn new(
-        ollama: Arc<Ollama>,
-        embed_model: String,
+        embed: Arc<dyn EmbeddingProvider>,
         tool_descriptions: Vec<(String, String)>,
         descriptors: Option<Arc<ToolDescriptorRegistry>>,
         threshold: f32,
@@ -103,7 +100,7 @@ impl ToolRouter {
 
         for (name, description) in &tool_descriptions {
             let text = Self::enrich_for_routing(name, description, descriptors.as_deref());
-            let embedding = Self::embed(&ollama, &embed_model, &text).await?;
+            let embedding = embed.embed(&text).await?;
             tool_embeddings.push((name.clone(), embedding));
             tracing::debug!(tool = %name, "Pre-computed tool embedding");
         }
@@ -115,8 +112,7 @@ impl ToolRouter {
         );
 
         Ok(Self {
-            ollama,
-            embed_model,
+            embed,
             tool_embeddings,
             threshold,
         })
@@ -146,20 +142,13 @@ impl ToolRouter {
         }
     }
 
-    async fn embed(ollama: &Ollama, model: &str, text: &str) -> Result<Vec<f32>> {
+    async fn embed_text(&self, text: &str) -> Result<Vec<f32>> {
         if text.trim().is_empty() {
             return Err(FcpError::EmbeddingFault(
                 "Cannot embed empty text".to_string(),
             ));
         }
-        let request = GenerateEmbeddingsRequest::new(model.to_string(), text.to_string().into());
-        let response = ollama
-            .generate_embeddings(request)
-            .await
-            .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
-        response.embeddings.into_iter().next().ok_or_else(|| {
-            FcpError::EmbeddingFault("Embedding model returned no vectors".to_string())
-        })
+        self.embed.embed(text).await
     }
 
     /// Embed the LLM's thought and compare against all tool embeddings.
@@ -170,7 +159,7 @@ impl ToolRouter {
             return Ok(Vec::new());
         }
 
-        let thought_vec = Self::embed(&self.ollama, &self.embed_model, thought).await?;
+        let thought_vec = self.embed_text(thought).await?;
 
         let mut hits: Vec<(String, f32)> = self
             .tool_embeddings

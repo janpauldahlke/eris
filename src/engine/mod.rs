@@ -1,9 +1,11 @@
+pub mod embedding;
 pub mod llama_cpp;
 pub mod ollama;
 pub mod router;
 pub mod token_metrics;
 pub mod traits;
 
+pub use self::embedding::EmbeddingProvider;
 pub use self::llama_cpp::LlamaCppClient;
 pub use self::token_metrics::{
     LlmTokenSnapshot, TokenMetricsReader, channel as token_metrics_channel,

@@ -240,13 +240,30 @@ pub async fn start_chat_session(
         }
     };
     let ollama_arc = Arc::new(client);
+
+    let embed_provider: Arc<dyn crate::engine::EmbeddingProvider> = match config.llm_backend {
+        crate::config::LlmBackend::Ollama => Arc::new(
+            crate::engine::embedding::OllamaEmbedding::new(
+                ollama_arc.clone(),
+                config.embed_model_name.clone(),
+            ),
+        ),
+        crate::config::LlmBackend::LlamaCpp => {
+            let lc = config.validate_llamacpp_config()?;
+            Arc::new(crate::engine::embedding::LlamaCppEmbedding::new(
+                &lc.embed_server_url,
+                config.generation_timeout_secs,
+            )?)
+        }
+    };
+
     let ephemeral = Arc::new(EphemeralMemory::new(config.workspace.clone()));
     let connect_attempts = config.semantic_brain_connect_attempts;
     let connect_retry_ms = config.semantic_brain_connect_retry_delay_ms;
     let semantic_arc: Option<Arc<crate::memory::semantic::SemanticBrain>> =
         match crate::memory::semantic::SemanticBrain::new_with_connect_retries(
             config.clone(),
-            ollama_arc.clone(),
+            embed_provider.clone(),
             connect_attempts,
             connect_retry_ms,
         )
@@ -592,8 +609,7 @@ pub async fn start_chat_session(
     };
 
     let tool_router = match crate::orchestrator::tool_router::ToolRouter::new(
-        ollama_arc,
-        config.embed_model_name.clone(),
+        embed_provider,
         gatekeeper.all_tool_descriptions(),
         descriptor_registry.clone(),
         config.tool_match_threshold,

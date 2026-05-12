@@ -112,13 +112,18 @@ pub async fn run_benchmark(
     // Set up ephemeral memory
     let ephemeral = Arc::new(EphemeralMemory::new(config.workspace.clone()));
 
-    // Set up semantic brain (Qdrant) if available
+    // Set up embedding provider + semantic brain (Qdrant) if available
     let ollama_arc = Arc::new(client);
     let config_arc = Arc::new(config.clone());
-    let semantic_arc: Option<Arc<crate::memory::semantic::SemanticBrain>> = 
+    let embed_provider: Arc<dyn crate::engine::EmbeddingProvider> =
+        Arc::new(crate::engine::embedding::OllamaEmbedding::new(
+            ollama_arc,
+            config_arc.embed_model_name.clone(),
+        ));
+    let semantic_arc: Option<Arc<crate::memory::semantic::SemanticBrain>> =
         match crate::memory::semantic::SemanticBrain::new_with_connect_retries(
             config_arc.clone(),
-            ollama_arc,
+            embed_provider,
             config_arc.semantic_brain_connect_attempts,
             config_arc.semantic_brain_connect_retry_delay_ms,
         )

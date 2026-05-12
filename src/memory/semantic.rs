@@ -1,8 +1,7 @@
 use crate::config::AppConfig;
+use crate::engine::EmbeddingProvider;
 use crate::executive::error::{FcpError, Result};
 use crate::ingest::truncate_char_boundary;
-use ollama_rs::Ollama;
-use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use qdrant_client::Qdrant;
 use qdrant_client::qdrant::{
     Condition, CreateCollectionBuilder, CreateFieldIndexCollectionBuilder, DeletePointsBuilder,
@@ -89,12 +88,12 @@ pub struct SemanticChunkHit {
 #[derive(Clone)]
 pub struct SemanticBrain {
     client: Arc<Qdrant>,
-    ollama: Arc<Ollama>,
+    embed: Arc<dyn EmbeddingProvider>,
     config: Arc<AppConfig>,
 }
 
 impl SemanticBrain {
-    pub async fn new(config: Arc<AppConfig>, ollama: Arc<Ollama>) -> Result<Self> {
+    pub async fn new(config: Arc<AppConfig>, embed: Arc<dyn EmbeddingProvider>) -> Result<Self> {
         let client = Qdrant::from_url(&config.qdrant_url)
             .build()
             .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
@@ -119,7 +118,7 @@ impl SemanticBrain {
 
         Ok(Self {
             client: Arc::new(client),
-            ollama,
+            embed,
             config,
         })
     }
@@ -159,7 +158,7 @@ impl SemanticBrain {
     /// where the port accepts connections before gRPC is fully ready.
     pub async fn new_with_connect_retries(
         config: Arc<AppConfig>,
-        ollama: Arc<Ollama>,
+        embed: Arc<dyn EmbeddingProvider>,
         max_attempts: u32,
         retry_delay_ms: u64,
     ) -> Result<Self> {
@@ -167,7 +166,7 @@ impl SemanticBrain {
         let mut last_err: Option<FcpError> = None;
 
         for attempt in 1..=attempts {
-            match Self::new(config.clone(), ollama.clone()).await {
+            match Self::new(config.clone(), embed.clone()).await {
                 Ok(brain) => {
                     if attempt > 1 {
                         tracing::info!(
@@ -207,21 +206,7 @@ impl SemanticBrain {
                 "Cannot generate embedding for empty query".to_string(),
             ));
         }
-
-        let request = GenerateEmbeddingsRequest::new(
-            self.config.embed_model_name.clone(),
-            text.to_string().into(),
-        );
-
-        let response = self
-            .ollama
-            .generate_embeddings(request)
-            .await
-            .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
-
-        response.embeddings.into_iter().next().ok_or_else(|| {
-            FcpError::EmbeddingFault("Embedding model returned no vectors".to_string())
-        })
+        self.embed.embed(text).await
     }
 
     /// `vault_key` should be a stable path-like id (e.g. `30_Synthesis/<node_id>/r0001.md` or `committed:<uuid>`). When `None`, uses `committed:<point_id>`.
@@ -425,7 +410,7 @@ impl SemanticBrain {
             return Ok(0);
         }
         if self.generate_embedding("ping").await.is_err() {
-            tracing::warn!("v2 vault ingest deferred: Ollama unreachable during boot");
+            tracing::warn!("v2 vault ingest deferred: embedding provider unreachable during boot");
             return Ok(0);
         }
 
@@ -1199,16 +1184,21 @@ fn parse_vault_md(raw: &str) -> ParsedVaultMd {
 mod tests {
     use super::*;
     use crate::config::AppConfig;
+    use crate::engine::embedding::OllamaEmbedding;
     use ollama_rs::Ollama;
     use std::sync::Arc;
+
+    fn dummy_embed_provider() -> Arc<dyn EmbeddingProvider> {
+        let ollama = Arc::new(Ollama::new("http://localhost".to_string(), 11434));
+        Arc::new(OllamaEmbedding::new(ollama, "nomic-embed-text".into()))
+    }
 
     #[tokio::test]
     async fn test_semantic_brain_offline_returns_vector_db_offline() {
         let mut config = AppConfig::default();
-        config.qdrant_url = "http://localhost:65535".to_string(); // Dead port
+        config.qdrant_url = "http://localhost:65535".to_string();
 
-        let client = Ollama::new("http://localhost".to_string(), 11434);
-        let brain_result = SemanticBrain::new(Arc::new(config), Arc::new(client)).await;
+        let brain_result = SemanticBrain::new(Arc::new(config), dummy_embed_provider()).await;
 
         match brain_result {
             Err(FcpError::NetworkFault(_)) => (),
@@ -1220,9 +1210,9 @@ mod tests {
     async fn test_semantic_brain_connect_retries_exhaust_dead_port() {
         let mut config = AppConfig::default();
         config.qdrant_url = "http://127.0.0.1:65535".to_string();
-        let client = Ollama::new("http://localhost".to_string(), 11434);
         let brain_result =
-            SemanticBrain::new_with_connect_retries(Arc::new(config), Arc::new(client), 2, 1).await;
+            SemanticBrain::new_with_connect_retries(Arc::new(config), dummy_embed_provider(), 2, 1)
+                .await;
         assert!(
             brain_result.is_err(),
             "expected failure after retries on dead port"
