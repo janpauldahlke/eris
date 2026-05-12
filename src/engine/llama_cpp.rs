@@ -13,9 +13,10 @@ use crate::engine::token_metrics::LlmTokenSnapshot;
 pub struct LlamaCppClient {
     http: reqwest::Client,
     chat_url: String,
-    #[allow(dead_code)] // used in Phase 4 (grammar) and Phase 2 (process mgmt)
+    #[allow(dead_code)]
     config: Arc<AppConfig>,
     token_metrics_tx: Option<watch::Sender<LlmTokenSnapshot>>,
+    grammar: Option<String>,
 }
 
 impl LlamaCppClient {
@@ -35,12 +36,18 @@ impl LlamaCppClient {
             chat_url,
             config,
             token_metrics_tx: None,
+            grammar: None,
         })
     }
 
     pub fn with_token_metrics(mut self, tx: watch::Sender<LlmTokenSnapshot>) -> Self {
         self.token_metrics_tx = Some(tx);
         self
+    }
+
+    /// Set the GBNF grammar that constrains every subsequent `generate` call.
+    pub fn set_grammar(&mut self, grammar: String) {
+        self.grammar = Some(grammar);
     }
 }
 
@@ -174,7 +181,7 @@ impl LlmEngine for LlamaCppClient {
             stream: use_stream,
             temperature: Some(0.7),
             n_predict: Some(-1),
-            grammar: None,
+            grammar: self.grammar.clone(),
         };
 
         let response = self
@@ -282,6 +289,7 @@ mod tests {
             chat_url,
             config: Arc::new(AppConfig::default()),
             token_metrics_tx: None,
+            grammar: None,
         }
     }
 
@@ -392,6 +400,7 @@ mod tests {
             chat_url,
             config: Arc::new(AppConfig::default()),
             token_metrics_tx: None,
+            grammar: None,
         };
         let stack = vec![Message {
             role: "user".into(),
@@ -433,6 +442,7 @@ mod tests {
             chat_url,
             config: Arc::new(AppConfig::default()),
             token_metrics_tx: None,
+            grammar: None,
         };
         let stack = vec![Message {
             role: "user".into(),

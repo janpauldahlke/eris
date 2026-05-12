@@ -227,7 +227,7 @@ pub async fn start_chat_session(
 
     let client = Ollama::new(host, port);
     let (token_metrics_tx, token_metrics_rx) = crate::engine::token_metrics::channel();
-    let engine: AnyEngine = match config.llm_backend {
+    let mut engine: AnyEngine = match config.llm_backend {
         LlmBackend::Ollama => {
             let ollama_engine =
                 OllamaClient::with_token_metrics(client.clone(), config.clone(), token_metrics_tx);
@@ -695,6 +695,17 @@ pub async fn start_chat_session(
         assistant_non_json_placeholder: config.optimize_context_assistant_non_json_placeholder,
         hints: Arc::new(context_view_hints),
     };
+
+    if config.is_llamacpp() {
+        let tool_names = gatekeeper.registered_tool_names();
+        let grammar = crate::engine::grammar::compile_fcp_envelope_grammar(&tool_names);
+        tracing::info!(
+            tool_count = tool_names.len(),
+            grammar_len = grammar.len(),
+            "Compiled GBNF envelope grammar for llama.cpp"
+        );
+        engine.set_grammar(grammar);
+    }
 
     let mut orchestrator = Orchestrator::new(
         engine,

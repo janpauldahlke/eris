@@ -1,4 +1,5 @@
 pub mod embedding;
+pub mod grammar;
 pub mod llama_cpp;
 pub mod ollama;
 pub mod router;
@@ -22,6 +23,16 @@ use tokio::sync::mpsc;
 pub enum AnyEngine {
     Ollama(OllamaClient),
     LlamaCpp(LlamaCppClient),
+}
+
+impl AnyEngine {
+    /// Set the GBNF grammar on the inner engine (only meaningful for `LlamaCpp`).
+    pub fn set_grammar(&mut self, grammar: String) {
+        match self {
+            Self::LlamaCpp(e) => e.set_grammar(grammar),
+            Self::Ollama(_) => {}
+        }
+    }
 }
 
 #[async_trait]
