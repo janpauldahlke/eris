@@ -42,6 +42,7 @@ pub async fn run_ignition_sequence(
         ollama_main_gpu: Option<u32>,
         ollama_low_vram: Option<bool>,
         llama_cpp: Option<LlamaCppConfig>,
+        num_ctx: usize,
     }
 
     let answers = tokio::task::spawn_blocking(move || -> Result<IgnitionAnswers> {
@@ -178,6 +179,7 @@ pub async fn run_ignition_sequence(
                     ollama_main_gpu,
                     ollama_low_vram,
                     llama_cpp: None,
+                    num_ctx: AppConfig::default().num_ctx,
                 })
             }
             LlmBackend::LlamaCpp => {
@@ -244,19 +246,23 @@ pub async fn run_ignition_sequence(
                     eprintln!("  ✗ File not found: {}", path.display());
                 };
 
-                let ctx_raw = Text::new("Context size (--ctx-size):")
-                    .with_default("8192")
-                    .prompt()
-                    .map_err(|e| match e {
+                let default_num_ctx = AppConfig::default().num_ctx.to_string();
+                let num_ctx_raw = Text::new(
+                    "Context window (num_ctx: orchestrator + managed llama-server --ctx-size):",
+                )
+                .with_default(&default_num_ctx)
+                .prompt()
+                .map_err(|e| match e {
                         inquire::InquireError::OperationCanceled
                         | inquire::InquireError::OperationInterrupted => {
                             FcpError::Cancellation("Ignition cancelled by user".into())
                         }
                         _ => FcpError::Config(format!("Prompt error: {}", e)),
                     })?;
-                let ctx_size: usize = ctx_raw.trim().parse().map_err(|_| {
-                    FcpError::Config("Invalid ctx_size: expected positive integer".into())
+                let num_ctx: usize = num_ctx_raw.trim().parse().map_err(|_| {
+                    FcpError::Config("Invalid num_ctx: expected positive integer".into())
                 })?;
+                let num_ctx = num_ctx.max(1);
 
                 let gpu_raw = Text::new("GPU layers (--n-gpu-layers, 0 = CPU only):")
                     .with_default("99")
@@ -280,7 +286,6 @@ pub async fn run_ignition_sequence(
                     embed_server_url: "http://127.0.0.1:8091".into(),
                     chat_model_path,
                     embed_model_path,
-                    ctx_size,
                     n_gpu_layers,
                     ready_timeout_secs: default_llamacpp_ready_timeout(),
                 };
@@ -294,6 +299,7 @@ pub async fn run_ignition_sequence(
                     ollama_main_gpu: None,
                     ollama_low_vram: None,
                     llama_cpp: Some(llama_cpp_config),
+                    num_ctx,
                 })
             }
         }
@@ -310,6 +316,7 @@ pub async fn run_ignition_sequence(
         ollama_main_gpu,
         ollama_low_vram,
         llama_cpp,
+        num_ctx,
     } = answers;
 
     // 3. The Scaffold (v2 Zettelkasten roots)
@@ -363,6 +370,7 @@ pub async fn run_ignition_sequence(
         model_name,
         llm_backend,
         user_name,
+        num_ctx,
         ollama_num_gpu,
         ollama_main_gpu,
         ollama_low_vram,

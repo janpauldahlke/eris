@@ -56,12 +56,13 @@ This method:
    {home}/bin/llama-server \
        --model {chat_model_path} \
        --port {port_from_chat_server_url} \
-       --ctx-size {ctx_size} \
+       --ctx-size {num_ctx} \
        --n-gpu-layers {n_gpu_layers} \
        --log-disable
    ```
 
    - Extract port from `chat_server_url` via `url::Url` parsing (default 8090)
+   - `--ctx-size` uses top-level `AppConfig.num_ctx` (same as Ollama `num_ctx` and orchestrator budgets)
    - `--log-disable` keeps llama-server stdout clean (logs go to Eris tracing instead)
    - Pipe `stdout` and `stderr` to `Stdio::null()` (or to a file in `.fcp/logs/` if we want llama-server logs)
    - Use `Command::new(...).process_group(0)` on Unix so SIGTERM reaps the group (same pattern as Ollama)
@@ -73,13 +74,13 @@ This method:
        --model {embed_model_path} \
        --port {port_from_embed_server_url} \
        --embedding \
-       --ctx-size 8192 \
+       --ctx-size {num_ctx} \
        --n-gpu-layers {n_gpu_layers} \
        --log-disable
    ```
 
    - `--embedding` flag enables the `/v1/embeddings` endpoint
-   - Fixed `--ctx-size 8192` — generous headroom for embedding inputs
+   - `--ctx-size` matches `AppConfig.num_ctx` (same knob as chat server)
 
 4. **Readiness probe** for each server (see §2.3).
 

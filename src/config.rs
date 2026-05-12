@@ -244,9 +244,6 @@ pub struct LlamaCppConfig {
     pub chat_model_path: PathBuf,
     /// GGUF model file for embeddings.
     pub embed_model_path: PathBuf,
-    /// Context window for the chat server (--ctx-size).
-    #[serde(default = "default_llamacpp_ctx_size")]
-    pub ctx_size: usize,
     /// GPU layers to offload (--n-gpu-layers); 0 = CPU only.
     #[serde(default)]
     pub n_gpu_layers: u32,
@@ -265,10 +262,6 @@ fn default_llamacpp_chat_server_url() -> String {
 
 fn default_llamacpp_embed_server_url() -> String {
     "http://127.0.0.1:8091".into()
-}
-
-fn default_llamacpp_ctx_size() -> usize {
-    8192
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -290,7 +283,8 @@ pub struct AppConfig {
     /// Operator display name for UI / prompts; from TOML or `FCP_USER_NAME`; empty if unset.
     #[serde(default)]
     pub user_name: String,
-    /// Context window size passed to Ollama as `num_ctx` / generation options.
+    /// Context window: Ollama `num_ctx`, orchestrator budgets / condensation, and managed
+    /// `llama-server --ctx-size` (chat and embed) when [`LlmBackend::LlamaCpp`] is active.
     pub num_ctx: usize,
     /// Optional Ollama GPU layer count override (`num_gpu`). `None` uses Ollama auto-placement.
     pub ollama_num_gpu: Option<u32>,
@@ -1461,13 +1455,13 @@ mod tests {
     fn round_trip_llamacpp_config() {
         let mut config = AppConfig::default();
         config.llm_backend = LlmBackend::LlamaCpp;
+        config.num_ctx = 32768;
         config.llama_cpp = Some(LlamaCppConfig {
             home: PathBuf::from("/opt/llama.cpp/build"),
             chat_server_url: "http://127.0.0.1:8090".into(),
             embed_server_url: "http://127.0.0.1:8091".into(),
             chat_model_path: PathBuf::from("/models/chat.gguf"),
             embed_model_path: PathBuf::from("/models/embed.gguf"),
-            ctx_size: 32768,
             n_gpu_layers: 99,
             ready_timeout_secs: 30,
         });
@@ -1482,7 +1476,7 @@ mod tests {
         assert_eq!(lc.embed_server_url, "http://127.0.0.1:8091");
         assert_eq!(lc.chat_model_path, PathBuf::from("/models/chat.gguf"));
         assert_eq!(lc.embed_model_path, PathBuf::from("/models/embed.gguf"));
-        assert_eq!(lc.ctx_size, 32768);
+        assert_eq!(deserialized.num_ctx, 32768);
         assert_eq!(lc.n_gpu_layers, 99);
     }
 
@@ -1579,7 +1573,6 @@ mod tests {
             embed_server_url: "http://127.0.0.1:8091".into(),
             chat_model_path: PathBuf::from("/fake/chat.gguf"),
             embed_model_path: PathBuf::from("/fake/embed.gguf"),
-            ctx_size: 8192,
             n_gpu_layers: 0,
             ready_timeout_secs: 30,
         });
@@ -1603,7 +1596,6 @@ mod tests {
             embed_server_url: "http://127.0.0.1:8091".into(),
             chat_model_path: PathBuf::from("/nonexistent/chat.gguf"),
             embed_model_path: PathBuf::from("/nonexistent/embed.gguf"),
-            ctx_size: 8192,
             n_gpu_layers: 0,
             ready_timeout_secs: 30,
         });
@@ -1662,7 +1654,7 @@ mod tests {
         let lc = config.llama_cpp.expect("llama_cpp present");
         assert_eq!(lc.chat_server_url, "http://127.0.0.1:8090");
         assert_eq!(lc.embed_server_url, "http://127.0.0.1:8091");
-        assert_eq!(lc.ctx_size, 8192);
+        assert_eq!(config.num_ctx, 8192);
         assert_eq!(lc.n_gpu_layers, 0);
     }
 }

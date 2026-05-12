@@ -369,7 +369,6 @@ mod tests {
             embed_server_url: "http://127.0.0.1:8091".into(),
             chat_model_path: PathBuf::from("/fake/chat.gguf"),
             embed_model_path: PathBuf::from("/fake/embed.gguf"),
-            ctx_size: 8192,
             n_gpu_layers: 0,
             ready_timeout_secs: 30,
         });

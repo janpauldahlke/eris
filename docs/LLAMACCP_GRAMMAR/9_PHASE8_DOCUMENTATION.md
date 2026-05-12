@@ -121,10 +121,11 @@ chat_server_url = "http://127.0.0.1:8090"
 embed_server_url = "http://127.0.0.1:8091"
 chat_model_path = "/path/to/models/qwen2.5-14b-instruct-q4_k_m.gguf"
 embed_model_path = "/path/to/models/nomic-embed-text-v1.5.Q8_0.gguf"
-ctx_size = 32768
 n_gpu_layers = 99
 ready_timeout_secs = 60
 ```
+
+Context length for managed `llama-server` is top-level **`num_ctx`** (not under `[llama_cpp]`).
 
 **Field reference:**
 
@@ -135,7 +136,6 @@ ready_timeout_secs = 60
 | `embed_server_url` | URL | `http://127.0.0.1:8091` | Embedding server endpoint |
 | `chat_model_path` | path | — | Full path to chat GGUF |
 | `embed_model_path` | path | — | Full path to embed GGUF |
-| `ctx_size` | int | 8192 | Context window (tokens). Larger = more VRAM. |
 | `n_gpu_layers` | int | 0 | Layers offloaded to GPU. `99` = all. `0` = CPU only. |
 | `ready_timeout_secs` | int | 30 | Max seconds to wait for server readiness |
 

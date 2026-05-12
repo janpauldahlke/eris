@@ -386,6 +386,7 @@ impl PeripheralLifecycle {
         let lc = config.validate_llamacpp_config()?;
         let binary = lc.home.join("bin/llama-server");
         let timeout_secs = lc.ready_timeout_secs;
+        let ctx_tokens = config.num_ctx.max(1);
 
         // --- Chat server ---
         let chat_port = port_from_url(&lc.chat_server_url)?;
@@ -409,7 +410,7 @@ impl PeripheralLifecycle {
                 "--port",
                 &chat_port.to_string(),
                 "--ctx-size",
-                &lc.ctx_size.to_string(),
+                &ctx_tokens.to_string(),
                 "--n-gpu-layers",
                 &lc.n_gpu_layers.to_string(),
                 "--log-disable",
@@ -461,7 +462,7 @@ impl PeripheralLifecycle {
                 &embed_port.to_string(),
                 "--embedding",
                 "--ctx-size",
-                "8192",
+                &ctx_tokens.to_string(),
                 "--n-gpu-layers",
                 &lc.n_gpu_layers.to_string(),
                 "--log-disable",

@@ -96,14 +96,12 @@ pub struct LlamaCppConfig {
     pub chat_model_path: PathBuf,
     /// GGUF model path for embeddings.
     pub embed_model_path: PathBuf,
-    /// Context window size for the chat server (--ctx-size).
-    pub ctx_size: usize,
     /// GPU layers to offload (--n-gpu-layers); 0 = CPU only.
     pub n_gpu_layers: u32,
 }
 ```
 
-**Ignition flow change:** After "Agent Name" / "Your name" prompts, a new `Select` asks `Backend: [Ollama, llama.cpp]`. If llama.cpp: prompt for `llama_cpp_home` directory (validate `bin/llama-server` exists), GGUF model path for chat, GGUF model path for embed. Write the `[llama_cpp]` section to `config.toml` and set `llm_backend = "LlamaCpp"`.
+**Ignition flow change:** After "Agent Name" / "Your name" prompts, a new `Select` asks `Backend: [Ollama, llama.cpp]`. If llama.cpp: prompt for `llama_cpp_home` directory (validate `bin/llama-server` exists), GGUF model path for chat, GGUF model path for embed, and **`num_ctx`** (top-level; used for managed `llama-server --ctx-size` and orchestrator budgets). Write the `[llama_cpp]` section to `config.toml` and set `llm_backend = "LlamaCpp"`.
 
 **Deliverable:** Config round-trips through TOML. Existing vaults with no `llm_backend` field default to `Ollama`. Tests: serialize/deserialize, ignition path validation.
 
@@ -161,7 +159,7 @@ The `available_tools_json` parameter is ignored (same as current Ollama path —
 {llama_cpp_home}/bin/llama-server \
     --model {chat_model_path} \
     --port 8090 \
-    --ctx-size {ctx_size} \
+    --ctx-size {num_ctx} \
     --n-gpu-layers {n_gpu_layers}
 ```
 
@@ -172,7 +170,7 @@ The `available_tools_json` parameter is ignored (same as current Ollama path —
     --model {embed_model_path} \
     --port 8091 \
     --embedding \
-    --ctx-size 8192
+    --ctx-size {num_ctx}
 ```
 
 Ready probe: TCP connect + `GET /health` returning `200 {"status":"ok"}` within `READY_TIMEOUT_SECS`.

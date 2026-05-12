@@ -46,9 +46,6 @@ pub struct LlamaCppConfig {
     pub chat_model_path: PathBuf,
     /// GGUF model file for embeddings.
     pub embed_model_path: PathBuf,
-    /// Context window for the chat server (--ctx-size).
-    #[serde(default = "default_llamacpp_ctx_size")]
-    pub ctx_size: usize,
     /// GPU layers to offload (--n-gpu-layers); 0 = CPU only.
     #[serde(default)]
     pub n_gpu_layers: u32,
@@ -63,9 +60,6 @@ fn default_llamacpp_chat_server_url() -> String {
 }
 fn default_llamacpp_embed_server_url() -> String {
     "http://127.0.0.1:8091".into()
-}
-fn default_llamacpp_ctx_size() -> usize {
-    8192
 }
 ```
 
@@ -83,7 +77,7 @@ pub llm_backend: LlmBackend,
 pub llama_cpp: Option<LlamaCppConfig>,
 ```
 
-**Ordering:** Place `llm_backend` right after `model_name` (line ~229) so backend fields group logically with model/engine fields. Place `llama_cpp` right after `ollama_low_vram`.
+**Ordering:** Place `llm_backend` right after `model_name` (line ~229) so backend fields group logically with model/engine fields. Place `llama_cpp` right after `ollama_low_vram`. The existing top-level **`num_ctx`** is used for Ollama and for managed `llama-server --ctx-size` (chat and embed) when `llm_backend = LlamaCpp`.
 
 ---
 
@@ -134,6 +128,7 @@ When written by ignition, the `config.toml` gains:
 
 ```toml
 llm_backend = "LlamaCpp"
+num_ctx = 32768
 
 [llama_cpp]
 home = "/Users/me/llama.cpp/build"
@@ -141,7 +136,6 @@ chat_server_url = "http://127.0.0.1:8090"
 embed_server_url = "http://127.0.0.1:8091"
 chat_model_path = "/models/qwen2.5-14b-instruct-q4_k_m.gguf"
 embed_model_path = "/models/nomic-embed-text-v1.5.Q8_0.gguf"
-ctx_size = 32768
 n_gpu_layers = 99
 ```
 
