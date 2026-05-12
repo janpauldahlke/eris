@@ -362,12 +362,12 @@ Each step is independently testable and deployable with the Phase 4 fallback cov
 
 ## 7.10 — Acceptance Criteria
 
-- [ ] Schema-to-GBNF compiler handles the bounded subset of JSON Schema
-- [ ] Unsupported constructs fall back gracefully (freeform args for that tool)
-- [ ] No trailing comma issues in generated grammar
-- [ ] Grammar compiles for the full tool roster without errors
-- [ ] llama-server accepts and enforces the generated grammar
-- [ ] Tool calls from grammar-constrained output pass Gatekeeper validation
-- [ ] Fallback tools still work with freeform args
-- [ ] At least the 5 simplest tools have full arg grammar coverage
-- [ ] All Phase 4 tests still pass (static envelope is a subset of this)
+- [x] Schema-to-GBNF compiler handles the bounded subset of JSON Schema
+- [x] Unsupported constructs fall back gracefully (freeform args for that tool)
+- [x] No trailing comma issues in generated grammar
+- [x] Grammar compiles for the full tool roster without errors
+- [ ] llama-server accepts and enforces the generated grammar *(pending live test)*
+- [ ] Tool calls from grammar-constrained output pass Gatekeeper validation *(pending live test)*
+- [x] Fallback tools still work with freeform args
+- [x] At least the 5 simplest tools have full arg grammar coverage (all 40+ tools attempted)
+- [x] All Phase 4 tests still pass (static envelope is a subset of this)
