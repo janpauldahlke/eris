@@ -3,15 +3,22 @@
   const thoughtPane = document.getElementById("thought-pane");
   const toolsActivity = document.getElementById("tools-activity");
   const telemetryLog = document.getElementById("telemetry-log");
-  const statusLine = document.getElementById("status-line");
+  const statusState = document.getElementById("status-state");
+  const statusMetrics = document.getElementById("status-metrics");
+  const statusCore = document.getElementById("status-core");
+  const statusTiming = document.getElementById("status-timing");
+  const statusTokens = document.getElementById("status-tokens");
+  const statusSpeed = document.getElementById("status-speed");
   const form = document.getElementById("chat-form");
   const input = document.getElementById("message-input");
   const btnExit = document.getElementById("btn-exit");
-  const btnSend = form.querySelector('button[type="submit"]');
+  const btnSend = form ? form.querySelector('button[type="submit"]') : null;
   const shutdownOverlay = document.getElementById("shutdown-overlay");
   const shutdownDetail = document.getElementById("shutdown-overlay-detail");
 
   const TELEMETRY_MAX_LINES = 80;
+  const THOUGHT_MAX = 5;
+  const thoughtHistory = [];
   let shuttingDown = false;
 
   function showShutdownOverlay(detail) {
@@ -40,6 +47,33 @@
       .replace(/\$\s*\\+to\s*\$/gi, "\u2192");
   }
 
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  /** Minimal safe markdown: inline code, **bold**, newlines. */
+  function renderAssistantMarkdown(raw) {
+    var x = escapeHtml(raw);
+    x = x.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    x = x.replace(/`([^`]+)`/g, "<code>$1</code>");
+    x = x.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    x = x.replace(/\n/g, "<br>");
+    return x;
+  }
+
+  function agentHue(name) {
+    var h = 0;
+    var i;
+    var s = String(name);
+    for (i = 0; i < s.length; i++) {
+      h = (h * 33 + s.charCodeAt(i)) | 0;
+    }
+    return Math.abs(h) % 360;
+  }
+
   /** Browsers only honor this for script-opened windows; OS-opened tabs usually stay open. */
   function tryCloseTab() {
     window.close();
@@ -64,6 +98,33 @@
     transcript.scrollTop = transcript.scrollHeight;
   }
 
+  function appendAssistantTranscript(raw) {
+    const norm = normalizeLatexArrowsForDisplay(String(raw));
+    const m = norm.match(/^\[([^\]]+)\]:\s*([\s\S]*)$/);
+    const row = document.createElement("div");
+    row.className = "msg assistant";
+    if (m) {
+      const label = document.createElement("span");
+      label.className = "agent-label";
+      label.textContent = "[" + m[1] + "]:";
+      const hue = agentHue(m[1]);
+      label.style.color = "hsl(" + hue + ", 70%, 72%)";
+      label.style.borderLeftColor = "hsl(" + hue + ", 58%, 48%)";
+      const body = document.createElement("div");
+      body.className = "agent-body markdown-body";
+      body.innerHTML = renderAssistantMarkdown(m[2]);
+      row.appendChild(label);
+      row.appendChild(body);
+    } else {
+      const body = document.createElement("div");
+      body.className = "markdown-body";
+      body.innerHTML = renderAssistantMarkdown(norm);
+      row.appendChild(body);
+    }
+    transcript.appendChild(row);
+    transcript.scrollTop = transcript.scrollHeight;
+  }
+
   /** @param {string} source — `web` | `cli` | `discord` */
   function appendUserTranscriptLine(source, body) {
     const row = document.createElement("div");
@@ -80,8 +141,39 @@
     transcript.scrollTop = transcript.scrollHeight;
   }
 
-  function setStatus(text) {
-    statusLine.textContent = text;
+  function setStatusPlain(text) {
+    if (statusMetrics) statusMetrics.style.display = "none";
+    if (statusState) {
+      statusState.textContent = text;
+      statusState.className = "status-pill state-plain";
+    }
+  }
+
+  function showStatusMetricsRow() {
+    if (statusMetrics) statusMetrics.style.display = "flex";
+  }
+
+  function normalizeAgentState(raw) {
+    if (raw == null) return "?";
+    if (typeof raw === "string") return raw;
+    if (typeof raw === "object") {
+      const keys = Object.keys(raw);
+      if (keys.length === 1) return keys[0];
+    }
+    return String(raw);
+  }
+
+  function statePillClass(st) {
+    const s = String(st || "").toLowerCase();
+    if (s === "idle") return "state-idle";
+    if (s === "chat") return "state-chat";
+    if (s === "reflect") return "state-reflect";
+    if (s === "recover") return "state-recover";
+    return "state-unknown";
+  }
+
+  function isBusyState(st) {
+    return normalizeAgentState(st) !== "Idle";
   }
 
   function setToolsActivity(text) {
@@ -89,15 +181,47 @@
     toolsActivity.textContent = t;
   }
 
+  function telemetryLineClass(text) {
+    const t = String(text);
+    if (t.indexOf("[SYSTEM]") === 0) return "telemetry-line telemetry-sys";
+    if (t.indexOf("[tool]") === 0) return "telemetry-line telemetry-tool";
+    if (t.indexOf("[ui]") === 0) return "telemetry-line telemetry-ui";
+    if (t.indexOf("[alarm]") === 0) return "telemetry-line telemetry-alarm";
+    if (t.indexOf("[fcp]") === 0) return "telemetry-line telemetry-fcp";
+    return "telemetry-line telemetry-def";
+  }
+
   function appendTelemetry(text) {
     const line = document.createElement("div");
-    line.className = "telemetry-line";
+    line.className = telemetryLineClass(text);
     line.textContent = text;
     telemetryLog.appendChild(line);
     while (telemetryLog.children.length > TELEMETRY_MAX_LINES) {
       telemetryLog.removeChild(telemetryLog.firstChild);
     }
     telemetryLog.scrollTop = telemetryLog.scrollHeight;
+  }
+
+  function clearThoughtHistory() {
+    thoughtHistory.length = 0;
+    if (thoughtPane) thoughtPane.textContent = "";
+  }
+
+  function pushThought(text) {
+    if (!thoughtPane) return;
+    const t = normalizeLatexArrowsForDisplay(String(text));
+    thoughtHistory.push(t);
+    while (thoughtHistory.length > THOUGHT_MAX) {
+      thoughtHistory.shift();
+    }
+    thoughtPane.textContent = "";
+    for (let i = 0; i < thoughtHistory.length; i++) {
+      const el = document.createElement("div");
+      el.className = "thought-entry";
+      el.textContent = thoughtHistory[i];
+      thoughtPane.appendChild(el);
+    }
+    thoughtPane.scrollTop = thoughtPane.scrollHeight;
   }
 
   /** `llm_*_tps_milli` is completion tok/s × 1000 (fixed-point). */
@@ -114,54 +238,64 @@
     return n + "ms";
   }
 
-  /** @param {object} u state update */
-  function engineShort(u) {
-    var b = u && u.llm_backend;
-    if (b === "LlamaCpp" || String(b).toLowerCase() === "llamacpp") {
-      return "llama.cpp";
-    }
-    return "Ollama";
+  function chipPair(k, v) {
+    return (
+      '<span class="k">' +
+      escapeHtml(k) +
+      '</span> <span class="v">' +
+      escapeHtml(v) +
+      "</span>"
+    );
   }
 
+  /** @param {object} u state update */
   function applyStateUpdate(u) {
-    const st = u.state;
+    const st = normalizeAgentState(u.state);
+    showStatusMetricsRow();
+    if (statusState) {
+      statusState.textContent = st;
+      const busy = isBusyState(st);
+      statusState.className =
+        "status-pill " + statePillClass(st) + (busy ? " status-pill--busy" : "");
+    }
     const q = u.queued_inputs || 0;
-    setStatus(
-      st +
-        " · tool rounds " +
-        u.tool_rounds +
-        "/" +
-        u.max_tool_rounds +
-        " · recovery " +
-        u.recovery_count +
-        "/" +
-        u.max_recovery_attempts +
-        " · queued " +
-        q +
-        " · routing " +
-        u.router_ms +
-        " ms · LLM " +
-        u.llm_ms +
-        " ms · tools " +
-        u.tool_ms +
-        " ms · total " +
-        u.total_ms +
-        " ms · " +
-        engineShort(u) +
-        " · prompt " +
-        (u.llm_prompt_tokens || 0) +
-        " · completion " +
-        (u.llm_completion_tokens || 0) +
-        " · " +
-        ((u.llm_prompt_tokens || 0) + (u.llm_completion_tokens || 0)) +
-        " tokens · infer " +
-        fmtInferMs(u.llm_last_generation_ms) +
-        " · " +
-        fmtTpsMilli(u.llm_last_tps_milli) +
-        " tok/s this reply · avg " +
-        fmtTpsMilli(u.llm_tps_ewma_milli) +
-        " tok/s"
-    );
+    if (statusCore) {
+      statusCore.innerHTML =
+        chipPair("Rounds", u.tool_rounds + "/" + u.max_tool_rounds) +
+        ' <span class="k">·</span> ' +
+        chipPair("Recovery", u.recovery_count + "/" + u.max_recovery_attempts) +
+        ' <span class="k">·</span> ' +
+        chipPair("Queued", String(q));
+    }
+    if (statusTiming) {
+      statusTiming.innerHTML =
+        chipPair("Routing", u.router_ms + "ms") +
+        ' <span class="k">·</span> ' +
+        chipPair("LLM", u.llm_ms + "ms") +
+        ' <span class="k">·</span> ' +
+        chipPair("Tools", u.tool_ms + "ms") +
+        ' <span class="k">·</span> ' +
+        chipPair("Total", u.total_ms + "ms");
+    }
+    const pt = u.llm_prompt_tokens || 0;
+    const ct = u.llm_completion_tokens || 0;
+    const tot = pt + ct;
+    if (statusTokens) {
+      statusTokens.innerHTML =
+        chipPair("Prompt", pt + " tok") +
+        ' <span class="k">·</span> ' +
+        chipPair("Completion", ct + " tok") +
+        ' <span class="k">·</span> ' +
+        chipPair("Total", tot + " tok");
+    }
+    if (statusSpeed) {
+      statusSpeed.innerHTML =
+        chipPair("Infer", fmtInferMs(u.llm_last_generation_ms)) +
+        ' <span class="k">·</span> ' +
+        chipPair("This reply", fmtTpsMilli(u.llm_last_tps_milli) + " tok/s") +
+        ' <span class="k">·</span> ' +
+        chipPair("Avg", fmtTpsMilli(u.llm_tps_ewma_milli) + " tok/s");
+    }
     setToolsActivity(u.activity_line || "");
   }
 
@@ -172,14 +306,14 @@
     if (btnSend) btnSend.disabled = true;
     input.disabled = true;
     appendTelemetry("[ui] Stopping server (clean shutdown)…");
-    setStatus("Shutting down…");
+    setStatusPlain("Shutting down…");
     showShutdownOverlay(
       "Stopping Eris, managed sidecars, and asking Ollama to unload this session’s models. This can take a few seconds after the page closes."
     );
     try {
       const res = await fetch("/api/shutdown", { method: "POST" });
       if (res.ok) {
-        setStatus("Server stop requested. Terminal will finish cleanup.");
+        setStatusPlain("Server stop requested. Terminal will finish cleanup.");
         appendTelemetry(
           "[ui] Goodbye — Ollama model RAM should drop shortly (check Activity Monitor). Closing tab if the browser allows…"
         );
@@ -201,10 +335,10 @@
         appendTelemetry(
           "[ui] Shutdown failed (" + res.status + "). Press Ctrl+C in the terminal."
         );
-        setStatus("Shutdown failed — use Ctrl+C in the terminal");
+        setStatusPlain("Shutdown failed — use Ctrl+C in the terminal");
       }
     } catch (err) {
-      setStatus("Server unreachable (may already have exited).");
+      setStatusPlain("Server unreachable (may already have exited).");
       appendTelemetry("[ui] Connection lost — if the terminal is back at a prompt, you are done.");
       if (shutdownDetail) {
         shutdownDetail.textContent =
@@ -224,7 +358,7 @@
       return;
     }
     if (data.IncomingMessage) {
-      appendLine(data.IncomingMessage, "assistant");
+      appendAssistantTranscript(data.IncomingMessage);
       return;
     }
     if (data.UserTranscriptLine) {
@@ -233,7 +367,7 @@
       return;
     }
     if (data.ModelThought) {
-      thoughtPane.textContent = normalizeLatexArrowsForDisplay(data.ModelThought);
+      pushThought(data.ModelThought);
       return;
     }
     if (data.SystemError) {
@@ -256,7 +390,7 @@
     }
   };
   es.onerror = function () {
-    setStatus("SSE disconnected — refresh the page");
+    setStatusPlain("SSE disconnected — refresh the page");
   };
 
   if (btnExit) {
@@ -285,7 +419,7 @@
       return;
     }
     input.value = "";
-    thoughtPane.textContent = "";
+    clearThoughtHistory();
     try {
       const res = await fetch("/api/action", {
         method: "POST",
@@ -316,5 +450,5 @@
     }
   });
 
-  setStatus("Connecting…");
+  setStatusPlain("Connecting…");
 })();

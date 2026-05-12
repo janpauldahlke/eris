@@ -14,6 +14,11 @@
         --muted: #b4bacd;
         --user: #78b4ff;
         --thought-bg: #0e101c;
+        --state-idle: #8a93a8;
+        --state-chat: #5ce5be;
+        --state-reflect: #b388ff;
+        --state-recover: #ffb347;
+        --state-unknown: #8899cc;
       }
       * {
         box-sizing: border-box;
@@ -35,14 +40,14 @@
         min-height: 0;
         overflow: hidden;
       }
-      header {
+      .app-header {
         flex-shrink: 0;
         padding: 0.6rem 1rem;
         border-bottom: 1px solid var(--border);
         color: var(--accent);
         letter-spacing: 0.04em;
       }
-      main {
+      .app-main {
         flex: 1 1 0;
         display: grid;
         grid-template-columns: 1fr minmax(240px, 30vw);
@@ -79,13 +84,28 @@
       }
       .panel-section h2 {
         margin: 0;
-        padding: 0.5rem 0.75rem;
+        padding: 0.5rem 0.75rem 0.2rem;
         font-size: 0.75rem;
         font-weight: 600;
         text-transform: uppercase;
         color: var(--accent);
         border-bottom: 1px solid var(--border);
         flex-shrink: 0;
+      }
+      .panel-sub {
+        margin: 0;
+        padding: 0.35rem 0.75rem 0.5rem;
+        font-size: 10px;
+        line-height: 1.35;
+        color: var(--muted);
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+      }
+      .panel-sub code {
+        font-size: 10px;
+        background: #141a2e;
+        padding: 0.05rem 0.2rem;
+        border-radius: 2px;
       }
       .panel-section.telemetry-section {
         border-top: 1px solid var(--border);
@@ -96,12 +116,24 @@
         flex: 1 1 0;
         min-height: 0;
         overflow: auto;
-        padding: 0.75rem;
+        padding: 0.5rem 0.75rem 0.75rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.45rem;
+      }
+      .thought-entry {
+        padding: 0.45rem 0.5rem;
+        border-radius: 4px;
+        background: #12162a;
+        border: 1px solid #1e2438;
         white-space: pre-wrap;
         color: var(--muted);
         font-size: 12px;
         line-height: 1.45;
         overflow-wrap: anywhere;
+      }
+      .thought-entry:last-child {
+        border-color: #2a3555;
       }
       #tools-activity {
         flex-shrink: 0;
@@ -123,25 +155,50 @@
         flex: 1 1 0;
         min-height: 0;
         overflow: auto;
-        padding: 0.5rem 0.75rem;
+        padding: 0.45rem 0.75rem;
         font-size: 11px;
-        line-height: 1.4;
+        line-height: 1.45;
         color: #b8c0d4;
         background: #0c0e16;
       }
       .telemetry-line {
-        margin-bottom: 0.4rem;
-        padding-bottom: 0.35rem;
-        border-bottom: 1px solid #1e2438;
+        margin: 0 0 0.35rem 0;
+        padding: 0.35rem 0.45rem;
+        border-radius: 3px;
+        border-left: 3px solid #2a3550;
         white-space: pre-wrap;
         word-break: break-word;
+        background: #10131d;
       }
       .telemetry-line:last-child {
-        border-bottom: none;
+        margin-bottom: 0;
+      }
+      .telemetry-sys {
+        border-left-color: #6eb5ff;
+        color: #c8dcff;
+      }
+      .telemetry-tool {
+        border-left-color: #ffd166;
+        color: #ffe6a8;
+      }
+      .telemetry-ui {
+        border-left-color: #8899aa;
+        color: #aab6c8;
+      }
+      .telemetry-alarm {
+        border-left-color: #ff6b6b;
+        color: #ffc4c4;
+      }
+      .telemetry-fcp {
+        border-left-color: var(--accent);
+        color: #b8f5e4;
+      }
+      .telemetry-def {
+        border-left-color: #4a5568;
       }
       .msg {
-        margin-bottom: 0.75rem;
-        line-height: 1.5;
+        margin-bottom: 0.85rem;
+        line-height: 1.55;
         white-space: pre-wrap;
         overflow-wrap: anywhere;
       }
@@ -180,28 +237,154 @@
         color: var(--accent);
       }
       .msg.assistant {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.35rem;
         color: #f5f8ff;
+      }
+      .msg.assistant .agent-label {
+        flex-shrink: 0;
+        font-weight: 700;
+        font-size: 12px;
+        letter-spacing: 0.02em;
+        padding: 0.15rem 0.45rem;
+        border-radius: 4px;
+        align-self: flex-start;
+        background: rgba(20, 26, 46, 0.85);
+        border-left: 3px solid currentColor;
+      }
+      .msg.assistant .agent-body.markdown-body {
+        padding-left: 0.15rem;
+      }
+      .markdown-body strong {
+        color: #fff;
+        font-weight: 700;
+      }
+      .markdown-body code {
+        font-size: 0.92em;
+        background: #1a2238;
+        padding: 0.08rem 0.28rem;
+        border-radius: 3px;
+        border: 1px solid #2a3555;
       }
       .msg.system {
         color: #c8b070;
       }
-      footer {
+      .app-footer {
         grid-column: 1 / -1;
         flex-shrink: 0;
         border-top: 1px solid var(--border);
-        padding: 0.5rem 1rem;
+        padding: 0.55rem 1rem 0.65rem;
         background: #0e101a;
         min-height: 0;
       }
-      #status-line {
-        font-size: 12px;
+      .status-hud {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        gap: 0.45rem 0.65rem;
+        margin-bottom: 0.55rem;
+        font-size: 11px;
+        line-height: 1.4;
         color: var(--muted);
-        margin-bottom: 0.5rem;
-        max-height: min(22vh, 5.5rem);
-        overflow-x: hidden;
-        overflow-y: auto;
-        overflow-wrap: anywhere;
-        line-height: 1.35;
+      }
+      .status-pill {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.2rem 0.55rem;
+        border-radius: 999px;
+        font-weight: 700;
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        border: 1px solid transparent;
+        flex-shrink: 0;
+      }
+      .status-pill.state-idle {
+        color: var(--state-idle);
+        background: #141822;
+        border-color: #2a3142;
+      }
+      .status-pill.state-chat {
+        color: var(--state-chat);
+        background: #0f1f1c;
+        border-color: #2d5c4e;
+      }
+      .status-pill.state-reflect {
+        color: var(--state-reflect);
+        background: #181428;
+        border-color: #4a3d6e;
+      }
+      .status-pill.state-recover {
+        color: var(--state-recover);
+        background: #22180f;
+        border-color: #5c4428;
+      }
+      .status-pill.state-unknown {
+        color: var(--state-unknown);
+        background: #141822;
+        border-color: #2a3142;
+      }
+      .status-pill.state-plain {
+        text-transform: none;
+        letter-spacing: normal;
+        font-weight: 600;
+        color: var(--muted);
+        background: #12162a;
+        border-color: var(--border);
+        max-width: 100%;
+        white-space: normal;
+      }
+      @keyframes status-busy {
+        0%,
+        100% {
+          transform: translateX(0);
+          opacity: 1;
+        }
+        35% {
+          transform: translateX(-1px) rotate(-0.4deg);
+          opacity: 0.88;
+        }
+        70% {
+          transform: translateX(1px) rotate(0.4deg);
+          opacity: 0.88;
+        }
+      }
+      .status-pill.status-pill--busy {
+        animation: status-busy 1.15s ease-in-out infinite;
+      }
+      .status-metrics {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+        align-items: center;
+        flex: 1 1 12rem;
+        min-width: 0;
+      }
+      .status-chip {
+        display: inline-flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 0.25rem 0.4rem;
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+        background: #12162a;
+        border: 1px solid #232a3e;
+        color: #aab6d4;
+        font-size: 11px;
+        max-width: 100%;
+      }
+      .status-chip .k {
+        color: #6a738c;
+        font-weight: 600;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .status-chip .v {
+        color: #dce4f8;
+        font-weight: 600;
       }
       #chat-form {
         display: flex;
@@ -274,7 +457,7 @@
         line-height: 1.55;
       }
       @media (max-width: 720px) {
-        main {
+        .app-main {
           grid-template-columns: 1fr;
           grid-template-rows: minmax(0, 1fr) minmax(0, 1fr) auto;
         }
@@ -292,24 +475,24 @@
         .panel-section.telemetry-section {
           min-height: 5rem;
         }
-        footer {
+        .app-footer {
           grid-row: 3;
         }
       }
     </style>
   </head>
   <body>
-    <header>ERIS — web console</header>
-    <main>
+    <header class="app-header">ERIS — web console</header>
+    <main class="app-main">
       <div id="transcript" aria-label="Chat transcript"></div>
       <aside class="right-stack" aria-label="Side panels">
         <div class="panel-section" aria-label="Model thought">
           <h2>Thought</h2>
-          <div id="thought-pane">
-            (the JSON <code>thought</code> field from each assistant reply
-            appears here; user-facing text stays in
-            <code>message_to_user</code> / main transcript)
-          </div>
+          <p class="panel-sub">
+            Last five <code>thought</code> strings (internal). New entries scroll into view.
+            User copy lives in <code>message_to_user</code> in the transcript.
+          </p>
+          <div id="thought-pane" role="log" aria-live="polite"></div>
         </div>
         <div
           class="panel-section telemetry-section"
@@ -320,8 +503,16 @@
           <div id="telemetry-log" aria-live="polite"></div>
         </div>
       </aside>
-      <footer>
-        <div id="status-line"></div>
+      <footer class="app-footer">
+        <div id="status-hud" class="status-hud" aria-live="polite">
+          <span id="status-state" class="status-pill state-plain"></span>
+          <div id="status-metrics" class="status-metrics" style="display: none">
+            <span id="status-core" class="status-chip"></span>
+            <span id="status-timing" class="status-chip"></span>
+            <span id="status-tokens" class="status-chip"></span>
+            <span id="status-speed" class="status-chip"></span>
+          </div>
+        </div>
         <form id="chat-form" autocomplete="off">
           <textarea
             id="message-input"

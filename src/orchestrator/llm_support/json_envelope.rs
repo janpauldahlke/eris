@@ -10,7 +10,8 @@ use std::borrow::Cow;
 pub const FCP_JSON_REPAIR_MARKER: &str = "[FCP JSON REPAIR]";
 
 /// One-line [`SessionEvent::SystemError`] when the model-facing message includes [`FCP_JSON_REPAIR_MARKER`].
-pub const JSON_REPAIR_UI_SUMMARY: &str = "[SYSTEM OVERRIDE: FUCKUP DETECTED] JSON repair";
+pub const JSON_REPAIR_UI_SUMMARY: &str =
+    crate::orchestrator::context::resolved_tool_recovery::JSON_REPAIR_TELEMETRY;
 
 /// Human- and model-oriented hints appended after serde’s error when [`LlmResponse`] parsing fails.
 /// Serde’s `expected ',' or '}'` near a `]` is often misread as a comma problem; this steers toward

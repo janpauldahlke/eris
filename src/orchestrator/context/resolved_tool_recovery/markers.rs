@@ -1,15 +1,18 @@
 //! Recovery-related system line detection (must stay aligned with transitions / tool dispatch).
 
-/// Prefix for JSON-parse and similar recoveries ([`crate::orchestrator::loop::directive_policy`]).
-pub const FUCKUP_OVERRIDE_PREFIX: &str = "[SYSTEM OVERRIDE: FUCKUP DETECTED]";
+/// Prefix for JSON-parse and protocol violations ([`crate::orchestrator::loop::directive_policy`], tool failures).
+pub const PROTOCOL_FAULT_PREFIX: &str = "[SYSTEM] Invalid model output";
+/// One-line UI telemetry when the model-facing message includes JSON repair markers.
+pub const JSON_REPAIR_TELEMETRY: &str = "[SYSTEM] JSON repair";
 /// Schema-targeted retry ([`crate::orchestrator::core::tool_dispatch`]).
-pub const SYSTEM_RECOVERY_PREFIX: &str = "[SYSTEM RECOVERY]";
+pub const SYSTEM_RECOVERY_PREFIX: &str = "[SYSTEM] Recovery";
 /// Duplicate tool batch suppression (starts with this exact phrase).
-pub const DUPLICATE_TOOL_BATCH_PREFIX: &str = "[SYSTEM OVERRIDE] All requested tool calls";
+pub const DUPLICATE_TOOL_BATCH_PREFIX: &str = "[SYSTEM] Tool batch suppressed";
 
 pub fn is_recovery_system_content(content: &str) -> bool {
     let t = content.trim_start();
-    t.starts_with(FUCKUP_OVERRIDE_PREFIX)
+    t.starts_with(PROTOCOL_FAULT_PREFIX)
+        || t.starts_with(JSON_REPAIR_TELEMETRY)
         || t.starts_with(SYSTEM_RECOVERY_PREFIX)
         || t.starts_with(DUPLICATE_TOOL_BATCH_PREFIX)
 }
@@ -19,15 +22,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn detects_fuckup_and_recovery_and_duplicate() {
+    fn detects_protocol_fault_recovery_and_duplicate() {
         assert!(is_recovery_system_content(
-            "[SYSTEM OVERRIDE: FUCKUP DETECTED] Invalid LLM Output: x"
+            "[SYSTEM] Invalid model output: trailing comma"
         ));
         assert!(is_recovery_system_content(
-            "[SYSTEM RECOVERY] Tool schema fault"
+            "[SYSTEM] JSON repair"
         ));
         assert!(is_recovery_system_content(
-            "[SYSTEM OVERRIDE] All requested tool calls in this batch were suppressed"
+            "[SYSTEM] Recovery — schema retry"
+        ));
+        assert!(is_recovery_system_content(
+            "[SYSTEM] Tool batch suppressed — duplicates"
         ));
     }
 
@@ -41,7 +47,7 @@ mod tests {
         ));
         assert!(!is_recovery_system_content("Tool 't' succeeded: ok"));
         assert!(!is_recovery_system_content(
-            "[SYSTEM OVERRIDE] something else"
+            "[SYSTEM] something else without the batch prefix"
         ));
     }
 }

@@ -1,3 +1,4 @@
+use crate::orchestrator::context::resolved_tool_recovery::PROTOCOL_FAULT_PREFIX;
 use crate::orchestrator::r#loop::transition::StateTransition;
 use crate::orchestrator::state::LoopDirective;
 
@@ -6,10 +7,7 @@ pub fn decide_transition_from_directive(directive: LoopDirective) -> StateTransi
     match directive {
         LoopDirective::HaltAndAwaitInput(_) => StateTransition::Halt,
         LoopDirective::RecoverFromFuckup(msg) => StateTransition::Recover {
-            message: format!(
-                "[SYSTEM OVERRIDE: FUCKUP DETECTED] Invalid LLM Output: {}",
-                msg
-            ),
+            message: format!("{PROTOCOL_FAULT_PREFIX}: {msg}"),
             schema_retry: false,
         },
         LoopDirective::ShiftToReflection => StateTransition::ShiftToReflection,

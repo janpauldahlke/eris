@@ -358,7 +358,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                 suppressed_repeat_failure_streak,
                 "All tool intents in batch were suppressed (duplicates or repeat-failure streak); forcing user-facing reply via recover"
             );
-            let msg = "[SYSTEM OVERRIDE] All requested tool calls in this batch were suppressed (duplicates or repeated identical failures). Do NOT repeat those tool calls again. Respond to the user now with status Idle and a non-empty message_to_user confirming the outcome. tool_calls MUST be [].".to_string();
+            let msg = "[SYSTEM] Tool batch suppressed — all calls in this batch were skipped (duplicates or repeated failures). Do not repeat those tool_calls. Reply with status Idle, a non-empty message_to_user, and tool_calls [].".to_string();
             // IMPORTANT: route through Recover so retry is bounded by `max_recovery_attempts`.
             return Ok(ToolBatchDecision::Recover { message: msg });
         }
@@ -387,7 +387,8 @@ impl<E: LlmEngine> Orchestrator<E> {
                 )
             } else {
                 format!(
-                    "[SYSTEM RECOVERY] Tool schema fault detected. Retrying with targeted schemas for: {:?}",
+                    "{} — tool schema fault detected. Retrying with targeted schemas for: {:?}",
+                    crate::orchestrator::context::resolved_tool_recovery::SYSTEM_RECOVERY_PREFIX,
                     selected
                 )
             };
@@ -808,7 +809,7 @@ mod targeted_schema_retry_phase5_tests {
             .expect("batch");
         match decision {
             ToolBatchDecision::RetryWithTargetedSchema { message } => {
-                assert!(message.contains("Tool schema fault detected"));
+                assert!(message.contains("tool schema fault detected"));
                 assert!(
                     !message.contains("Expected arguments:"),
                     "Ollama path should keep legacy short recovery banner: {message}"
