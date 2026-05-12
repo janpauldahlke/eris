@@ -881,7 +881,7 @@ async fn emit_optional_user_message_skips_whitespace_only_thought() {
 }
 
 #[tokio::test]
-async fn emit_optional_user_message_tool_round_emits_thought_before_deck() {
+async fn emit_optional_user_message_tool_round_skips_transcript_uses_activity_line() {
     let (pres_tx, mut pres_rx) = mpsc::channel::<SessionEvent>(32);
     let mut orch = orchestrator_with_presentation(pres_tx).await;
     let json = r#"{"thought":"pick clock tool","status":"Reflect","message_to_user":"One moment.","tool_calls":[{"name":"clock:now","args":{}}]}"#;
@@ -892,11 +892,11 @@ async fn emit_optional_user_message_tool_round_emits_thought_before_deck() {
         e => panic!("expected ModelThought, got {e:?}"),
     }
     match pres_rx.recv().await.expect("event 2") {
-        SessionEvent::IncomingMessage(m) => assert!(m.contains("One moment.")),
-        e => panic!("expected IncomingMessage, got {e:?}"),
-    }
-    match pres_rx.recv().await.expect("event 3") {
-        SessionEvent::StateUpdate(_) => {}
-        e => panic!("expected StateUpdate, got {e:?}"),
+        SessionEvent::StateUpdate(u) => {
+            let line = u.activity_line.expect("activity_line");
+            assert!(line.contains("clock:now"), "{line}");
+            assert!(line.contains("One moment."), "{line}");
+        }
+        e => panic!("expected StateUpdate with activity_line, got {e:?}"),
     }
 }
