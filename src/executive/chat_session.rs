@@ -172,18 +172,38 @@ pub async fn start_chat_session(
         drop(identity_tx);
     }
 
+    let backend_label = &config.llm_backend;
     let _ = presentation_tx
-        .send(SessionEvent::SystemError(
-            "[startup] Checking peripheral daemons (Ollama, Qdrant)...".into(),
-        ))
+        .send(SessionEvent::SystemError(format!(
+            "[startup] Checking peripheral daemons ({backend_label}, Qdrant)..."
+        )))
         .await;
 
     let peripheral_lifecycle =
         crate::executive::peripherals::ensure_peripherals_for_chat(&config).await?;
-    let ollama_status = if peripheral_lifecycle.started_ollama() {
-        "started by eris"
-    } else {
-        "already running"
+
+    let llm_status = match config.llm_backend {
+        crate::config::LlmBackend::Ollama => {
+            if peripheral_lifecycle.started_ollama() {
+                "ollama=started by eris"
+            } else {
+                "ollama=already running"
+            }
+            .to_string()
+        }
+        crate::config::LlmBackend::LlamaCpp => {
+            let chat = if peripheral_lifecycle.started_llama_chat() {
+                "started by eris"
+            } else {
+                "external"
+            };
+            let embed = if peripheral_lifecycle.started_llama_embed() {
+                "started by eris"
+            } else {
+                "external"
+            };
+            format!("llama-chat={chat}, llama-embed={embed}")
+        }
     };
     let qdrant_status = if peripheral_lifecycle.started_qdrant() {
         "started by eris"
@@ -192,7 +212,7 @@ pub async fn start_chat_session(
     };
     let _ = presentation_tx
         .send(SessionEvent::SystemError(format!(
-            "[startup] Peripheral readiness: ollama={ollama_status}, qdrant={qdrant_status}"
+            "[startup] Peripheral readiness: {llm_status}, qdrant={qdrant_status}"
         )))
         .await;
 

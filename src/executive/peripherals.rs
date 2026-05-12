@@ -9,7 +9,7 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 use url::Url;
 
-use crate::config::{AppConfig, DaemonCommand};
+use crate::config::{AppConfig, DaemonCommand, LlmBackend};
 
 /// Ollama server default context length; must match [`AppConfig::num_ctx`] when Eris spawns `ollama serve`.
 /// See <https://docs.ollama.com/context-length>.
@@ -59,6 +59,8 @@ impl ManagedProcess {
 pub struct PeripheralLifecycle {
     ollama: Option<ManagedProcess>,
     qdrant: Option<ManagedProcess>,
+    llama_chat: Option<ManagedProcess>,
+    llama_embed: Option<ManagedProcess>,
 }
 
 impl PeripheralLifecycle {
@@ -70,10 +72,20 @@ impl PeripheralLifecycle {
         self.qdrant.is_some()
     }
 
+    pub fn started_llama_chat(&self) -> bool {
+        self.llama_chat.is_some()
+    }
+
+    pub fn started_llama_embed(&self) -> bool {
+        self.llama_embed.is_some()
+    }
+
     /// Best-effort teardown without blocking the async runtime (used from chat shutdown).
     pub async fn shutdown_async(&mut self) -> Vec<&'static str> {
         let ollama = self.ollama.take();
         let qdrant = self.qdrant.take();
+        let llama_embed = self.llama_embed.take();
+        let llama_chat = self.llama_chat.take();
         let mut stopped = Vec::new();
         if ollama.is_some() {
             stopped.push("ollama");
@@ -81,11 +93,24 @@ impl PeripheralLifecycle {
         if qdrant.is_some() {
             stopped.push("qdrant");
         }
+        if llama_embed.is_some() {
+            stopped.push("llama-embed");
+        }
+        if llama_chat.is_some() {
+            stopped.push("llama-chat");
+        }
         let join_result = tokio::task::spawn_blocking(move || {
             if let Some(mut p) = ollama {
                 p.shutdown();
             }
             if let Some(mut p) = qdrant {
+                p.shutdown();
+            }
+            // Embed first (less critical), then chat.
+            if let Some(mut p) = llama_embed {
+                p.shutdown();
+            }
+            if let Some(mut p) = llama_chat {
                 p.shutdown();
             }
         })
@@ -109,6 +134,14 @@ impl PeripheralLifecycle {
         if let Some(mut qdrant) = self.qdrant.take() {
             qdrant.shutdown();
             stopped.push("qdrant");
+        }
+        if let Some(mut p) = self.llama_embed.take() {
+            p.shutdown();
+            stopped.push("llama-embed");
+        }
+        if let Some(mut p) = self.llama_chat.take() {
+            p.shutdown();
+            stopped.push("llama-chat");
         }
         stopped
     }
@@ -255,34 +288,258 @@ fn sync_reap_managed_child(child: &mut Child, name: &'static str) {
     }
 }
 
+/// Extract the port from a URL, returning an error if no port is present.
+fn port_from_url(url: &str) -> Result<u16> {
+    let parsed = Url::parse(url)
+        .map_err(|e| FcpError::Config(format!("Invalid server URL '{url}': {e}")))?;
+    parsed
+        .port()
+        .ok_or_else(|| FcpError::Config(format!("No port in server URL '{url}'")))
+}
+
+/// Poll `{url}/health` until llama-server reports `{"status":"ok"}`.
+///
+/// llama-server returns `{"status":"loading model"}` (HTTP 200) while loading weights —
+/// we must keep polling until the status flips to `"ok"`.
+async fn wait_for_llama_server(url: &str, name: &str, timeout_secs: u64) -> Result<()> {
+    let health_url = format!("{}/health", url.trim_end_matches('/'));
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(3))
+        .build()
+        .map_err(|e| FcpError::NetworkFault(format!("HTTP client build for {name} probe: {e}")))?;
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
+
+    while tokio::time::Instant::now() < deadline {
+        match client.get(&health_url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                #[derive(serde::Deserialize)]
+                struct HealthBody {
+                    status: Option<String>,
+                }
+                if let Ok(body) = resp.json::<HealthBody>().await {
+                    if body.status.as_deref() == Some("ok") {
+                        return Ok(());
+                    }
+                    tracing::debug!(
+                        server = name,
+                        status = ?body.status,
+                        "llama-server health check not ready yet"
+                    );
+                }
+            }
+            Ok(resp) => {
+                tracing::debug!(
+                    server = name,
+                    http_status = %resp.status(),
+                    "llama-server health probe got non-success HTTP status"
+                );
+            }
+            Err(e) => {
+                tracing::debug!(
+                    server = name,
+                    error = %e,
+                    "llama-server health probe connection failed, retrying"
+                );
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(READY_POLL_MS)).await;
+    }
+
+    Err(FcpError::NetworkFault(format!(
+        "{name} failed to become ready within {timeout_secs}s at {url}"
+    )))
+}
+
+/// Check if a llama-server instance is already responding at `url`.
+async fn llama_server_already_ready(url: &str) -> bool {
+    let health_url = format!("{}/health", url.trim_end_matches('/'));
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+
+    #[derive(serde::Deserialize)]
+    struct HealthBody {
+        status: Option<String>,
+    }
+
+    let resp = match timeout(Duration::from_secs(2), client.get(&health_url).send()).await {
+        Ok(Ok(r)) if r.status().is_success() => r,
+        _ => return false,
+    };
+    match resp.json::<HealthBody>().await {
+        Ok(body) => body.status.as_deref() == Some("ok"),
+        Err(_) => false,
+    }
+}
+
+impl PeripheralLifecycle {
+    /// Spawn and probe both llama-server instances (chat + embed).
+    ///
+    /// If a server is already responding on its configured port, Eris skips spawning and
+    /// treats it as an externally-managed instance (no reap on shutdown).
+    pub async fn ensure_llama_servers(&mut self, config: &AppConfig) -> Result<()> {
+        let lc = config.validate_llamacpp_config()?;
+        let binary = lc.home.join("bin/llama-server");
+        let timeout_secs = lc.ready_timeout_secs;
+
+        // --- Chat server ---
+        let chat_port = port_from_url(&lc.chat_server_url)?;
+        if llama_server_already_ready(&lc.chat_server_url).await {
+            tracing::info!(
+                server = "llama-chat",
+                port = chat_port,
+                "llama-server already running on port, using external instance"
+            );
+        } else {
+            tracing::info!(
+                server = "llama-chat",
+                port = chat_port,
+                model = %lc.chat_model_path.display(),
+                "Spawning llama-server"
+            );
+            let mut cmd = Command::new(&binary);
+            cmd.args([
+                "--model",
+                &lc.chat_model_path.to_string_lossy(),
+                "--port",
+                &chat_port.to_string(),
+                "--ctx-size",
+                &lc.ctx_size.to_string(),
+                "--n-gpu-layers",
+                &lc.n_gpu_layers.to_string(),
+                "--log-disable",
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+            apply_unix_sidecar_process_group(&mut cmd);
+
+            let chat_child = cmd.spawn().map_err(|e| {
+                FcpError::NetworkFault(format!(
+                    "Failed to spawn llama-server (chat) at {}: {e}",
+                    binary.display()
+                ))
+            })?;
+            self.llama_chat = Some(ManagedProcess {
+                name: "llama-chat",
+                kind: ManagedProcessKind::Child(chat_child),
+            });
+
+            if let Err(e) =
+                wait_for_llama_server(&lc.chat_server_url, "llama-chat", timeout_secs).await
+            {
+                self.kill_llama_servers_best_effort();
+                return Err(e);
+            }
+            tracing::info!(server = "llama-chat", "llama-server ready");
+        }
+
+        // --- Embed server ---
+        let embed_port = port_from_url(&lc.embed_server_url)?;
+        if llama_server_already_ready(&lc.embed_server_url).await {
+            tracing::info!(
+                server = "llama-embed",
+                port = embed_port,
+                "llama-server already running on port, using external instance"
+            );
+        } else {
+            tracing::info!(
+                server = "llama-embed",
+                port = embed_port,
+                model = %lc.embed_model_path.display(),
+                "Spawning llama-server"
+            );
+            let mut cmd = Command::new(&binary);
+            cmd.args([
+                "--model",
+                &lc.embed_model_path.to_string_lossy(),
+                "--port",
+                &embed_port.to_string(),
+                "--embedding",
+                "--ctx-size",
+                "8192",
+                "--n-gpu-layers",
+                &lc.n_gpu_layers.to_string(),
+                "--log-disable",
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+            apply_unix_sidecar_process_group(&mut cmd);
+
+            let embed_child = cmd.spawn().map_err(|e| {
+                FcpError::NetworkFault(format!(
+                    "Failed to spawn llama-server (embed) at {}: {e}",
+                    binary.display()
+                ))
+            })?;
+            self.llama_embed = Some(ManagedProcess {
+                name: "llama-embed",
+                kind: ManagedProcessKind::Child(embed_child),
+            });
+
+            if let Err(e) =
+                wait_for_llama_server(&lc.embed_server_url, "llama-embed", timeout_secs).await
+            {
+                self.kill_llama_servers_best_effort();
+                return Err(e);
+            }
+            tracing::info!(server = "llama-embed", "llama-server ready");
+        }
+
+        Ok(())
+    }
+
+    /// Best-effort synchronous kill of any managed llama-server processes (used on startup failure).
+    fn kill_llama_servers_best_effort(&mut self) {
+        if let Some(mut p) = self.llama_chat.take() {
+            p.shutdown();
+        }
+        if let Some(mut p) = self.llama_embed.take() {
+            p.shutdown();
+        }
+    }
+}
+
 pub async fn ensure_peripherals_for_chat(config: &AppConfig) -> Result<PeripheralLifecycle> {
     let mut lifecycle = PeripheralLifecycle::default();
 
-    if !ollama_reachable(&config.ollama_host).await {
-        tracing::info!(
-            wait_secs = PRE_SPAWN_OLLAMA_WAIT_SECS,
-            "Ollama not reachable yet; waiting before attempting a managed launch"
-        );
-        if wait_for_ollama(&config.ollama_host, PRE_SPAWN_OLLAMA_WAIT_SECS).await {
-            tracing::info!(
-                "Ollama became reachable during pre-spawn wait; not launching a managed instance"
-            );
-        } else {
-            tracing::warn!(
-                "Ollama still not reachable after extended wait; attempting Rust-managed launch"
-            );
-            let mut child = spawn_ollama_daemon(config)?;
-            if !wait_for_ollama(&config.ollama_host, READY_TIMEOUT_SECS).await {
-                sync_reap_managed_child(&mut child, "ollama-bootstrap");
-                return Err(FcpError::NetworkFault(
-                    "FATAL: Ollama daemon failed to become ready after launch attempt.".into(),
-                ));
+    match config.llm_backend {
+        LlmBackend::Ollama => {
+            if !ollama_reachable(&config.ollama_host).await {
+                tracing::info!(
+                    wait_secs = PRE_SPAWN_OLLAMA_WAIT_SECS,
+                    "Ollama not reachable yet; waiting before attempting a managed launch"
+                );
+                if wait_for_ollama(&config.ollama_host, PRE_SPAWN_OLLAMA_WAIT_SECS).await {
+                    tracing::info!(
+                        "Ollama became reachable during pre-spawn wait; not launching a managed instance"
+                    );
+                } else {
+                    tracing::warn!(
+                        "Ollama still not reachable after extended wait; attempting Rust-managed launch"
+                    );
+                    let mut child = spawn_ollama_daemon(config)?;
+                    if !wait_for_ollama(&config.ollama_host, READY_TIMEOUT_SECS).await {
+                        sync_reap_managed_child(&mut child, "ollama-bootstrap");
+                        return Err(FcpError::NetworkFault(
+                            "FATAL: Ollama daemon failed to become ready after launch attempt."
+                                .into(),
+                        ));
+                    }
+                    lifecycle.ollama = Some(ManagedProcess {
+                        name: "ollama",
+                        kind: ManagedProcessKind::Child(child),
+                    });
+                    tracing::info!("Ollama launched and reachable");
+                }
             }
-            lifecycle.ollama = Some(ManagedProcess {
-                name: "ollama",
-                kind: ManagedProcessKind::Child(child),
-            });
-            tracing::info!("Ollama launched and reachable");
+        }
+        LlmBackend::LlamaCpp => {
+            lifecycle.ensure_llama_servers(config).await?;
         }
     }
 
@@ -618,5 +875,189 @@ mod tests {
     fn qdrant_host_port_uses_configured_port() {
         assert_eq!(qdrant_host_port("http://localhost:7123").unwrap(), 7123);
         assert_eq!(qdrant_host_port("http://localhost").unwrap(), 6334);
+    }
+
+    // ── Phase 2: llama-server process management tests ──
+
+    #[test]
+    fn port_from_url_parses_correctly() {
+        assert_eq!(port_from_url("http://127.0.0.1:8090").unwrap(), 8090);
+        assert_eq!(port_from_url("http://localhost:8091").unwrap(), 8091);
+        assert_eq!(port_from_url("http://0.0.0.0:9999").unwrap(), 9999);
+    }
+
+    #[test]
+    fn port_from_url_missing_port_errors() {
+        let err = port_from_url("http://localhost").unwrap_err();
+        assert!(matches!(err, FcpError::Config(_)));
+        assert!(err.to_string().contains("No port"));
+    }
+
+    #[test]
+    fn port_from_url_invalid_url_errors() {
+        let err = port_from_url("not-a-url").unwrap_err();
+        assert!(matches!(err, FcpError::Config(_)));
+        assert!(err.to_string().contains("Invalid server URL"));
+    }
+
+    #[tokio::test]
+    async fn ready_probe_succeeds_on_healthy_server() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let url = format!("http://127.0.0.1:{port}");
+
+        tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = match listener.accept().await {
+                    Ok(v) => v,
+                    Err(_) => break,
+                };
+                use tokio::io::AsyncWriteExt;
+                let body = r#"{"status":"ok"}"#;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        });
+
+        let result = wait_for_llama_server(&url, "test-chat", 5).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn ready_probe_waits_for_loading() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let url = format!("http://127.0.0.1:{port}");
+        let request_count = std::sync::Arc::new(AtomicU32::new(0));
+        let count = request_count.clone();
+
+        tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = match listener.accept().await {
+                    Ok(v) => v,
+                    Err(_) => break,
+                };
+                let n = count.fetch_add(1, Ordering::SeqCst);
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf).await;
+
+                let body = if n < 2 {
+                    r#"{"status":"loading model"}"#
+                } else {
+                    r#"{"status":"ok"}"#
+                };
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        });
+
+        let result = wait_for_llama_server(&url, "test-loading", 10).await;
+        assert!(result.is_ok());
+        assert!(request_count.load(Ordering::SeqCst) >= 3);
+    }
+
+    #[tokio::test]
+    async fn ready_probe_timeout_returns_error() {
+        // Use a port that nothing is listening on.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let url = format!("http://127.0.0.1:{port}");
+        let result = wait_for_llama_server(&url, "test-timeout", 1).await;
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("failed to become ready"));
+    }
+
+    #[tokio::test]
+    async fn shutdown_reaps_both_processes() {
+        let child1 = Command::new("sleep")
+            .arg("300")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let pid1 = child1.id();
+
+        let child2 = Command::new("sleep")
+            .arg("300")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let pid2 = child2.id();
+
+        let mut lifecycle = PeripheralLifecycle {
+            ollama: None,
+            qdrant: None,
+            llama_chat: Some(ManagedProcess {
+                name: "llama-chat",
+                kind: ManagedProcessKind::Child(child1),
+            }),
+            llama_embed: Some(ManagedProcess {
+                name: "llama-embed",
+                kind: ManagedProcessKind::Child(child2),
+            }),
+        };
+
+        let stopped = lifecycle.shutdown_async().await;
+        assert!(stopped.contains(&"llama-chat"));
+        assert!(stopped.contains(&"llama-embed"));
+
+        // Verify processes are gone (kill(pid, 0) should fail).
+        #[cfg(unix)]
+        {
+            use std::process::Command as StdCmd;
+            for pid in [pid1, pid2] {
+                let status = StdCmd::new("kill")
+                    .args(["-0", &pid.to_string()])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+                assert!(
+                    status.map(|s| !s.success()).unwrap_or(true),
+                    "Process {pid} should have been reaped"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn llama_accessors_reflect_state() {
+        let lifecycle = PeripheralLifecycle::default();
+        assert!(!lifecycle.started_llama_chat());
+        assert!(!lifecycle.started_llama_embed());
+
+        let child = Command::new("true")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut lifecycle = PeripheralLifecycle {
+            ollama: None,
+            qdrant: None,
+            llama_chat: Some(ManagedProcess {
+                name: "llama-chat",
+                kind: ManagedProcessKind::Child(child),
+            }),
+            llama_embed: None,
+        };
+        assert!(lifecycle.started_llama_chat());
+        assert!(!lifecycle.started_llama_embed());
+
+        // Clean up so we don't leak the process.
+        lifecycle.shutdown_started_peripherals();
     }
 }

@@ -250,6 +250,13 @@ pub struct LlamaCppConfig {
     /// GPU layers to offload (--n-gpu-layers); 0 = CPU only.
     #[serde(default)]
     pub n_gpu_layers: u32,
+    /// Max seconds to wait for each llama-server to become ready after spawn.
+    #[serde(default = "default_llamacpp_ready_timeout")]
+    pub ready_timeout_secs: u64,
+}
+
+pub(crate) fn default_llamacpp_ready_timeout() -> u64 {
+    30
 }
 
 fn default_llamacpp_chat_server_url() -> String {
@@ -1462,6 +1469,7 @@ mod tests {
             embed_model_path: PathBuf::from("/models/embed.gguf"),
             ctx_size: 32768,
             n_gpu_layers: 99,
+            ready_timeout_secs: 30,
         });
 
         let toml_str = toml::to_string(&config).expect("serialize");
@@ -1573,6 +1581,7 @@ mod tests {
             embed_model_path: PathBuf::from("/fake/embed.gguf"),
             ctx_size: 8192,
             n_gpu_layers: 0,
+            ready_timeout_secs: 30,
         });
 
         let err = config.validate_llamacpp_config().unwrap_err();
@@ -1596,6 +1605,7 @@ mod tests {
             embed_model_path: PathBuf::from("/nonexistent/embed.gguf"),
             ctx_size: 8192,
             n_gpu_layers: 0,
+            ready_timeout_secs: 30,
         });
 
         let err = config.validate_llamacpp_config().unwrap_err();

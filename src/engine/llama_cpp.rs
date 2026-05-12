@@ -265,6 +265,7 @@ mod tests {
             embed_model_path: PathBuf::from("/fake/embed.gguf"),
             ctx_size: 8192,
             n_gpu_layers: 0,
+            ready_timeout_secs: 30,
         });
         config.generation_timeout_secs = 5;
         Arc::new(config)

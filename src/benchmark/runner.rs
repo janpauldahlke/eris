@@ -49,21 +49,20 @@ pub async fn run_benchmark(
         "Loaded scenario suite"
     );
 
-    // Start peripherals (Ollama + Qdrant if available)
-    println!("[benchmark] Checking peripheral daemons (Ollama, Qdrant)...");
+    // Start peripherals (LLM backend + Qdrant)
+    tracing::info!(backend = %config.llm_backend, "Checking peripheral daemons");
     let peripheral_lifecycle = ensure_peripherals_for_chat(config).await?;
-    
-    let ollama_status = if peripheral_lifecycle.started_ollama() {
-        "started by eris"
-    } else {
-        "already running"
-    };
+
     let qdrant_status = if peripheral_lifecycle.started_qdrant() {
         "started by eris"
     } else {
         "already running"
     };
-    println!("[benchmark] Peripheral readiness: ollama={ollama_status}, qdrant={qdrant_status}");
+    tracing::info!(
+        backend = %config.llm_backend,
+        qdrant = qdrant_status,
+        "Peripheral readiness"
+    );
 
     // Set up cancellation token for benchmark
     let _cancel_token = CancellationToken::new();

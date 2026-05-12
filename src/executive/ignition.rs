@@ -1,4 +1,4 @@
-use crate::config::{AppConfig, LlamaCppConfig, LlmBackend};
+use crate::config::{default_llamacpp_ready_timeout, AppConfig, LlamaCppConfig, LlmBackend};
 use crate::executive::error::{FcpError, Result};
 use inquire::{Select, Text};
 use ollama_rs::Ollama;
@@ -282,6 +282,7 @@ pub async fn run_ignition_sequence(
                     embed_model_path,
                     ctx_size,
                     n_gpu_layers,
+                    ready_timeout_secs: default_llamacpp_ready_timeout(),
                 };
 
                 Ok(IgnitionAnswers {
