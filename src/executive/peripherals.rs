@@ -386,7 +386,13 @@ impl PeripheralLifecycle {
         let lc = config.validate_llamacpp_config()?;
         let binary = lc.home.join("bin/llama-server");
         let timeout_secs = lc.ready_timeout_secs;
-        let ctx_tokens = config.num_ctx.max(1);
+        let chat_ctx = config.num_ctx.max(1);
+        // Embedding passes are short (chunked text). Using the full chat `num_ctx` for the
+        // second managed `llama-server --embedding` duplicates KV allocation on the GPU vs
+        // Ollama (one process, embed model loaded with a modest context). Cap embed context
+        // so benchmarks and long-chat configs do not OOM or destabilize the display stack.
+        const EMBED_SERVER_CTX_CAP: usize = 8192;
+        let embed_ctx = chat_ctx.min(EMBED_SERVER_CTX_CAP);
 
         // --- Chat server ---
         let chat_port = port_from_url(&lc.chat_server_url)?;
@@ -410,7 +416,7 @@ impl PeripheralLifecycle {
                 "--port",
                 &chat_port.to_string(),
                 "--ctx-size",
-                &ctx_tokens.to_string(),
+                &chat_ctx.to_string(),
                 "--n-gpu-layers",
                 &lc.n_gpu_layers.to_string(),
                 "--log-disable",
@@ -452,6 +458,8 @@ impl PeripheralLifecycle {
                 server = "llama-embed",
                 port = embed_port,
                 model = %lc.embed_model_path.display(),
+                ctx_size = embed_ctx,
+                chat_ctx,
                 "Spawning llama-server"
             );
             let mut cmd = Command::new(&binary);
@@ -462,7 +470,7 @@ impl PeripheralLifecycle {
                 &embed_port.to_string(),
                 "--embedding",
                 "--ctx-size",
-                &ctx_tokens.to_string(),
+                &embed_ctx.to_string(),
                 "--n-gpu-layers",
                 &lc.n_gpu_layers.to_string(),
                 "--log-disable",

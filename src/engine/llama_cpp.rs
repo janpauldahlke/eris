@@ -16,7 +16,8 @@ pub struct LlamaCppClient {
     #[allow(dead_code)]
     config: Arc<AppConfig>,
     token_metrics_tx: Option<watch::Sender<LlmTokenSnapshot>>,
-    grammar: Option<String>,
+    /// Shared across all `generate` calls so we do not clone multi-megabyte GBNF on every request.
+    grammar: Option<Arc<String>>,
 }
 
 impl LlamaCppClient {
@@ -47,12 +48,12 @@ impl LlamaCppClient {
 
     /// Set the GBNF grammar that constrains every subsequent `generate` call.
     pub fn set_grammar(&mut self, grammar: String) {
-        self.grammar = Some(grammar);
+        self.grammar = Some(Arc::new(grammar));
     }
 }
 
 #[derive(Serialize)]
-struct ChatCompletionRequest {
+struct ChatCompletionRequest<'a> {
     messages: Vec<ChatMsg>,
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -60,7 +61,7 @@ struct ChatCompletionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     n_predict: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    grammar: Option<String>,
+    grammar: Option<&'a str>,
     /// Forwarded to the Jinja chat template inside llama-server.
     /// `{"enable_thinking": false}` suppresses Qwen3 `<think>` tokens so the
     /// GBNF grammar can constrain output from token 0.
@@ -250,7 +251,7 @@ impl LlmEngine for LlamaCppClient {
             stream: use_stream,
             temperature: Some(0.7),
             n_predict: Some(-1),
-            grammar: self.grammar.clone(),
+            grammar: self.grammar.as_ref().map(|s| s.as_str()),
             chat_template_kwargs,
         };
 

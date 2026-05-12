@@ -359,7 +359,7 @@ pub struct BenchmarkReport {
     pub suite: String,
     /// Quality metrics.
     pub quality: QualityMetrics,
-    /// Single minimal Ollama chat probe (tok/s from Ollama `final_data`).
+    /// Single minimal chat probe (Ollama: tok/s from `final_data`; LlamaCpp: from engine response + wall clock).
     pub speed: SpeedMetrics,
     /// Mean orchestrator timing per user step, **successful scenarios only** (see [`SuiteSpeedAggregate`]).
     #[serde(default)]

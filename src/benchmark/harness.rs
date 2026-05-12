@@ -1,6 +1,6 @@
 //! Benchmark harness for executing scenarios against the real orchestrator.
 
-use crate::benchmark::suite::{Scenario, ScenarioResult, Step, SuccessCriteria};
+use crate::benchmark::suite::{CleanupAction, Scenario, ScenarioResult, Step, SuccessCriteria};
 use crate::benchmark::{CleanupReport, IsolationMode, QualityMetrics, SideEffectFilter};
 use crate::benchmark::metrics::StepTiming;
 use crate::engine::AnyEngine;
@@ -92,12 +92,44 @@ impl BenchmarkHarness {
             }
         };
 
+        Self::run_scenario_cleanup(orchestrator, scenario).await;
+
         {
             let mut global = self.metrics.lock().await;
             global.merge(&result.metrics);
         }
 
         Ok((result, timings))
+    }
+
+    async fn run_scenario_cleanup(orchestrator: &Orchestrator<AnyEngine>, scenario: &Scenario) {
+        if scenario.cleanup.is_empty() {
+            return;
+        }
+        for step in &scenario.cleanup {
+            match &step.action {
+                CleanupAction::RemoveStagedMemories(keys) => {
+                    let n = orchestrator
+                        .ephemeral
+                        .invalidate_matching_benchmark_cleanup_keys(keys)
+                        .await;
+                    tracing::debug!(
+                        scenario = %scenario.name,
+                        removed = n,
+                        cleanup_step = %step.description,
+                        keys = ?keys,
+                        "Benchmark scenario cleanup applied"
+                    );
+                }
+                CleanupAction::RemoveEphemeralEntries(_) | CleanupAction::RemoveTempFiles(_) => {
+                    tracing::trace!(
+                        scenario = %scenario.name,
+                        cleanup_step = %step.description,
+                        "Benchmark cleanup action not implemented in harness (no-op)"
+                    );
+                }
+            }
+        }
     }
 
     async fn execute_scenario(

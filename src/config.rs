@@ -284,7 +284,9 @@ pub struct AppConfig {
     #[serde(default)]
     pub user_name: String,
     /// Context window: Ollama `num_ctx`, orchestrator budgets / condensation, and managed
-    /// `llama-server --ctx-size` (chat and embed) when [`LlmBackend::LlamaCpp`] is active.
+    /// `llama-server --ctx-size` for the **chat** server when [`LlmBackend::LlamaCpp`] is active.
+    /// The managed **embedding** server uses `min(num_ctx, 8192)` for `--ctx-size` so the second
+    /// GPU process does not reserve full chat KV (see `executive::peripherals`).
     pub num_ctx: usize,
     /// Optional Ollama GPU layer count override (`num_gpu`). `None` uses Ollama auto-placement.
     pub ollama_num_gpu: Option<u32>,
@@ -303,6 +305,18 @@ pub struct AppConfig {
     /// [`Self::generation_timeout_secs`]). Default **120**.
     #[serde(default = "default_benchmark_scenario_timeout_secs")]
     pub benchmark_scenario_timeout_secs: u64,
+    /// Override `--ctx-size` for the managed **chat** `llama-server` when the benchmark runner
+    /// spawns peripherals.  Benchmarks use much smaller prompts than long interactive sessions;
+    /// reserving the full chat `num_ctx` (e.g. 64 K) allocates enormous KV cache VRAM that is
+    /// never filled, and the resulting memory pressure can destabilise the display stack on
+    /// dual-GPU (iGPU + dGPU) systems.  `0` (default) means "use `num_ctx` unchanged."
+    #[serde(default)]
+    pub benchmark_num_ctx: usize,
+    /// Milliseconds to sleep between benchmark scenarios, giving the GPU power/thermal state
+    /// time to settle.  Helps on systems where rapid back-to-back completions cause transient
+    /// PCIe / display link instability.  Default **500** ms.
+    #[serde(default = "default_benchmark_inter_scenario_cooldown_ms")]
+    pub benchmark_inter_scenario_cooldown_ms: u64,
     /// Forwarded to Ollama on each chat request as `.think(...)` in `OllamaClient::generate` (`ollama-rs` `ChatMessageRequest`). `false` (default) turns off the separate thinking/reasoning channel for models that support it—saves tokens and RAM versus `true`. TOML key name is historical; unrelated to `engine::router::ReasoningRouter`.
     pub enable_reasoning_fsm: bool,
     /// Fraction of estimated context fill (0.0–1.0) at which rolling condensation runs.
@@ -541,6 +555,10 @@ fn default_unload_ollama_models_on_chat_exit() -> bool {
 
 fn default_benchmark_scenario_timeout_secs() -> u64 {
     120
+}
+
+fn default_benchmark_inter_scenario_cooldown_ms() -> u64 {
+    500
 }
 
 /// Default peripheral spawn: `qdrant` with no args (container/binary default config).
@@ -933,6 +951,8 @@ impl Default for AppConfig {
             llama_cpp: None,
             generation_timeout_secs: 120,
             benchmark_scenario_timeout_secs: default_benchmark_scenario_timeout_secs(),
+            benchmark_num_ctx: 0,
+            benchmark_inter_scenario_cooldown_ms: default_benchmark_inter_scenario_cooldown_ms(),
             enable_reasoning_fsm: false,
             condensation_threshold: 0.5,
             condensation_target: 300,
