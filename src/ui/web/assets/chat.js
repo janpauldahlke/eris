@@ -100,6 +100,29 @@
     telemetryLog.scrollTop = telemetryLog.scrollHeight;
   }
 
+  /** `llm_*_tps_milli` is completion tok/s × 1000 (fixed-point). */
+  function fmtTpsMilli(milli) {
+    const n = Number(milli) || 0;
+    if (n <= 0) return "-";
+    return (n / 1000).toFixed(2);
+  }
+
+  function fmtInferMs(ms) {
+    var n = Number(ms) || 0;
+    if (n <= 0) return "-";
+    if (n >= 1000) return (n / 1000).toFixed(1) + "s";
+    return n + "ms";
+  }
+
+  /** @param {object} u state update */
+  function engineShort(u) {
+    var b = u && u.llm_backend;
+    if (b === "LlamaCpp" || String(b).toLowerCase() === "llamacpp") {
+      return "llama.cpp";
+    }
+    return "Ollama";
+  }
+
   function applyStateUpdate(u) {
     const st = u.state;
     const q = u.queued_inputs || 0;
@@ -123,7 +146,21 @@
         u.tool_ms +
         " ms · total " +
         u.total_ms +
-        " ms"
+        " ms · " +
+        engineShort(u) +
+        " · prompt " +
+        (u.llm_prompt_tokens || 0) +
+        " · completion " +
+        (u.llm_completion_tokens || 0) +
+        " · " +
+        ((u.llm_prompt_tokens || 0) + (u.llm_completion_tokens || 0)) +
+        " tokens · infer " +
+        fmtInferMs(u.llm_last_generation_ms) +
+        " · " +
+        fmtTpsMilli(u.llm_last_tps_milli) +
+        " tok/s this reply · avg " +
+        fmtTpsMilli(u.llm_tps_ewma_milli) +
+        " tok/s"
     );
     setToolsActivity(u.activity_line || "");
   }

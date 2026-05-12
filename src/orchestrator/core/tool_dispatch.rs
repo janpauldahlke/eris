@@ -520,6 +520,7 @@ mod repeat_failure_streak_tests {
                 content: "{}".into(),
                 prompt_tokens: 0,
                 generated_tokens: 0,
+                generation_ms: 0,
             })
         }
     }
@@ -591,6 +592,7 @@ mod repeat_failure_streak_tests {
             Arc::new(AppConfig::default()),
             id_rx,
             Arc::new(AtomicBool::new(false)),
+            None,
         )
     }
 
@@ -693,6 +695,7 @@ mod targeted_schema_retry_phase5_tests {
                 content: "{}".into(),
                 prompt_tokens: 0,
                 generated_tokens: 0,
+                generation_ms: 0,
             })
         }
     }
@@ -730,6 +733,7 @@ mod targeted_schema_retry_phase5_tests {
             Arc::new(cfg),
             id_rx,
             Arc::new(AtomicBool::new(false)),
+            None,
         )
     }
 

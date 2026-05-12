@@ -13,6 +13,19 @@ pub struct EngineResponse {
     pub content: String,
     pub prompt_tokens: usize,
     pub generated_tokens: usize,
+    /// Wall-clock ms for the completed request (streaming or non-streaming), for throughput metrics.
+    pub generation_ms: u64,
+}
+
+impl Default for EngineResponse {
+    fn default() -> Self {
+        Self {
+            content: String::new(),
+            prompt_tokens: 0,
+            generated_tokens: 0,
+            generation_ms: 0,
+        }
+    }
 }
 
 #[async_trait]

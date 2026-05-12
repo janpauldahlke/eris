@@ -331,9 +331,14 @@ impl LlmEngine for LlamaCppClient {
             (content, pt, ct)
         };
 
-        token_metrics::publish(&self.token_metrics_tx, prompt_tokens, generated_tokens);
-
         let generation_ms = gen_started.elapsed().as_millis() as u64;
+        token_metrics::publish(
+            &self.token_metrics_tx,
+            prompt_tokens,
+            generated_tokens,
+            generation_ms,
+        );
+
         tracing::info!(
             engine = "llamacpp",
             model = %model_label,
@@ -348,6 +353,7 @@ impl LlmEngine for LlamaCppClient {
             content,
             prompt_tokens,
             generated_tokens,
+            generation_ms,
         })
     }
 }

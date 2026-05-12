@@ -312,6 +312,23 @@ pub fn split_leading_json_object(raw: &str) -> (&str, &str) {
     (raw, "")
 }
 
+/// Qwen / llama-server may emit a leading `<think>…</think>` block (sometimes
+/// empty) before the FCP protocol JSON object. Strip that prefix so [`parse_llm_response_protocol`]
+/// can see the JSON.
+#[must_use]
+pub fn strip_leading_redacted_thinking_block(raw: &str) -> &str {
+    let trimmed = raw.trim_start();
+    let Some(pos) = trimmed.find("</think>") else {
+        return raw;
+    };
+    let after = trimmed[pos + "</think>".len()..].trim_start();
+    if after.is_empty() {
+        raw
+    } else {
+        after
+    }
+}
+
 /// `true` when there is non-whitespace after the first complete JSON object **and** that object
 /// parses as [`LlmResponse`] (so we do not treat malformed all-in-one blobs as this violation).
 pub fn trailing_content_after_valid_llm_json(raw: &str) -> bool {
@@ -325,6 +342,15 @@ pub fn trailing_content_after_valid_llm_json(raw: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strip_redacted_thinking_then_parse() {
+        let raw = "<think>\n\n</think>\n{\"thought\":\"t\",\"status\":\"Idle\",\"message_to_user\":\"hi\",\"tool_calls\":[]}";
+        let stripped = strip_leading_redacted_thinking_block(raw);
+        assert!(stripped.starts_with('{'));
+        let parsed = parse_llm_response_protocol(stripped).expect("parse");
+        assert_eq!(parsed.thought, "t");
+    }
 
     #[test]
     fn split_balanced_then_markdown() {

@@ -289,6 +289,7 @@ mod tests {
                 content: "{}".into(),
                 prompt_tokens: 0,
                 generated_tokens: 0,
+                generation_ms: 0,
             })
         }
     }
@@ -373,6 +374,7 @@ mod tests {
             Arc::new(AppConfig::default()),
             id_rx,
             Arc::new(AtomicBool::new(false)),
+            None,
         );
         (orch, root)
     }

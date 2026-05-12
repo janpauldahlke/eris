@@ -764,6 +764,7 @@ pub async fn start_chat_session(
         config.clone(),
         identity_rx,
         promotion_suppressed_during_step,
+        Some(token_metrics_rx.clone()),
     );
 
     tracing::info!(

@@ -573,6 +573,7 @@ mod tests {
                     content,
                     prompt_tokens: 0,
                     generated_tokens: 0,
+                    generation_ms: 0,
                 })
             }
         }
@@ -631,6 +632,7 @@ mod tests {
             Arc::new(crate::config::AppConfig::default()),
             id_rx,
             Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            None,
         );
 
         let (action_tx, mut action_rx) = mpsc::channel::<UserAction>(100);

@@ -71,6 +71,7 @@ impl LlmEngine for MockEngine {
             content: self.content.clone(),
             prompt_tokens: self.prompt_tokens,
             generated_tokens: self.generated_tokens,
+            generation_ms: 0,
         })
     }
 }
@@ -108,6 +109,7 @@ fn test_orchestrator_initialization() {
         Arc::new(AppConfig::default()),
         id_rx,
         Arc::new(AtomicBool::new(false)),
+        None,
     );
 
     assert_eq!(orchestrator.state, AgentState::Idle);
@@ -153,6 +155,7 @@ fn setup_orchestrator_with_engine(engine: MockEngine) -> Orchestrator<MockEngine
         Arc::new(AppConfig::default()),
         id_rx,
         Arc::new(AtomicBool::new(false)),
+        None,
     )
 }
 
@@ -543,6 +546,7 @@ async fn test_async_guillotine_interrupts_generation() {
                 content: "never".to_string(),
                 prompt_tokens: 0,
                 generated_tokens: 0,
+                generation_ms: 0,
             })
         }
     }
@@ -595,6 +599,7 @@ async fn test_async_guillotine_interrupts_generation() {
         Arc::new(AppConfig::default()),
         id_rx,
         Arc::new(AtomicBool::new(false)),
+        None,
     );
 
     orchestrator.state = AgentState::Chat;
@@ -658,6 +663,7 @@ async fn test_duplicate_only_batch_halts_without_extra_generation() {
                 content,
                 prompt_tokens: 0,
                 generated_tokens: 0,
+                generation_ms: 0,
             })
         }
     }
@@ -726,6 +732,7 @@ async fn test_duplicate_only_batch_halts_without_extra_generation() {
         Arc::new(AppConfig::default()),
         id_rx,
         Arc::new(AtomicBool::new(false)),
+        None,
     );
     orchestrator.state = AgentState::Chat;
     orchestrator.chat_stack.push(Message {
@@ -831,6 +838,7 @@ async fn orchestrator_with_presentation(
         Arc::new(AppConfig::default()),
         id_rx,
         Arc::new(AtomicBool::new(false)),
+        None,
     )
 }
 

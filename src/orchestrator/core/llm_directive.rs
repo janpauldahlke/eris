@@ -1,24 +1,27 @@
 use crate::engine::LlmEngine;
 use crate::orchestrator::llm_support::json_envelope::{
     llm_json_parse_recovery_message_with_excerpt, parse_llm_response_protocol,
+    strip_leading_redacted_thinking_block,
 };
 use crate::orchestrator::state::{AgentState, LlmResponse, LoopAction, LoopDirective};
 
 use super::Orchestrator;
 
 impl<E: LlmEngine> Orchestrator<E> {
+    /// Maps JSON parse failure to recovery. **Ollama:** legacy excerpt-only message. **llama.cpp:**
+    /// GBNF-oriented warning + `[PROTOCOL_JSON]`-prefixed recovery.
     pub(super) fn protocol_parse_failure_directive(
         &self,
         err: &serde_json::Error,
         raw: &str,
     ) -> LoopDirective {
         if self.config.is_llamacpp() {
-            tracing::error!(
+            tracing::warn!(
                 error = %err,
-                "GRAMMAR BUG: LLM response failed JSON parse despite active GBNF grammar"
+                "llama.cpp: model output was not valid FCP protocol JSON while GBNF was active (grammar strongly constrains sampling but does not guarantee JSON; common causes: thinking-template prose before JSON, truncation, or duplicate concatenated objects)"
             );
             LoopDirective::RecoverFromFuckup(format!(
-                "[GRAMMAR BUG] {}",
+                "[PROTOCOL_JSON] {}",
                 llm_json_parse_recovery_message_with_excerpt(err, raw)
             ))
         } else {
@@ -28,10 +31,28 @@ impl<E: LlmEngine> Orchestrator<E> {
         }
     }
 
+    /// Parses FCP JSON from the model. On failure, **llama.cpp** may retry after stripping a leading
+    /// `redacted_thinking` block, then uses [`Self::protocol_parse_failure_directive`] (GBNF-oriented
+    /// log + `[PROTOCOL_JSON]` recovery). **Ollama** never strips that wrapper and uses the legacy
+    /// recovery message only (no `[PROTOCOL_JSON]` prefix on parse failure).
     pub fn process_llm_response(&mut self, response_json: &str) -> LoopDirective {
         match parse_llm_response_protocol(response_json) {
             Ok(parsed) => self.directive_from_parsed(parsed),
-            Err(e) => self.protocol_parse_failure_directive(&e, response_json),
+            Err(e) => {
+                if self.config.is_llamacpp() {
+                    let stripped = strip_leading_redacted_thinking_block(response_json);
+                    if stripped != response_json {
+                        if let Ok(parsed) = parse_llm_response_protocol(stripped) {
+                            tracing::info!(
+                                event = "strip_redacted_thinking_ok",
+                                "Parsed FCP protocol JSON after stripping leading redacted_thinking block"
+                            );
+                            return self.directive_from_parsed(parsed);
+                        }
+                    }
+                }
+                self.protocol_parse_failure_directive(&e, response_json)
+            }
         }
     }
 
@@ -157,6 +178,7 @@ mod phase5_recovery_tests {
                 content: "{}".into(),
                 prompt_tokens: 0,
                 generated_tokens: 0,
+                generation_ms: 0,
             })
         }
     }
@@ -191,23 +213,24 @@ mod phase5_recovery_tests {
             Arc::new(config),
             id_rx,
             Arc::new(AtomicBool::new(false)),
+            None,
         )
     }
 
     #[traced_test]
     #[test]
-    fn grammar_path_json_parse_error_logs_error() {
+    fn grammar_path_json_parse_failure_logs_llama_protocol() {
         let mut cfg = AppConfig::default();
         cfg.llm_backend = LlmBackend::LlamaCpp;
         let mut orch = orchestrator_with_config(cfg);
         let directive = orch.process_llm_response(r#"{"broken""#);
         assert!(
-            logs_contain("GRAMMAR BUG"),
-            "expected error log with GRAMMAR BUG tag"
+            logs_contain("llama.cpp: model output was not valid FCP protocol JSON"),
+            "expected warn log for llama.cpp protocol parse failure"
         );
         match directive {
             LoopDirective::RecoverFromFuckup(msg) => {
-                assert!(msg.contains("[GRAMMAR BUG]"));
+                assert!(msg.contains("[PROTOCOL_JSON]"));
                 assert!(msg.contains(FCP_JSON_REPAIR_MARKER));
             }
             other => panic!("expected RecoverFromFuckup, got {:?}", other),
@@ -250,7 +273,7 @@ mod phase5_recovery_tests {
         let directive = orch.process_llm_response(json);
         match directive {
             LoopDirective::RecoverFromFuckup(msg) => {
-                assert!(!msg.contains("[GRAMMAR BUG]"));
+                assert!(!msg.contains("[PROTOCOL_JSON]"));
                 assert!(msg.contains(FCP_JSON_REPAIR_MARKER));
                 assert!(msg.contains("tool_calls"));
                 assert!(msg.contains("one more"));
