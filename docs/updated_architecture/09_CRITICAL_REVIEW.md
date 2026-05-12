@@ -30,12 +30,14 @@ The `Chat` arm wires **view mode** (terminal vs web), **Discord mux** branches, 
 
 ### 3.1 JSON-in-chat as the only contract
 
-Forcing **one JSON object per turn** with Ollama `FormatType::Json` is a reasonable constraint. Weaknesses:
+Forcing **one JSON object per turn** with Ollama `FormatType::Json` is a reasonable constraint. Weaknesses (Ollama path):
 
-- **Fragile** if the model emits preamble or multiple JSON objects; you already slice JSON with `find`/`rfind`—that is pragmatic but not robust against adversarial or sloppy models.
-- **Recovery** depends on `Recover` + system injects; that is correct, but the number of edge cases grows with the orchestrator core loop and `llm_support` recovery copy.
+- **Fragile** if the model emits preamble or multiple JSON objects; you already slice JSON with `find`/`rfind` — pragmatic but not robust against adversarial or sloppy models.
+- **Recovery** depends on `Recover` + system injects; that is correct, but edge cases grow with orchestrator complexity.
 
-**Low-hanging fruit:** centralize JSON extraction in one function with unit tests (valid JSON, junk prefix, fenced code—decide policy explicitly).
+**Resolved (llama.cpp path):** GBNF grammar enforcement eliminates JSON parse failures entirely. The grammar constrains output at the token level — `RecoverFromFuckup` is structurally unreachable. Schema retries use natural-language descriptions instead of raw JSON injection. This is the primary advantage of the llama.cpp backend.
+
+**Low-hanging fruit (Ollama path):** centralize JSON extraction in one function with unit tests.
 
 ### 3.2 ToolRouter: embeddings + hint strings
 
@@ -56,9 +58,9 @@ When the router returns **no** similarity hits, you still run **tool mode with a
 
 `engine/router.rs` is **test-only**; config carries `enable_reasoning_fsm` but production does not use it. **Low-hanging fruit:** delete the flag from `AppConfig` or wire streaming; otherwise you are lying to operators.
 
-### 3.5 `LlmEngine::generate(..., available_tools_json)` — always empty
+### 3.5 `LlmEngine::generate(..., available_tools_json)` — unused by both backends
 
-`OllamaClient` injects tools into the **first system message**; the second parameter is unused in the hot path. **Low-hanging fruit:** document that contract on the trait, or remove the parameter if nothing will use it—avoids confusion for the next implementer.
+**Status: documented, not resolved.** Both `OllamaClient` and `LlamaCppClient` inject tool context through other channels (system prompt and GBNF grammar respectively). The second parameter remains unused in the hot path. Removing it is still low-hanging fruit but no longer a confusion risk since both implementations follow the same pattern.
 
 ---
 
@@ -66,7 +68,7 @@ When the router returns **no** similarity hits, you still run **tool mode with a
 
 ### 4.1 Qdrant vector dimension
 
-Collection creation hardcodes **768** dimensions. If `embed_model_name` changes to a model with different width, you get **runtime failure** or silent mismatch depending on Qdrant behavior. **Low-hanging fruit:** assert dimension from a first embedding probe at startup, or store in config.
+**Partially resolved.** `EmbeddingProvider::dimensions()` now exposes the vector width. Collection creation can validate against the provider's reported dimensions at startup. The 768-dim default remains for `nomic-embed-text` compatibility. Switching to a different embedding model still requires collection recreation — this is now documented in the setup guide.
 
 ### 4.2 Ephemeral `moka::iter()` for title lookup
 
@@ -111,7 +113,7 @@ The daemon ties expired web artifacts to Qdrant deletes. Good. Failure modes are
 
 | Trigger | Direction |
 |--------|-----------|
-| Second LLM backend (not Ollama) | Stabilize `LlmEngine` + streaming story; split adapter crates if you must ship sizes |
+| ~~Second LLM backend (not Ollama)~~ | **Done.** `LlamaCppClient` implements `LlmEngine` via HTTP. `EmbeddingProvider` trait abstracts embeddings. GBNF grammar compiler constrains output. Process management in `PeripheralLifecycle`. |
 | Multi-user / server mode | Today’s design is single-process; you would need session isolation and auth |
 | Tool count >> 30 | Tiered router becomes mandatory; consider tool groups in config, not more embeddings |
 | Formal agent protocol (JSON-RPC, MCP) | Replace ad-hoc TUI channels with a protocol layer—**large**; do not half-do it |

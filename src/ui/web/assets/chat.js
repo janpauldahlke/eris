@@ -17,7 +17,8 @@
   const shutdownDetail = document.getElementById("shutdown-overlay-detail");
 
   const TELEMETRY_MAX_LINES = 80;
-  const THOUGHT_MAX = 5;
+  /** Rolling buffer: newest at bottom; oldest dropped when this many are exceeded. */
+  const THOUGHT_MAX = 4;
   const thoughtHistory = [];
   let shuttingDown = false;
 
@@ -200,11 +201,6 @@
       telemetryLog.removeChild(telemetryLog.firstChild);
     }
     telemetryLog.scrollTop = telemetryLog.scrollHeight;
-  }
-
-  function clearThoughtHistory() {
-    thoughtHistory.length = 0;
-    if (thoughtPane) thoughtPane.textContent = "";
   }
 
   function pushThought(text) {
@@ -419,7 +415,6 @@
       return;
     }
     input.value = "";
-    clearThoughtHistory();
     try {
       const res = await fetch("/api/action", {
         method: "POST",

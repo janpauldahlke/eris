@@ -92,21 +92,6 @@
         border-bottom: 1px solid var(--border);
         flex-shrink: 0;
       }
-      .panel-sub {
-        margin: 0;
-        padding: 0.35rem 0.75rem 0.5rem;
-        font-size: 10px;
-        line-height: 1.35;
-        color: var(--muted);
-        border-bottom: 1px solid var(--border);
-        flex-shrink: 0;
-      }
-      .panel-sub code {
-        font-size: 10px;
-        background: #141a2e;
-        padding: 0.05rem 0.2rem;
-        border-radius: 2px;
-      }
       .panel-section.telemetry-section {
         border-top: 1px solid var(--border);
         flex: 1 1 0;
@@ -488,10 +473,6 @@
       <aside class="right-stack" aria-label="Side panels">
         <div class="panel-section" aria-label="Model thought">
           <h2>Thought</h2>
-          <p class="panel-sub">
-            Last five <code>thought</code> strings (internal). New entries scroll into view.
-            User copy lives in <code>message_to_user</code> in the transcript.
-          </p>
           <div id="thought-pane" role="log" aria-live="polite"></div>
         </div>
         <div

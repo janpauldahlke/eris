@@ -9,6 +9,58 @@ use crate::presentation::SessionEvent;
 
 use super::{Orchestrator, TOOL_ROUND_CAP_USER_FOOTNOTE};
 
+/// Max chars for operator-facing `SystemError` lines on schema/tool recover (full text stays on `chat_stack` + tracing).
+const RECOVER_UI_TELEMETRY_MAX_CHARS: usize = 360;
+
+fn presentation_recover_ui_summary(message: &str, schema_retry: bool) -> String {
+    if message.contains(FCP_JSON_REPAIR_MARKER) {
+        return JSON_REPAIR_UI_SUMMARY.to_string();
+    }
+    if schema_retry {
+        return schema_retry_telemetry_summary(message);
+    }
+    truncate_ui_recover_message(message, RECOVER_UI_TELEMETRY_MAX_CHARS)
+}
+
+/// One-line telemetry for targeted schema retry: full NL schema blocks stay in logs / LLM stack only.
+fn schema_retry_telemetry_summary(message: &str) -> String {
+    let mut tools: Vec<String> = Vec::new();
+    for line in message.lines() {
+        let t = line.trim();
+        let prefix = "Tool \"";
+        if let Some(suffix) = t.strip_prefix(prefix) {
+            if let Some((name, _)) = suffix.split_once('"') {
+                if !name.is_empty() && !tools.iter().any(|x| x == name) {
+                    tools.push(name.to_string());
+                }
+                if tools.len() >= 6 {
+                    break;
+                }
+            }
+        }
+    }
+    if tools.is_empty() {
+        "[SYSTEM] Recovery — argument validation failed; retrying with expanded schemas (see core log)."
+            .to_string()
+    } else {
+        format!(
+            "[SYSTEM] Recovery — retrying {} with expanded argument schemas (see core log).",
+            tools.join(", ")
+        )
+    }
+}
+
+fn truncate_ui_recover_message(message: &str, max_chars: usize) -> String {
+    let count = message.chars().count();
+    if count <= max_chars {
+        return message.to_string();
+    }
+    let take = max_chars.saturating_sub(24);
+    let mut s: String = message.chars().take(take).collect();
+    s.push_str("… (see core log)");
+    s
+}
+
 impl<E: LlmEngine> Orchestrator<E> {
     /// Single mutation funnel for state-machine transitions.
     ///
@@ -53,11 +105,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                     content: message.clone(),
                 });
                 if let Some(tx) = &self.presentation_tx {
-                    let presentation_line = if message.contains(FCP_JSON_REPAIR_MARKER) {
-                        JSON_REPAIR_UI_SUMMARY.to_string()
-                    } else {
-                        message.clone()
-                    };
+                    let presentation_line = presentation_recover_ui_summary(&message, schema_retry);
                     let _ = tx.send(SessionEvent::SystemError(presentation_line)).await;
                 }
                 self.broadcast_state().await;
@@ -124,5 +172,46 @@ impl<E: LlmEngine> Orchestrator<E> {
             }
             other => other,
         }
+    }
+}
+
+#[cfg(test)]
+mod recover_ui_summary_tests {
+    use super::*;
+
+    #[test]
+    fn schema_retry_summary_extracts_tool_names() {
+        let msg = concat!(
+            "[SYSTEM] Recovery\n\n",
+            "Tool \"memory:stage\" rejected your arguments.\n\n",
+            "Error: x\n\n",
+            "---\n\n",
+            "Tool \"vault:read\" rejected your arguments.\n",
+        );
+        let s = schema_retry_telemetry_summary(msg);
+        assert!(s.contains("memory:stage"), "{s}");
+        assert!(s.contains("vault:read"), "{s}");
+        assert!(s.contains("see core log"), "{s}");
+    }
+
+    #[test]
+    fn schema_retry_summary_fallback_when_no_tool_lines() {
+        let s = schema_retry_telemetry_summary("[SYSTEM] Recovery\n\n(no tool headers here)");
+        assert!(s.contains("argument validation failed"), "{s}");
+    }
+
+    #[test]
+    fn truncate_adds_ellipsis_hint() {
+        let body = "x".repeat(400);
+        let s = truncate_ui_recover_message(&body, 100);
+        assert!(s.ends_with("… (see core log)"), "{s}");
+        assert!(s.len() < body.len());
+    }
+
+    #[test]
+    fn json_repair_marker_maps_to_short_line() {
+        let msg = format!("parse err\n\n{FCP_JSON_REPAIR_MARKER}\nhint");
+        let s = presentation_recover_ui_summary(&msg, true);
+        assert_eq!(s, JSON_REPAIR_UI_SUMMARY);
     }
 }

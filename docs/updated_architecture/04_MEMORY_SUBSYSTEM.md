@@ -17,7 +17,7 @@
 - **Client:** `qdrant_client::Qdrant` gRPC from `AppConfig::qdrant_url`.
 - **Collection:** `AppConfig::qdrant_collection_v2` (computed `fcp_vault_v2_{workspace}`); vectors 768-dim cosine (matches typical nomic-embed dimensions).
 - **`create_collection`** if missing.
-- **`generate_embedding`:** via Ollama embeddings API (same as ToolRouter).
+- **`generate_embedding`:** via `Arc<dyn EmbeddingProvider>` (backend-agnostic; `OllamaEmbedding` or `LlamaCppEmbedding` depending on `llm_backend`).
 - **Upsert:** point with payload `text`, `tags`, `vault_key`, **`recency_ts`** (Unix time in **milliseconds**: vault ingest uses source file `mtime`; commits and web chunks use wall-clock at upsert).
 - **`upsert_vault_document`:** stable point id from UUID v5 of path — avoids duplicate points on re-ingest.
 - **Search:** `search_memory_query` — **`semantic`** (default): vector similarity, optional tag filter, `vault_path_prefix`, oversampling when filtering post-Qdrant. **`recency`**: Qdrant scroll ordered by `recency_ts` descending (no embedding call); same tag/prefix fallback behavior as semantic mode.
@@ -36,7 +36,7 @@
 | Tier | Technology | Purpose |
 |------|------------|---------|
 | Ephemeral | moka + optional bincode file | Staging, web artifact cache lines, rolling summary (see `orchestrator::context` / `context/window.rs`), tiered promotion toward commit |
-| Semantic | Qdrant + Ollama embeddings | Long-term vector search, vault chunk recall (v2 layout + synthesis heads) |
+| Semantic | Qdrant + `EmbeddingProvider` (Ollama or llama.cpp) | Long-term vector search, vault chunk recall (v2 layout + synthesis heads) |
 
 ```mermaid
 flowchart LR

@@ -9,7 +9,7 @@ This folder is a **developer and agent** guide to the `eris` crate (`src/`). It 
 | [00_OVERVIEW.md](./00_OVERVIEW.md) | Mental model, layer diagram, glossary |
 | [01_BOOTSTRAP_AND_EXECUTIVE.md](./01_BOOTSTRAP_AND_EXECUTIVE.md) | `main`, CLI, config, vault paths, ignition, peripherals |
 | [02_ORCHESTRATOR_LAYER.md](./02_ORCHESTRATOR_LAYER.md) | `Orchestrator::step`, state machine, routing, `context/`, `llm_support/`, alarms, heartbeat |
-| [03_ENGINE_LLM_AND_ROUTING.md](./03_ENGINE_LLM_AND_ROUTING.md) | `LlmEngine`, Ollama, ToolRouter, optional reasoning FSM |
+| [03_ENGINE_LLM_AND_ROUTING.md](./03_ENGINE_LLM_AND_ROUTING.md) | `LlmEngine` (Ollama + LlamaCpp), `EmbeddingProvider`, GBNF grammar compiler, ToolRouter |
 | [04_MEMORY_SUBSYSTEM.md](./04_MEMORY_SUBSYSTEM.md) | Ephemeral cache, Qdrant semantic brain, ingest, snapshot daemon |
 | [05_TOOLS_GATEKEEPER_DESCRIPTORS.md](./05_TOOLS_GATEKEEPER_DESCRIPTORS.md) | `Tool` trait, registry, gatekeeper, embedded descriptors |
 | [06_UI_TELEMETRY_OPERATIONS.md](./06_UI_TELEMETRY_OPERATIONS.md) | Presentation types (`SessionEvent` / `UserAction`), TUI (`ui/terminal`), web UI (`ui/web`), optional Discord sidecar, multiplexer, alarms, conditional idle heartbeat, logging, preflight |
