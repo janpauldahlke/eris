@@ -3,7 +3,7 @@
 use crate::benchmark::suite::{Scenario, ScenarioResult, Step, SuccessCriteria};
 use crate::benchmark::{CleanupReport, IsolationMode, QualityMetrics, SideEffectFilter};
 use crate::benchmark::metrics::StepTiming;
-use crate::engine::ollama::OllamaClient;
+use crate::engine::AnyEngine;
 use crate::engine::Message;
 use crate::executive::error::Result;
 use crate::orchestrator::core::Orchestrator;
@@ -46,7 +46,7 @@ impl BenchmarkHarness {
     /// Effective deadline: `max(scenario.timeout_seconds, scenario_timeout_floor_secs)`.
     pub async fn run_scenario_with_orchestrator(
         &self,
-        orchestrator: &mut Orchestrator<OllamaClient>,
+        orchestrator: &mut Orchestrator<AnyEngine>,
         scenario: &Scenario,
         scenario_timeout_floor_secs: u64,
     ) -> Result<(ScenarioResult, Vec<StepTiming>)> {
@@ -101,7 +101,7 @@ impl BenchmarkHarness {
     }
 
     async fn execute_scenario(
-        orchestrator: &mut Orchestrator<OllamaClient>,
+        orchestrator: &mut Orchestrator<AnyEngine>,
         scenario: &Scenario,
         started: Instant,
     ) -> (ScenarioResult, Vec<StepTiming>) {

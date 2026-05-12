@@ -5,6 +5,7 @@ use crate::benchmark::{
 };
 use crate::benchmark::metrics::{StepTiming, SuiteSpeedAggregate};
 use crate::config::AppConfig;
+use crate::engine::AnyEngine;
 use crate::engine::ollama::OllamaClient;
 use crate::engine::token_metrics;
 use crate::executive::error::{FcpError, Result};
@@ -103,9 +104,11 @@ pub async fn run_benchmark(
             }
         };
 
-    // Create a second engine for the orchestrator
+    // Create a second engine for the orchestrator (wrapped in AnyEngine for runtime dispatch)
     let (token_metrics_tx2, _token_metrics_rx2) = token_metrics::channel();
-    let engine_for_orchestrator = OllamaClient::with_token_metrics(client.clone(), Arc::new(config.clone()), token_metrics_tx2);
+    let engine_for_orchestrator = AnyEngine::Ollama(
+        OllamaClient::with_token_metrics(client.clone(), Arc::new(config.clone()), token_metrics_tx2),
+    );
 
     // Set up ephemeral memory
     let ephemeral = Arc::new(EphemeralMemory::new(config.workspace.clone()));

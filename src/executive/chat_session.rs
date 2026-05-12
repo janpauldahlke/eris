@@ -9,9 +9,10 @@ use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-use crate::config::AppConfig;
+use crate::config::{AppConfig, LlmBackend};
 use crate::engine::ollama::OllamaClient;
 use crate::engine::token_metrics::LlmTokenSnapshot;
+use crate::engine::{AnyEngine, LlamaCppClient};
 use crate::executive::cli::Cli;
 use crate::executive::error::{FcpError, Result};
 use crate::executive::ignition::IgnitionOptions;
@@ -206,7 +207,18 @@ pub async fn start_chat_session(
 
     let client = Ollama::new(host, port);
     let (token_metrics_tx, token_metrics_rx) = crate::engine::token_metrics::channel();
-    let engine = OllamaClient::with_token_metrics(client.clone(), config.clone(), token_metrics_tx);
+    let engine: AnyEngine = match config.llm_backend {
+        LlmBackend::Ollama => {
+            let ollama_engine =
+                OllamaClient::with_token_metrics(client.clone(), config.clone(), token_metrics_tx);
+            AnyEngine::Ollama(ollama_engine)
+        }
+        LlmBackend::LlamaCpp => {
+            let llamacpp_engine = LlamaCppClient::new(config.clone())?
+                .with_token_metrics(token_metrics_tx);
+            AnyEngine::LlamaCpp(llamacpp_engine)
+        }
+    };
     let ollama_arc = Arc::new(client);
     let ephemeral = Arc::new(EphemeralMemory::new(config.workspace.clone()));
     let connect_attempts = config.semantic_brain_connect_attempts;
