@@ -704,11 +704,40 @@ pub async fn start_chat_session(
 
     if config.is_llamacpp() {
         let tool_names = gatekeeper.registered_tool_names();
-        let grammar = crate::engine::grammar::compile_fcp_envelope_grammar(&tool_names);
+        let mut typed_count: usize = 0;
+        let mut fallback_count: usize = 0;
+
+        let entries: Vec<crate::engine::grammar::ToolGrammarEntry> = tool_names
+            .iter()
+            .map(|name| {
+                let per_tool_rules = gatekeeper
+                    .parameters_root_schema_for(name)
+                    .and_then(|schema| {
+                        crate::engine::grammar::schema_to_gbnf_rule(name, &schema)
+                    })
+                    .map(|(_rule_name, rules)| rules);
+
+                if per_tool_rules.is_some() {
+                    typed_count += 1;
+                } else {
+                    fallback_count += 1;
+                }
+
+                crate::engine::grammar::ToolGrammarEntry {
+                    name: name.clone(),
+                    per_tool_rules,
+                }
+            })
+            .collect();
+
+        let grammar =
+            crate::engine::grammar::compile_fcp_envelope_grammar_dynamic(&entries);
         tracing::info!(
             tool_count = tool_names.len(),
+            typed_count,
+            fallback_count,
             grammar_len = grammar.len(),
-            "Compiled GBNF envelope grammar for llama.cpp"
+            "Compiled dynamic per-tool GBNF grammar for llama.cpp"
         );
         engine.set_grammar(grammar);
     }

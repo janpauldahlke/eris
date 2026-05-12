@@ -1,7 +1,7 @@
+use super::schema_to_gbnf::GbnfRule;
 use super::tool_names::build_tool_name_enum;
 
-/// Static GBNF skeleton. The `{tool_name_enum}` placeholder is replaced at compile time.
-/// The `tool-call` and `tool-name-enum` rules are included only when tools are present.
+/// Static GBNF skeleton — shared between static-args and per-tool-args modes.
 const STATIC_GRAMMAR: &str = r#"root ::= "{" ws thought-kv "," ws status-kv "," ws message-kv "," ws toolcalls-kv ws "}"
 
 ws ::= [ \t\n]*
@@ -25,15 +25,20 @@ json-escape ::= ["\\nrtbf/] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F
 json-number ::= "-"? ("0" | [1-9] [0-9]*) ("." [0-9]+)? ([eE] [+-]? [0-9]+)?
 "#;
 
-/// GBNF rules appended when at least one tool is registered.
+/// GBNF rules for the legacy static-args path (Phase 4 fallback).
 const TOOL_CALL_RULES_TEMPLATE: &str = r#"tool-call-list ::= "" | tool-call ("," ws tool-call)*
 tool-call ::= "{" ws "\"name\"" ws ":" ws tool-name-enum ws "," ws "\"args\"" ws ":" ws json-object ws "}"
+"#;
+
+/// Per-tool dynamic-args version: tool-call dispatches into `tool-with-args`.
+const TOOL_CALL_RULES_DYNAMIC: &str = r#"tool-call-list ::= "" | tool-call ("," ws tool-call)*
+tool-call ::= "{" ws "\"name\"" ws ":" ws tool-with-args ws "}"
 "#;
 
 /// GBNF rule for when no tools are registered — only empty arrays are valid.
 const NO_TOOL_RULES: &str = "tool-call-list ::= \"\"\n";
 
-/// Build a complete GBNF grammar string for the FCP protocol envelope.
+/// Build a complete GBNF grammar string for the FCP protocol envelope (Phase 4 — static args).
 ///
 /// `tool_names` is the set of registered tool names (e.g., `["vault:read", "vault:write", ...]`).
 /// Returns a ready-to-use GBNF string that constrains LLM output to valid `LlmResponse` JSON.
@@ -49,6 +54,62 @@ pub fn compile_fcp_envelope_grammar(tool_names: &[String]) -> String {
         let enum_body = build_tool_name_enum(tool_names);
         grammar.push_str(&format!("tool-name-enum ::= {enum_body}\n"));
     }
+
+    grammar
+}
+
+/// Per-tool entry for [`compile_fcp_envelope_grammar_dynamic`].
+///
+/// `name` is the tool name (e.g. `"vault:read"`).
+/// `per_tool_rules` is `Some(rules)` when the schema compiled successfully,
+/// where `rules[0]` is the main args rule for this tool and the rest are helpers.
+/// `None` means this tool falls back to `json-object` for its args.
+pub struct ToolGrammarEntry {
+    pub name: String,
+    pub per_tool_rules: Option<Vec<GbnfRule>>,
+}
+
+/// Build a complete GBNF grammar string with **per-tool arg rules** (Phase 7).
+///
+/// Each tool's `name` field is coupled with its specific args shape in the
+/// `tool-with-args` alternation. Tools that couldn't be compiled fall back to
+/// `json-object`.
+pub fn compile_fcp_envelope_grammar_dynamic(tools: &[ToolGrammarEntry]) -> String {
+    let mut grammar = String::with_capacity(4096);
+    grammar.push_str(STATIC_GRAMMAR);
+    grammar.push('\n');
+
+    if tools.is_empty() {
+        grammar.push_str(NO_TOOL_RULES);
+        return grammar;
+    }
+
+    grammar.push_str(TOOL_CALL_RULES_DYNAMIC);
+
+    let mut alternation_parts: Vec<String> = Vec::with_capacity(tools.len());
+
+    for entry in tools {
+        let quoted_name = format!("\"\\\"{}\\\"\"", entry.name);
+        match &entry.per_tool_rules {
+            Some(rules) if !rules.is_empty() => {
+                let main_rule_name = &rules[0].0;
+                alternation_parts.push(format!(
+                    "{quoted_name} ws \",\" ws \"\\\"args\\\"\" ws \":\" ws {main_rule_name}"
+                ));
+                for (rule_name, rule_body) in rules {
+                    grammar.push_str(&format!("{rule_name} ::= {rule_body}\n"));
+                }
+            }
+            _ => {
+                alternation_parts.push(format!(
+                    "{quoted_name} ws \",\" ws \"\\\"args\\\"\" ws \":\" ws json-object"
+                ));
+            }
+        }
+    }
+
+    let alternation = alternation_parts.join("\n  | ");
+    grammar.push_str(&format!("tool-with-args ::=\n    {alternation}\n"));
 
     grammar
 }
@@ -190,6 +251,86 @@ mod tests {
                 r#"{"thought":"plan","status":"Process","message_to_user":null,"tool_calls":[]}"#,
             );
             assert_eq!(r.status, "Process");
+        }
+    }
+
+    mod dynamic_grammar {
+        use super::*;
+
+        fn typed_entry(name: &str, rule_name: &str, rule_body: &str) -> ToolGrammarEntry {
+            ToolGrammarEntry {
+                name: name.into(),
+                per_tool_rules: Some(vec![(rule_name.into(), rule_body.into())]),
+            }
+        }
+
+        fn fallback_entry(name: &str) -> ToolGrammarEntry {
+            ToolGrammarEntry {
+                name: name.into(),
+                per_tool_rules: None,
+            }
+        }
+
+        #[test]
+        fn dynamic_empty_tools() {
+            let grammar = compile_fcp_envelope_grammar_dynamic(&[]);
+            assert!(grammar.contains("root ::="));
+            assert!(grammar.contains("tool-call-list ::= \"\""));
+            assert!(!grammar.contains("tool-with-args"));
+        }
+
+        #[test]
+        fn dynamic_with_typed_and_fallback() {
+            let entries = vec![
+                typed_entry(
+                    "vault:read",
+                    "vault-read-args",
+                    r#""{" ws "\"relative_path\"" ws ":" ws json-string ws "}""#,
+                ),
+                fallback_entry("memory:stage"),
+            ];
+            let grammar = compile_fcp_envelope_grammar_dynamic(&entries);
+            assert!(grammar.contains("tool-with-args"));
+            assert!(grammar.contains("vault:read"));
+            assert!(grammar.contains("vault-read-args"));
+            assert!(grammar.contains("memory:stage"));
+            assert!(
+                grammar.contains("json-object"),
+                "fallback tool should use json-object"
+            );
+        }
+
+        #[test]
+        fn dynamic_grammar_contains_all_status_values() {
+            let entries = vec![typed_entry(
+                "test:tool",
+                "test-tool-args",
+                "\"{\" ws \"}\"",
+            )];
+            let grammar = compile_fcp_envelope_grammar_dynamic(&entries);
+            for status in &["Task", "Reflect", "Idle", "Process"] {
+                assert!(grammar.contains(status));
+            }
+        }
+
+        #[test]
+        fn dynamic_grammar_emits_extra_rules() {
+            let entries = vec![ToolGrammarEntry {
+                name: "test:array".into(),
+                per_tool_rules: Some(vec![
+                    (
+                        "test-array-args".into(),
+                        "\"{\" ws \"\\\"tags\\\"\" ws \":\" ws \"[\" ws (test-array-args-tags-list)? ws \"]\" ws \"}\"".into(),
+                    ),
+                    (
+                        "test-array-args-tags-list".into(),
+                        "json-string (\",\" ws json-string)*".into(),
+                    ),
+                ]),
+            }];
+            let grammar = compile_fcp_envelope_grammar_dynamic(&entries);
+            assert!(grammar.contains("test-array-args-tags-list ::="));
+            assert!(grammar.contains("json-string (\",\" ws json-string)*"));
         }
     }
 }
