@@ -1,5 +1,18 @@
 # AI SHOULD IGNORE THIS DOC!!!
 
+## Backend Selection
+
+Eris supports two LLM backends:
+
+- **Ollama** (default): Manages models via Ollama's API. Easiest setup.
+- **llama.cpp**: Direct GGUF model inference via llama-server. More control, GBNF grammar enforcement for structured output.
+
+See [LLAMA_CPP_SETUP.md](LLAMA_CPP_SETUP.md) for llama.cpp installation and configuration.
+
+Backend is selected during first-run ignition (`eris chat` in a fresh vault directory) or by setting `llm_backend` in `.fcp/config.toml`.
+
+---
+
 # THE SNIPER PROTOCOL (Operator Manual)
 
 **The Prime Directive:** Never let the IDE auto-pilot a whole file. Build by the function, test by the function. The moment a test passes, the chat window is contaminated with dead context.
