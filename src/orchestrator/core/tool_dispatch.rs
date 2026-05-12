@@ -1,5 +1,7 @@
 use crate::engine::LlmEngine;
 use crate::executive::error::{FcpError, Result};
+use crate::orchestrator::context::resolved_tool_recovery::SYSTEM_RECOVERY_PREFIX;
+use crate::orchestrator::llm_support::json_envelope::natural_language_schema_description;
 use crate::orchestrator::llm_support::post_tool_guidance::{
     POST_TOOL_USER_REPLY_GUIDANCE, recover_override_message_for_tool_failure,
 };
@@ -74,6 +76,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         let mut recoverable_msg: Option<String> = None;
         let mut fatal_error = None;
         let mut targeted_recovery_requested = false;
+        let mut schema_retry_rows: Vec<(String, String)> = Vec::new();
         let mut executed_success_count = 0usize;
         let mut suppressed_duplicate_count = 0usize;
         let mut recoverable_fail_count = 0usize;
@@ -249,6 +252,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                             schema_recovery_attempted.insert(tool_name.clone());
                             targeted_tools.insert(tool_name.clone());
                             targeted_recovery_requested = true;
+                            schema_retry_rows.push((tool_name.clone(), err.to_string()));
                             recoverable_fail_count += 1;
                             if let Some(ticket) = execution_ledger.get_mut(&intent_id) {
                                 ticket.status = ToolIntentStatus::FailedRecoverable;
@@ -362,10 +366,31 @@ impl<E: LlmEngine> Orchestrator<E> {
         if targeted_recovery_requested {
             self.force_full_tool_schemas_in_llm_view = true;
             let selected = targeted_tools.iter().cloned().collect::<Vec<_>>();
-            let msg = format!(
-                "[SYSTEM RECOVERY] Tool schema fault detected. Retrying with targeted schemas for: {:?}",
-                selected
-            );
+            let msg = if self.config.is_llamacpp() {
+                let mut blocks: Vec<String> = Vec::new();
+                for (tool_name, err_msg) in &schema_retry_rows {
+                    if let Some(rs) = self.gatekeeper.parameters_root_schema_for(tool_name) {
+                        blocks.push(natural_language_schema_description(
+                            tool_name,
+                            &rs,
+                            err_msg,
+                        ));
+                    } else {
+                        blocks.push(format!(
+                            "Tool \"{tool_name}\" rejected your arguments.\n\nError: {err_msg}\n\nExpected arguments:\n(No parameter schema is registered for this tool name.)\n\nRetry with corrected tool_calls."
+                        ));
+                    }
+                }
+                format!(
+                    "{SYSTEM_RECOVERY_PREFIX}\n\n{}",
+                    blocks.join("\n\n---\n\n")
+                )
+            } else {
+                format!(
+                    "[SYSTEM RECOVERY] Tool schema fault detected. Retrying with targeted schemas for: {:?}",
+                    selected
+                )
+            };
             tracing::info!(targeted_tools = ?selected, "Triggering targeted schema-fault recovery retry");
             return Ok(ToolBatchDecision::RetryWithTargetedSchema { message: msg });
         }
@@ -601,5 +626,191 @@ mod repeat_failure_streak_tests {
             .expect("batch");
         assert_eq!(calls.load(Ordering::SeqCst), 2);
         assert!(matches!(decision, ToolBatchDecision::Recover { .. }));
+    }
+}
+
+#[cfg(test)]
+mod targeted_schema_retry_phase5_tests {
+    use super::*;
+    use crate::config::{AppConfig, LlmBackend};
+    use crate::engine::{EngineResponse, LlmEngine, Message};
+    use crate::executive::error::Result;
+    use crate::memory::ephemeral::EphemeralMemory;
+    use crate::orchestrator::context::ContextViewSettings;
+    use crate::orchestrator::r#loop::tool_batch::ToolBatchDecision;
+    use crate::orchestrator::state::{AgentState, ToolCall};
+    use crate::tools::Gatekeeper;
+    use crate::tools::traits::Tool;
+    use async_trait::async_trait;
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+    use serde_json::json;
+    use std::collections::{HashMap, HashSet};
+    use std::path::Path;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use tokio::sync::{mpsc, watch};
+
+    #[derive(JsonSchema, Deserialize)]
+    #[allow(dead_code)]
+    struct TwoFieldArgs {
+        title: String,
+        count: i32,
+    }
+
+    struct SchemaFaultProbeTool;
+
+    #[async_trait]
+    impl Tool for SchemaFaultProbeTool {
+        fn name(&self) -> &'static str {
+            "fcp_schema_fault_nl_probe"
+        }
+
+        fn description(&self) -> &'static str {
+            "phase-5 schema retry NL vs JSON path probe"
+        }
+
+        fn parameters_schema(&self) -> schemars::schema::RootSchema {
+            schemars::schema_for!(TwoFieldArgs)
+        }
+
+        async fn execute(&self, _args: serde_json::Value) -> Result<String> {
+            Ok("ok".into())
+        }
+    }
+
+    struct StubEngine;
+
+    #[async_trait]
+    impl LlmEngine for StubEngine {
+        async fn generate(
+            &self,
+            _stack: &[Message],
+            _available_tools_json: &str,
+            _stream_tx: Option<mpsc::UnboundedSender<String>>,
+        ) -> Result<EngineResponse> {
+            Ok(EngineResponse {
+                content: "{}".into(),
+                prompt_tokens: 0,
+                generated_tokens: 0,
+            })
+        }
+    }
+
+    fn orchestrator_for_schema_retry(backend: LlmBackend) -> Orchestrator<StubEngine> {
+        let mut gatekeeper = Gatekeeper::new();
+        gatekeeper.register(Arc::new(SchemaFaultProbeTool));
+        let ephemeral = Arc::new(EphemeralMemory::new("ws".into()));
+        let vault_root = Path::new("/tmp/vault");
+        let (tx, rx) = watch::channel(());
+        Box::leak(Box::new(tx));
+        let (id_tx, id_rx) = watch::channel(Arc::from("id"));
+        Box::leak(Box::new(id_tx));
+        let mut cfg = AppConfig::default();
+        cfg.llm_backend = backend;
+        Orchestrator::new(
+            StubEngine,
+            gatekeeper,
+            ephemeral,
+            vault_root,
+            "ws",
+            3,
+            5,
+            0.8,
+            4096,
+            3,
+            6000,
+            false,
+            0,
+            rx,
+            None,
+            None,
+            None,
+            ContextViewSettings::default(),
+            Arc::new(cfg),
+            id_rx,
+            Arc::new(AtomicBool::new(false)),
+        )
+    }
+
+    #[tokio::test]
+    async fn targeted_retry_uses_natural_language_for_llamacpp() {
+        let mut orch = orchestrator_for_schema_retry(LlmBackend::LlamaCpp);
+        orch.state = AgentState::Chat;
+        let mut ledger = HashMap::new();
+        let mut schema = HashSet::new();
+        let mut targeted = HashSet::new();
+        let mut web = false;
+        let mut tool_ms = 0u64;
+        let tools = vec![ToolCall {
+            name: "fcp_schema_fault_nl_probe".into(),
+            args: json!({}),
+            id: None,
+        }];
+        let decision = orch
+            .execute_tool_batch(
+                tools,
+                true,
+                &mut ledger,
+                &mut schema,
+                &mut targeted,
+                &mut web,
+                &mut tool_ms,
+                1u64,
+                false,
+            )
+            .await
+            .expect("batch");
+        match decision {
+            ToolBatchDecision::RetryWithTargetedSchema { message } => {
+                assert!(
+                    message.contains("Expected arguments:"),
+                    "NL schema recovery: {message}"
+                );
+                assert!(message.contains("title"));
+                assert!(message.contains("count"));
+            }
+            other => panic!("expected RetryWithTargetedSchema, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn targeted_retry_uses_json_schema_for_ollama() {
+        let mut orch = orchestrator_for_schema_retry(LlmBackend::Ollama);
+        orch.state = AgentState::Chat;
+        let mut ledger = HashMap::new();
+        let mut schema = HashSet::new();
+        let mut targeted = HashSet::new();
+        let mut web = false;
+        let mut tool_ms = 0u64;
+        let tools = vec![ToolCall {
+            name: "fcp_schema_fault_nl_probe".into(),
+            args: json!({}),
+            id: None,
+        }];
+        let decision = orch
+            .execute_tool_batch(
+                tools,
+                true,
+                &mut ledger,
+                &mut schema,
+                &mut targeted,
+                &mut web,
+                &mut tool_ms,
+                1u64,
+                false,
+            )
+            .await
+            .expect("batch");
+        match decision {
+            ToolBatchDecision::RetryWithTargetedSchema { message } => {
+                assert!(message.contains("Tool schema fault detected"));
+                assert!(
+                    !message.contains("Expected arguments:"),
+                    "Ollama path should keep legacy short recovery banner: {message}"
+                );
+            }
+            other => panic!("expected RetryWithTargetedSchema, got {:?}", other),
+        }
     }
 }

@@ -7,12 +7,31 @@ use crate::orchestrator::state::{AgentState, LlmResponse, LoopAction, LoopDirect
 use super::Orchestrator;
 
 impl<E: LlmEngine> Orchestrator<E> {
+    pub(super) fn protocol_parse_failure_directive(
+        &self,
+        err: &serde_json::Error,
+        raw: &str,
+    ) -> LoopDirective {
+        if self.config.is_llamacpp() {
+            tracing::error!(
+                error = %err,
+                "GRAMMAR BUG: LLM response failed JSON parse despite active GBNF grammar"
+            );
+            LoopDirective::RecoverFromFuckup(format!(
+                "[GRAMMAR BUG] {}",
+                llm_json_parse_recovery_message_with_excerpt(err, raw)
+            ))
+        } else {
+            LoopDirective::RecoverFromFuckup(llm_json_parse_recovery_message_with_excerpt(
+                err, raw,
+            ))
+        }
+    }
+
     pub fn process_llm_response(&mut self, response_json: &str) -> LoopDirective {
         match parse_llm_response_protocol(response_json) {
             Ok(parsed) => self.directive_from_parsed(parsed),
-            Err(e) => LoopDirective::RecoverFromFuckup(
-                llm_json_parse_recovery_message_with_excerpt(&e, response_json),
-            ),
+            Err(e) => self.protocol_parse_failure_directive(&e, response_json),
         }
     }
 
@@ -36,10 +55,13 @@ impl<E: LlmEngine> Orchestrator<E> {
                 .as_ref()
                 .is_none_or(|m| m.trim().is_empty())
         {
-            return LoopDirective::RecoverFromFuckup(
+            let msg = if self.config.is_llamacpp() {
+                "Missing required `status` and no tool_calls or message_to_user.".to_string()
+            } else {
                 "Missing required `status` and no actionable fields (`tool_calls`/`message_to_user`)"
-                    .to_string(),
-            );
+                    .to_string()
+            };
+            return LoopDirective::RecoverFromFuckup(msg);
         }
 
         if !parsed.tool_calls.is_empty() {
@@ -61,9 +83,12 @@ impl<E: LlmEngine> Orchestrator<E> {
                     return LoopDirective::HaltAndAwaitInput(Some(msg));
                 }
                 if tool_mode_empty_action {
-                    return LoopDirective::RecoverFromFuckup(
-                        "Tool-enabled mode forbids empty action: status Reflect with empty tool_calls and empty message_to_user. Use Reflect with tool_calls, or Idle with non-empty message_to_user.".to_string(),
-                    );
+                    let msg = if self.config.is_llamacpp() {
+                        "Empty action: include tool_calls or a non-empty message_to_user.".to_string()
+                    } else {
+                        "Tool-enabled mode forbids empty action: status Reflect with empty tool_calls and empty message_to_user. Use Reflect with tool_calls, or Idle with non-empty message_to_user.".to_string()
+                    };
+                    return LoopDirective::RecoverFromFuckup(msg);
                 }
                 tracing::debug!("Reflect with empty tool_calls — treating as Task");
                 self.state = AgentState::Chat;
@@ -76,21 +101,161 @@ impl<E: LlmEngine> Orchestrator<E> {
                     if !thought.is_empty() {
                         LoopDirective::HaltAndAwaitInput(Some(thought.to_string()))
                     } else {
-                        LoopDirective::RecoverFromFuckup(
-                            "Idle status requires non-empty message_to_user (or non-empty thought as fallback)".to_string(),
-                        )
+                        let msg = if self.config.is_llamacpp() {
+                            "Idle requires a non-empty message_to_user (or non-empty thought)."
+                                .to_string()
+                        } else {
+                            "Idle status requires non-empty message_to_user (or non-empty thought as fallback)".to_string()
+                        };
+                        LoopDirective::RecoverFromFuckup(msg)
                     }
                 }
             },
             LoopAction::Task => {
                 if tool_mode_empty_action {
-                    return LoopDirective::RecoverFromFuckup(
-                        "Tool-enabled mode forbids empty action: status Task with empty tool_calls and empty message_to_user. Use Reflect with tool_calls, or Idle with non-empty message_to_user.".to_string(),
-                    );
+                    let msg = if self.config.is_llamacpp() {
+                        "Empty action: include tool_calls or a non-empty message_to_user.".to_string()
+                    } else {
+                        "Tool-enabled mode forbids empty action: status Task with empty tool_calls and empty message_to_user. Use Reflect with tool_calls, or Idle with non-empty message_to_user.".to_string()
+                    };
+                    return LoopDirective::RecoverFromFuckup(msg);
                 }
                 self.state = AgentState::Chat;
                 LoopDirective::ShiftToReflection
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod phase5_recovery_tests {
+    use super::*;
+    use crate::config::{AppConfig, LlmBackend};
+    use crate::engine::{EngineResponse, LlmEngine, Message};
+    use crate::memory::ephemeral::EphemeralMemory;
+    use crate::orchestrator::context::ContextViewSettings;
+    use crate::orchestrator::llm_support::json_envelope::FCP_JSON_REPAIR_MARKER;
+    use crate::tools::Gatekeeper;
+    use async_trait::async_trait;
+    use std::path::Path;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use tokio::sync::watch;
+    use tracing_test::traced_test;
+
+    struct StubEngine;
+
+    #[async_trait]
+    impl LlmEngine for StubEngine {
+        async fn generate(
+            &self,
+            _stack: &[Message],
+            _available_tools_json: &str,
+            _stream_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+        ) -> crate::executive::error::Result<EngineResponse> {
+            Ok(EngineResponse {
+                content: "{}".into(),
+                prompt_tokens: 0,
+                generated_tokens: 0,
+            })
+        }
+    }
+
+    fn orchestrator_with_config(config: AppConfig) -> Orchestrator<StubEngine> {
+        let gatekeeper = Gatekeeper::new();
+        let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
+        let vault_root = Path::new("/tmp/vault");
+        let (tx, rx) = watch::channel(());
+        Box::leak(Box::new(tx));
+        let (id_tx, id_rx) = watch::channel(Arc::from("id"));
+        Box::leak(Box::new(id_tx));
+        Orchestrator::new(
+            StubEngine,
+            gatekeeper,
+            ephemeral,
+            vault_root,
+            "test_ws",
+            3,
+            5,
+            0.8,
+            4096,
+            3,
+            6000,
+            false,
+            0,
+            rx,
+            None,
+            None,
+            None,
+            ContextViewSettings::default(),
+            Arc::new(config),
+            id_rx,
+            Arc::new(AtomicBool::new(false)),
+        )
+    }
+
+    #[traced_test]
+    #[test]
+    fn grammar_path_json_parse_error_logs_error() {
+        let mut cfg = AppConfig::default();
+        cfg.llm_backend = LlmBackend::LlamaCpp;
+        let mut orch = orchestrator_with_config(cfg);
+        let directive = orch.process_llm_response(r#"{"broken""#);
+        assert!(
+            logs_contain("GRAMMAR BUG"),
+            "expected error log with GRAMMAR BUG tag"
+        );
+        match directive {
+            LoopDirective::RecoverFromFuckup(msg) => {
+                assert!(msg.contains("[GRAMMAR BUG]"));
+                assert!(msg.contains(FCP_JSON_REPAIR_MARKER));
+            }
+            other => panic!("expected RecoverFromFuckup, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn grammar_path_semantic_violation_short_message() {
+        let mut cfg = AppConfig::default();
+        cfg.llm_backend = LlmBackend::LlamaCpp;
+        let mut orch = orchestrator_with_config(cfg);
+        orch.last_turn_tools_enabled = true;
+        let json = r#"{
+            "thought": "test",
+            "status": "Task",
+            "tool_calls": []
+        }"#;
+        let directive = orch.process_llm_response(json);
+        let short = match directive {
+            LoopDirective::RecoverFromFuckup(m) => m,
+            other => panic!("unexpected {:?}", other),
+        };
+        let mut ollama_orch = orchestrator_with_config(AppConfig::default());
+        ollama_orch.last_turn_tools_enabled = true;
+        let long = match ollama_orch.process_llm_response(json) {
+            LoopDirective::RecoverFromFuckup(m) => m,
+            other => panic!("unexpected {:?}", other),
+        };
+        assert!(short.len() < long.len());
+        assert_eq!(
+            short,
+            "Empty action: include tool_calls or a non-empty message_to_user."
+        );
+    }
+
+    #[test]
+    fn ollama_path_recovery_unchanged() {
+        let mut orch = orchestrator_with_config(AppConfig::default());
+        let json = r#"{"status": "BAD_JSON"#;
+        let directive = orch.process_llm_response(json);
+        match directive {
+            LoopDirective::RecoverFromFuckup(msg) => {
+                assert!(!msg.contains("[GRAMMAR BUG]"));
+                assert!(msg.contains(FCP_JSON_REPAIR_MARKER));
+                assert!(msg.contains("tool_calls"));
+                assert!(msg.contains("one more"));
+            }
+            other => panic!("unexpected {:?}", other),
         }
     }
 }

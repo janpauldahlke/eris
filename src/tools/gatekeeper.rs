@@ -3,6 +3,7 @@ use crate::orchestrator::state::AgentState;
 use crate::tools::context_view_hint::ToolContextViewHint;
 use crate::tools::traits::Tool;
 use jsonschema::JSONSchema;
+use schemars::schema::RootSchema;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -159,6 +160,11 @@ impl Gatekeeper {
         self.registry
             .get(name)
             .is_some_and(|t| t.allow_repeat_in_turn())
+    }
+
+    /// Parameter JSON Schema root for a registered tool (for recovery / diagnostics).
+    pub fn parameters_root_schema_for(&self, name: &str) -> Option<RootSchema> {
+        self.registry.get(name).map(|t| t.parameters_schema())
     }
 
     /// Trait defaults for each registered tool, merged with `overrides` (config wins).

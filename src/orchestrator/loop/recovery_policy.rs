@@ -10,6 +10,9 @@ pub enum ToolFailureAction {
 
 /// Pure policy: classify a tool error without mutating orchestrator state.
 ///
+/// Backend-specific recovery formatting (for example natural-language vs legacy recovery
+/// banners) is applied in `tool_dispatch`; this function intentionally stays backend-agnostic.
+///
 /// `NetworkFault` is recoverable here (OAuth/API unreachable, etc.): the batch enters `Recover` so the
 /// model can answer with `message_to_user` instead of aborting the orchestrator. LLM `generate`
 /// failures are unrelated — they do not pass through this classifier.

@@ -69,6 +69,7 @@ gws-builder = "0.1"
 tempfile = "3.27.0"
 figment = { version = "0.10", features = ["test"] }
 wiremock = "0.6"
+tracing-test = "0.2"
 
 [profile.release]
 opt-level = 3
