@@ -20,6 +20,20 @@ pub struct LlamaCppClient {
     grammar: Option<Arc<String>>,
 }
 
+/// Qwen3 chat templates emit `<think>…` before the assistant body unless the template is told
+/// otherwise. If that prose lands in `message.content`, our JSON parser sees plain text even when
+/// a GBNF grammar is attached — so whenever we send `grammar`, we **always** pass this kwargs
+/// block (independent of [`AppConfig::enable_reasoning_fsm`], which is not wired for llama.cpp).
+fn chat_template_kwargs_when_grammar_present(
+    grammar: Option<&Arc<String>>,
+) -> Option<serde_json::Value> {
+    if grammar.is_some() {
+        Some(serde_json::json!({ "enable_thinking": false }))
+    } else {
+        None
+    }
+}
+
 impl LlamaCppClient {
     pub fn new(config: Arc<AppConfig>) -> Result<Self> {
         let lc = config.validate_llamacpp_config()?;
@@ -238,13 +252,7 @@ impl LlmEngine for LlamaCppClient {
         let use_stream = stream_tx.is_some();
         let message_count = messages.len();
 
-        let chat_template_kwargs = if self.grammar.is_some()
-            && !self.config.enable_reasoning_fsm
-        {
-            Some(serde_json::json!({ "enable_thinking": false }))
-        } else {
-            None
-        };
+        let chat_template_kwargs = chat_template_kwargs_when_grammar_present(self.grammar.as_ref());
 
         let request_body = ChatCompletionRequest {
             messages,
@@ -701,6 +709,14 @@ mod tests {
         });
         let result = LlamaCppClient::new(bad_config);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn chat_template_kwargs_always_when_grammar_present() {
+        let g = Arc::new("root ::= \"x\"".into());
+        let k = chat_template_kwargs_when_grammar_present(Some(&g)).expect("some");
+        assert_eq!(k["enable_thinking"], false);
+        assert!(chat_template_kwargs_when_grammar_present(None).is_none());
     }
 
     #[test]

@@ -18,7 +18,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         if self.config.is_llamacpp() {
             tracing::warn!(
                 error = %err,
-                "llama.cpp: model output was not valid FCP protocol JSON while GBNF was active (grammar strongly constrains sampling but does not guarantee JSON; common causes: thinking-template prose before JSON, truncation, or duplicate concatenated objects)"
+                "llama.cpp: model output was not valid FCP protocol JSON while GBNF was active (grammar constrains sampling but does not guarantee JSON; common causes: Qwen `<think>` / template prose before `{{`, truncation, duplicate JSON blobs, or server-side grammar not applied under very large prompts)"
             );
             LoopDirective::RecoverFromFuckup(format!(
                 "[PROTOCOL_JSON] {}",
