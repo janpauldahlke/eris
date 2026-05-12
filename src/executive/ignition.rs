@@ -1,8 +1,8 @@
-use crate::config::AppConfig;
+use crate::config::{default_llamacpp_ready_timeout, AppConfig, LlamaCppConfig, LlmBackend};
 use crate::executive::error::{FcpError, Result};
 use inquire::{Select, Text};
 use ollama_rs::Ollama;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tokio::fs;
 
 /// Values fixed before interactive ignition (e.g. first-run welder).
@@ -32,32 +32,61 @@ pub async fn run_ignition_sequence(
     let model_names: Vec<String> = local_models.into_iter().map(|m| m.name).collect();
 
     // 2. Interactive Prompts (blocking task)
-    let (agent_name, user_name, model_name, ollama_num_gpu, ollama_main_gpu, ollama_low_vram) =
-        tokio::task::spawn_blocking(
-            move || -> Result<(String, String, String, Option<u32>, Option<u32>, Option<bool>)> {
-                let agent_name = Text::new("Agent Name:")
-                    .with_default("ERIS")
-                    .prompt()
-                    .map_err(|e| match e {
-                        inquire::InquireError::OperationCanceled
-                        | inquire::InquireError::OperationInterrupted => {
-                            FcpError::Cancellation("Ignition cancelled by user".into())
-                        }
-                        _ => FcpError::Config(format!("Prompt error: {}", e)),
-                    })?;
+    #[derive(Debug)]
+    struct IgnitionAnswers {
+        agent_name: String,
+        user_name: String,
+        llm_backend: LlmBackend,
+        model_name: String,
+        ollama_num_gpu: Option<u32>,
+        ollama_main_gpu: Option<u32>,
+        ollama_low_vram: Option<bool>,
+        llama_cpp: Option<LlamaCppConfig>,
+        num_ctx: usize,
+    }
 
-                let user_name = Text::new("Your name (optional):")
-                    .with_default("")
-                    .prompt()
-                    .map_err(|e| match e {
-                        inquire::InquireError::OperationCanceled
-                        | inquire::InquireError::OperationInterrupted => {
-                            FcpError::Cancellation("Ignition cancelled by user".into())
-                        }
-                        _ => FcpError::Config(format!("Prompt error: {}", e)),
-                    })?;
-                let user_name = user_name.trim().to_string();
+    let answers = tokio::task::spawn_blocking(move || -> Result<IgnitionAnswers> {
+        let agent_name = Text::new("Agent Name:")
+            .with_default("ERIS")
+            .prompt()
+            .map_err(|e| match e {
+                inquire::InquireError::OperationCanceled
+                | inquire::InquireError::OperationInterrupted => {
+                    FcpError::Cancellation("Ignition cancelled by user".into())
+                }
+                _ => FcpError::Config(format!("Prompt error: {}", e)),
+            })?;
 
+        let user_name = Text::new("Your name (optional):")
+            .with_default("")
+            .prompt()
+            .map_err(|e| match e {
+                inquire::InquireError::OperationCanceled
+                | inquire::InquireError::OperationInterrupted => {
+                    FcpError::Cancellation("Ignition cancelled by user".into())
+                }
+                _ => FcpError::Config(format!("Prompt error: {}", e)),
+            })?;
+        let user_name = user_name.trim().to_string();
+
+        let backend_options = vec!["Ollama", "llama.cpp"];
+        let backend_choice = Select::new("Backend:", backend_options)
+            .prompt()
+            .map_err(|e| match e {
+                inquire::InquireError::OperationCanceled
+                | inquire::InquireError::OperationInterrupted => {
+                    FcpError::Cancellation("Ignition cancelled by user".into())
+                }
+                _ => FcpError::Config(format!("Prompt error: {}", e)),
+            })?;
+
+        let llm_backend = match backend_choice {
+            "llama.cpp" => LlmBackend::LlamaCpp,
+            _ => LlmBackend::Ollama,
+        };
+
+        match llm_backend {
+            LlmBackend::Ollama => {
                 let model_name = if !model_names.is_empty() {
                     let default_idx = model_names
                         .iter()
@@ -114,7 +143,9 @@ pub async fn run_ignition_sequence(
                     None
                 } else {
                     Some(num_gpu_raw.parse::<u32>().map_err(|_| {
-                        FcpError::Config("Invalid num_gpu: expected non-negative integer".into())
+                        FcpError::Config(
+                            "Invalid num_gpu: expected non-negative integer".into(),
+                        )
                     })?)
                 };
 
@@ -133,22 +164,160 @@ pub async fn run_ignition_sequence(
                     None
                 } else {
                     Some(main_gpu_raw.parse::<u32>().map_err(|_| {
-                        FcpError::Config("Invalid main_gpu: expected non-negative integer".into())
+                        FcpError::Config(
+                            "Invalid main_gpu: expected non-negative integer".into(),
+                        )
                     })?)
                 };
 
-                Ok((
+                Ok(IgnitionAnswers {
                     agent_name,
                     user_name,
+                    llm_backend,
                     model_name,
                     ollama_num_gpu,
                     ollama_main_gpu,
                     ollama_low_vram,
-                ))
-            },
-        )
-        .await
-        .map_err(|e| FcpError::Config(format!("Spawn blocking failed: {}", e)))??;
+                    llama_cpp: None,
+                    num_ctx: AppConfig::default().num_ctx,
+                })
+            }
+            LlmBackend::LlamaCpp => {
+                let home = loop {
+                    let raw = Text::new("llama.cpp build directory:")
+                        .with_default("~/llama.cpp/build")
+                        .prompt()
+                        .map_err(|e| match e {
+                            inquire::InquireError::OperationCanceled
+                            | inquire::InquireError::OperationInterrupted => {
+                                FcpError::Cancellation("Ignition cancelled by user".into())
+                            }
+                            _ => FcpError::Config(format!("Prompt error: {}", e)),
+                        })?;
+                    let expanded = shellexpand::tilde(raw.trim()).to_string();
+                    let path = PathBuf::from(&expanded);
+                    let server_bin = path.join("bin").join("llama-server");
+                    if server_bin.exists() {
+                        break path;
+                    }
+                    eprintln!(
+                        "  ✗ llama-server not found at {}\n    Please provide the build directory containing bin/llama-server.",
+                        server_bin.display()
+                    );
+                };
+
+                let chat_model_path = loop {
+                    let raw = Text::new("Chat model GGUF path:")
+                        .prompt()
+                        .map_err(|e| match e {
+                            inquire::InquireError::OperationCanceled
+                            | inquire::InquireError::OperationInterrupted => {
+                                FcpError::Cancellation("Ignition cancelled by user".into())
+                            }
+                            _ => FcpError::Config(format!("Prompt error: {}", e)),
+                        })?;
+                    let expanded = shellexpand::tilde(raw.trim()).to_string();
+                    let path = PathBuf::from(&expanded);
+                    if path.exists() && path.extension().is_some_and(|e| e == "gguf") {
+                        break path;
+                    }
+                    eprintln!("  ✗ File not found or not a .gguf: {}", path.display());
+                };
+
+                let default_embed =
+                    home.parent().unwrap_or(&home).join("models/nomic-embed-text-v1.5.Q8_0.gguf");
+                let default_embed_str = default_embed.to_string_lossy().to_string();
+                let embed_model_path = loop {
+                    let raw = Text::new("Embed model GGUF path:")
+                        .with_default(&default_embed_str)
+                        .prompt()
+                        .map_err(|e| match e {
+                            inquire::InquireError::OperationCanceled
+                            | inquire::InquireError::OperationInterrupted => {
+                                FcpError::Cancellation("Ignition cancelled by user".into())
+                            }
+                            _ => FcpError::Config(format!("Prompt error: {}", e)),
+                        })?;
+                    let expanded = shellexpand::tilde(raw.trim()).to_string();
+                    let path = PathBuf::from(&expanded);
+                    if path.exists() {
+                        break path;
+                    }
+                    eprintln!("  ✗ File not found: {}", path.display());
+                };
+
+                let default_num_ctx = AppConfig::default().num_ctx.to_string();
+                let num_ctx_raw = Text::new(
+                    "Context window (num_ctx: orchestrator + managed llama-server --ctx-size):",
+                )
+                .with_default(&default_num_ctx)
+                .prompt()
+                .map_err(|e| match e {
+                        inquire::InquireError::OperationCanceled
+                        | inquire::InquireError::OperationInterrupted => {
+                            FcpError::Cancellation("Ignition cancelled by user".into())
+                        }
+                        _ => FcpError::Config(format!("Prompt error: {}", e)),
+                    })?;
+                let num_ctx: usize = num_ctx_raw.trim().parse().map_err(|_| {
+                    FcpError::Config("Invalid num_ctx: expected positive integer".into())
+                })?;
+                let num_ctx = num_ctx.max(1);
+
+                let gpu_raw = Text::new("GPU layers (--n-gpu-layers, 0 = CPU only):")
+                    .with_default("99")
+                    .prompt()
+                    .map_err(|e| match e {
+                        inquire::InquireError::OperationCanceled
+                        | inquire::InquireError::OperationInterrupted => {
+                            FcpError::Cancellation("Ignition cancelled by user".into())
+                        }
+                        _ => FcpError::Config(format!("Prompt error: {}", e)),
+                    })?;
+                let n_gpu_layers: u32 = gpu_raw.trim().parse().map_err(|_| {
+                    FcpError::Config(
+                        "Invalid n_gpu_layers: expected non-negative integer".into(),
+                    )
+                })?;
+
+                let llama_cpp_config = LlamaCppConfig {
+                    home,
+                    chat_server_url: "http://127.0.0.1:8090".into(),
+                    embed_server_url: "http://127.0.0.1:8091".into(),
+                    chat_model_path,
+                    embed_model_path,
+                    n_gpu_layers,
+                    ready_timeout_secs: default_llamacpp_ready_timeout(),
+                };
+
+                Ok(IgnitionAnswers {
+                    agent_name,
+                    user_name,
+                    llm_backend,
+                    model_name: "llama-cpp-local".into(),
+                    ollama_num_gpu: None,
+                    ollama_main_gpu: None,
+                    ollama_low_vram: None,
+                    llama_cpp: Some(llama_cpp_config),
+                    num_ctx,
+                })
+            }
+        }
+    })
+    .await
+    .map_err(|e| FcpError::Config(format!("Spawn blocking failed: {}", e)))??;
+
+    let IgnitionAnswers {
+        agent_name,
+        user_name,
+        llm_backend,
+        model_name,
+        ollama_num_gpu,
+        ollama_main_gpu,
+        ollama_low_vram,
+        llama_cpp,
+        num_ctx,
+    } = answers;
 
     // 3. The Scaffold (v2 Zettelkasten roots)
     let dirs_to_create = [
@@ -199,10 +368,13 @@ pub async fn run_ignition_sequence(
     // 5. The Seal
     let mut config = AppConfig {
         model_name,
+        llm_backend,
         user_name,
+        num_ctx,
         ollama_num_gpu,
         ollama_main_gpu,
         ollama_low_vram,
+        llama_cpp,
         workspace: options.workspace,
         ..Default::default()
     };

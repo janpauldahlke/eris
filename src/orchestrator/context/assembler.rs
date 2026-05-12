@@ -71,6 +71,9 @@ pub struct ContextAssembler {
     pub core_dir: PathBuf,
     identity: tokio::sync::watch::Receiver<Arc<str>>,
     staged_memory_prompt_max_chars: usize,
+    /// When true, append field-order instructions to the system prompt
+    /// (the llama.cpp GBNF grammar requires a fixed key order).
+    is_grammar_constrained: bool,
 }
 
 impl ContextAssembler {
@@ -84,7 +87,30 @@ impl ContextAssembler {
             core_dir: vault_root.join(workspace).join("00_Invariants"),
             identity,
             staged_memory_prompt_max_chars,
+            is_grammar_constrained: false,
         }
+    }
+
+    pub fn with_grammar_constraint(mut self, enabled: bool) -> Self {
+        self.is_grammar_constrained = enabled;
+        self
+    }
+
+    /// Append GBNF field-order instructions when the llama.cpp grammar is active.
+    fn maybe_append_grammar_constraint(&self, prompt: String) -> String {
+        if !self.is_grammar_constrained {
+            return prompt;
+        }
+        format!(
+            "{prompt}\n\n\
+            CRITICAL — Grammar constraint active: your response MUST be a single JSON object \
+            with keys in this EXACT order:\n\
+            1. \"thought\" (string)\n\
+            2. \"status\" (\"Task\", \"Reflect\", \"Idle\", or \"Process\")\n\
+            3. \"message_to_user\" (string or null)\n\
+            4. \"tool_calls\" (array, may be empty [])\n\
+            Do not include any text before or after the JSON object."
+        )
     }
 
     fn identity_text(&self) -> String {
@@ -148,12 +174,13 @@ impl ContextAssembler {
             .await?;
         let identity_block = self.identity_plus_staged_sidebar(identity_content, ephemeral);
         let allowed_tools = gatekeeper.get_allowed_tools(state);
-        Self::build_tool_prompt(
+        let prompt = Self::build_tool_prompt(
             identity_block,
             allowed_tools,
             ToolPromptTooling::Full,
             state,
-        )
+        )?;
+        Ok(self.maybe_append_grammar_constraint(prompt))
     }
 
     /// Tool mode with phrase compendium and OpenAI-style tool entries **without** `function.parameters`
@@ -183,12 +210,13 @@ impl ContextAssembler {
             phrase_map_chars = phrase_map.len(),
             "Assembling slim tool prompt (phrase map + tool defs without parameters)"
         );
-        Self::build_tool_prompt(
+        let prompt = Self::build_tool_prompt(
             identity_block,
             slim_tools,
             ToolPromptTooling::Slim { phrase_map },
             state,
-        )
+        )?;
+        Ok(self.maybe_append_grammar_constraint(prompt))
     }
 
     pub async fn assemble_with_selected_tools(
@@ -223,12 +251,13 @@ impl ContextAssembler {
             "Assembling targeted tool schema prompt"
         );
 
-        Self::build_tool_prompt(
+        let prompt = Self::build_tool_prompt(
             identity_block,
             allowed_tools,
             ToolPromptTooling::Full,
             state,
-        )
+        )?;
+        Ok(self.maybe_append_grammar_constraint(prompt))
     }
 
     fn build_tool_prompt(
@@ -371,7 +400,7 @@ impl ContextAssembler {
             state_focus = state_focus,
         );
 
-        Ok(system_prompt)
+        Ok(self.maybe_append_grammar_constraint(system_prompt))
     }
 }
 

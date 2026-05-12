@@ -576,7 +576,7 @@ mod tests {
             },
             Message {
                 role: "system".to_string(),
-                content: "[SYSTEM OVERRIDE: FUCKUP DETECTED] x".to_string(),
+                content: "[SYSTEM] Invalid model output: x".to_string(),
             },
             Message {
                 role: "assistant".to_string(),

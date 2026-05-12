@@ -252,6 +252,29 @@ impl EphemeralMemory {
             .collect()
     }
 
+    /// Remove staged rows whose tags, title, or canonical key match benchmark cleanup keys
+    /// (substring match on title / canonical_key; tag match is ASCII case-insensitive equality).
+    pub async fn invalidate_matching_benchmark_cleanup_keys(&self, keys: &[String]) -> usize {
+        if keys.is_empty() {
+            return 0;
+        }
+        let lowered: Vec<String> = keys.iter().map(|k| k.to_lowercase()).collect();
+        let entries = self.list_entries();
+        let mut removed = 0usize;
+        for e in entries {
+            let hit = lowered.iter().any(|key| {
+                e.tags.iter().any(|t| t.eq_ignore_ascii_case(key))
+                    || e.title.to_lowercase().contains(key)
+                    || e.canonical_key.contains(key)
+            });
+            if hit {
+                self.cache.invalidate(&e.staged_id).await;
+                removed = removed.saturating_add(1);
+            }
+        }
+        removed
+    }
+
     pub async fn get(&self, key: &str) -> Option<String> {
         self.get_by_title(key).await.map(|v| v.data)
     }

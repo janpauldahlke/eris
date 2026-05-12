@@ -1,3 +1,4 @@
+use crate::config::LlmBackend;
 use crate::engine::token_metrics::LlmTokenSnapshot;
 use crate::executive::error::{FcpError, Result};
 use crate::presentation::{
@@ -62,6 +63,12 @@ impl TuiApp {
                 tool_ms: 0,
                 total_ms: 0,
                 top_tool_match: None,
+                llm_backend: LlmBackend::default(),
+                llm_prompt_tokens: 0,
+                llm_completion_tokens: 0,
+                llm_last_generation_ms: 0,
+                llm_last_tps_milli: 0,
+                llm_tps_ewma_milli: 0,
             },
             running: true,
             chat_scroll: 0,

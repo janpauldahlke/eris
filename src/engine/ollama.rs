@@ -83,6 +83,7 @@ impl LlmEngine for OllamaClient {
         }
 
         tracing::info!(
+            engine = "ollama",
             model = %self.config.model_name,
             message_count = chat_messages.len(),
             timeout_secs = self.config.generation_timeout_secs,
@@ -114,6 +115,7 @@ impl LlmEngine for OllamaClient {
         let timeout = Duration::from_secs(self.config.generation_timeout_secs);
 
         if let Some(tx) = stream_tx {
+            let gen_started = std::time::Instant::now();
             let stream_future = self.client.send_chat_messages_stream(request);
             let mut stream = match tokio::time::timeout(timeout, stream_future).await {
                 Ok(Ok(s)) => s,
@@ -161,14 +163,22 @@ impl LlmEngine for OllamaClient {
                 }
             }
 
-            token_metrics::publish(&self.token_metrics_tx, prompt_tokens, generated_tokens);
+            let generation_ms = gen_started.elapsed().as_millis() as u64;
+            token_metrics::publish(
+                &self.token_metrics_tx,
+                prompt_tokens,
+                generated_tokens,
+                generation_ms,
+            );
 
             Ok(EngineResponse {
                 content: full_content,
                 prompt_tokens,
                 generated_tokens,
+                generation_ms,
             })
         } else {
+            let gen_started = std::time::Instant::now();
             let future = self.client.send_chat_messages(request);
             match tokio::time::timeout(timeout, future).await {
                 Ok(Ok(response)) => {
@@ -179,16 +189,25 @@ impl LlmEngine for OllamaClient {
                         (0, 0)
                     };
                     tracing::info!(
+                        engine = "ollama",
+                        model = %self.config.model_name,
                         prompt_tokens,
-                        generated_tokens,
+                        completion_tokens = generated_tokens,
                         content_len = content.len(),
                         "Ollama non-stream response received"
                     );
-                    token_metrics::publish(&self.token_metrics_tx, prompt_tokens, generated_tokens);
+                    let generation_ms = gen_started.elapsed().as_millis() as u64;
+                    token_metrics::publish(
+                        &self.token_metrics_tx,
+                        prompt_tokens,
+                        generated_tokens,
+                        generation_ms,
+                    );
                     Ok(EngineResponse {
                         content,
                         prompt_tokens,
                         generated_tokens,
+                        generation_ms,
                     })
                 }
                 Ok(Err(e)) => {

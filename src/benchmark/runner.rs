@@ -4,7 +4,9 @@ use crate::benchmark::{
     BenchmarkHarness, BenchmarkReport, IsolationMode, QualityMetrics, SpeedMetrics, SuiteRegistry,
 };
 use crate::benchmark::metrics::{StepTiming, SuiteSpeedAggregate};
-use crate::config::AppConfig;
+use crate::config::{AppConfig, LlmBackend};
+use crate::engine::AnyEngine;
+use crate::engine::llama_cpp::LlamaCppClient;
 use crate::engine::ollama::OllamaClient;
 use crate::engine::token_metrics;
 use crate::executive::error::{FcpError, Result};
@@ -15,8 +17,37 @@ use crate::tools::Gatekeeper;
 use ollama_rs::Ollama;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tracing;
+
+fn apply_benchmark_llamacpp_grammar(engine: &mut AnyEngine, gatekeeper: &Gatekeeper) -> Result<()> {
+    let AnyEngine::LlamaCpp(client) = engine else {
+        return Ok(());
+    };
+    let tool_names = gatekeeper.registered_tool_names();
+    let entries: Vec<crate::engine::grammar::ToolGrammarEntry> = tool_names
+        .iter()
+        .map(|name| {
+            let per_tool_rules = gatekeeper
+                .parameters_root_schema_for(name)
+                .and_then(|schema| crate::engine::grammar::schema_to_gbnf_rule(name, &schema))
+                .map(|(_rule_name, rules)| rules);
+            crate::engine::grammar::ToolGrammarEntry {
+                name: name.clone(),
+                per_tool_rules,
+            }
+        })
+        .collect();
+    let grammar = crate::engine::grammar::compile_fcp_envelope_grammar_dynamic(&entries);
+    tracing::info!(
+        tool_count = tool_names.len(),
+        grammar_len = grammar.len(),
+        "Benchmark: compiled dynamic GBNF for llama.cpp orchestrator engine"
+    );
+    client.set_grammar(grammar);
+    Ok(())
+}
 
 /// Run a benchmark suite with the given configuration.
 pub async fn run_benchmark(
@@ -48,75 +79,76 @@ pub async fn run_benchmark(
         "Loaded scenario suite"
     );
 
-    // Start peripherals (Ollama + Qdrant if available)
-    println!("[benchmark] Checking peripheral daemons (Ollama, Qdrant)...");
-    let peripheral_lifecycle = ensure_peripherals_for_chat(config).await?;
-    
-    let ollama_status = if peripheral_lifecycle.started_ollama() {
-        "started by eris"
+    // When `benchmark_num_ctx` is set, override `num_ctx` so the managed llama-server
+    // allocates a smaller KV cache.  Reduces VRAM pressure that can crash the display
+    // stack on dual-GPU systems under rapid back-to-back inference.
+    let bench_config: std::borrow::Cow<'_, AppConfig> = if config.benchmark_num_ctx > 0
+        && config.llm_backend == LlmBackend::LlamaCpp
+    {
+        let mut c = config.clone();
+        tracing::info!(
+            original_num_ctx = config.num_ctx,
+            benchmark_num_ctx = config.benchmark_num_ctx,
+            "Benchmark: overriding num_ctx for managed llama-server"
+        );
+        c.num_ctx = config.benchmark_num_ctx;
+        std::borrow::Cow::Owned(c)
     } else {
-        "already running"
+        std::borrow::Cow::Borrowed(config)
     };
+
+    // Start peripherals (LLM backend + Qdrant)
+    tracing::info!(backend = %config.llm_backend, "Checking peripheral daemons");
+    let peripheral_lifecycle = ensure_peripherals_for_chat(&bench_config).await?;
+
     let qdrant_status = if peripheral_lifecycle.started_qdrant() {
         "started by eris"
     } else {
         "already running"
     };
-    println!("[benchmark] Peripheral readiness: ollama={ollama_status}, qdrant={qdrant_status}");
+    tracing::info!(
+        backend = %config.llm_backend,
+        qdrant = qdrant_status,
+        "Peripheral readiness"
+    );
 
     // Set up cancellation token for benchmark
     let _cancel_token = CancellationToken::new();
 
-    // Create Ollama client
-    let parsed_url = url::Url::parse(&config.ollama_host)
-        .map_err(|e| FcpError::Config(format!("Invalid ollama_host URL: {}", e)))?;
-    let host = format!(
-        "{}://{}",
-        parsed_url.scheme(),
-        parsed_url.host_str().unwrap_or("localhost")
-    );
-    let port = parsed_url.port().unwrap_or(11434);
+    let config_arc = Arc::new(config.clone());
 
-    let client = Ollama::new(host, port);
-    let (token_metrics_tx, _token_metrics_rx) = token_metrics::channel();
-    let engine = OllamaClient::with_token_metrics(client.clone(), Arc::new(config.clone()), token_metrics_tx);
-    let engine_arc = Arc::new(engine);
-
-    println!("[benchmark] Sampling model latency (one chat probe; Ollama-reported tokens & timings)...");
-    let speed_sample =
-        match crate::benchmark::speed_probe::probe_ollama_chat_latency(engine_arc.as_ref()).await {
-            Ok(s) => {
-                tracing::info!(
-                    prompt_tok_s = s.prompt_throughput(),
-                    gen_tok_s = s.generation_throughput(),
-                    total_ms = s.total_duration.as_millis(),
-                    "Benchmark speed probe completed"
-                );
-                s
-            }
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    "Benchmark speed probe failed; speed metrics will be zeros"
-                );
-                SpeedMetrics::default()
-            }
-        };
-
-    // Create a second engine for the orchestrator
-    let (token_metrics_tx2, _token_metrics_rx2) = token_metrics::channel();
-    let engine_for_orchestrator = OllamaClient::with_token_metrics(client.clone(), Arc::new(config.clone()), token_metrics_tx2);
-
-    // Set up ephemeral memory
+    // Ephemeral memory first (semantic tools need it)
     let ephemeral = Arc::new(EphemeralMemory::new(config.workspace.clone()));
 
-    // Set up semantic brain (Qdrant) if available
-    let ollama_arc = Arc::new(client);
-    let config_arc = Arc::new(config.clone());
-    let semantic_arc: Option<Arc<crate::memory::semantic::SemanticBrain>> = 
+    // Embeddings: vault config selects Ollama vs llama-server embed endpoint
+    let embed_provider: Arc<dyn crate::engine::EmbeddingProvider> = if config.llm_backend
+        == LlmBackend::LlamaCpp
+    {
+        let lc = config.validate_llamacpp_config()?;
+        Arc::new(crate::engine::embedding::LlamaCppEmbedding::new(
+            &lc.embed_server_url,
+            config.generation_timeout_secs,
+        )?)
+    } else {
+        let parsed_url = url::Url::parse(&config.ollama_host)
+            .map_err(|e| FcpError::Config(format!("Invalid ollama_host URL: {e}")))?;
+        let host = format!(
+            "{}://{}",
+            parsed_url.scheme(),
+            parsed_url.host_str().unwrap_or("localhost")
+        );
+        let port = parsed_url.port().unwrap_or(11434);
+        let ollama_client = Ollama::new(host, port);
+        Arc::new(crate::engine::embedding::OllamaEmbedding::new(
+            Arc::new(ollama_client),
+            config_arc.embed_model_name.clone(),
+        ))
+    };
+
+    let semantic_arc: Option<Arc<crate::memory::semantic::SemanticBrain>> =
         match crate::memory::semantic::SemanticBrain::new_with_connect_retries(
             config_arc.clone(),
-            ollama_arc,
+            embed_provider,
             config_arc.semantic_brain_connect_attempts,
             config_arc.semantic_brain_connect_retry_delay_ms,
         )
@@ -166,7 +198,7 @@ pub async fn run_benchmark(
         config: config_arc.clone(),
     }));
     gatekeeper.register(Arc::new(crate::tools::clock::ClockNowTool));
-    
+
     // Memory tools (operate on ephemeral only, safe)
     if let Some(ref semantic) = semantic_arc {
         gatekeeper.register(Arc::new(crate::tools::memory::MemoryStageTool {
@@ -198,6 +230,91 @@ pub async fn run_benchmark(
             qdrant_oversample_multiplier: config.memory_query_oversample_multiplier,
             qdrant_oversample_min: config.memory_query_oversample_min,
         }));
+    }
+
+    // Speed probe + orchestrator engine: must match `config.llm_backend` (Ollama path unchanged)
+    let (speed_sample, mut engine_for_orchestrator) = if config.llm_backend == LlmBackend::Ollama {
+        let parsed_url = url::Url::parse(&config.ollama_host)
+            .map_err(|e| FcpError::Config(format!("Invalid ollama_host URL: {e}")))?;
+        let host = format!(
+            "{}://{}",
+            parsed_url.scheme(),
+            parsed_url.host_str().unwrap_or("localhost")
+        );
+        let port = parsed_url.port().unwrap_or(11434);
+        let client = Ollama::new(host, port);
+        let (token_metrics_tx, _token_metrics_rx) = token_metrics::channel();
+        let probe_engine = OllamaClient::with_token_metrics(
+            client.clone(),
+            config_arc.clone(),
+            token_metrics_tx,
+        );
+        let probe_arc = Arc::new(probe_engine);
+        println!(
+            "[benchmark] Sampling model latency (one chat probe; Ollama-reported tokens & timings)..."
+        );
+        let speed_sample =
+            match crate::benchmark::speed_probe::probe_ollama_chat_latency(probe_arc.as_ref()).await
+            {
+                Ok(s) => {
+                    tracing::info!(
+                        prompt_tok_s = s.prompt_throughput(),
+                        gen_tok_s = s.generation_throughput(),
+                        total_ms = s.total_duration.as_millis(),
+                        "Benchmark speed probe completed"
+                    );
+                    s
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "Benchmark speed probe failed; speed metrics will be zeros"
+                    );
+                    SpeedMetrics::default()
+                }
+            };
+        let (token_metrics_tx2, _token_metrics_rx2) = token_metrics::channel();
+        let engine_for_orchestrator = AnyEngine::Ollama(OllamaClient::with_token_metrics(
+            client,
+            config_arc.clone(),
+            token_metrics_tx2,
+        ));
+        (speed_sample, engine_for_orchestrator)
+    } else {
+        let (token_metrics_tx, _token_metrics_rx) = token_metrics::channel();
+        let probe_client = LlamaCppClient::new(config_arc.clone())?
+            .with_token_metrics(token_metrics_tx);
+        println!(
+            "[benchmark] Sampling model latency (one chat probe; llama-server usage & wall timings)..."
+        );
+        let speed_sample =
+            match crate::benchmark::speed_probe::probe_llamacpp_chat_latency(&probe_client).await {
+                Ok(s) => {
+                    tracing::info!(
+                        prompt_tok_s = s.prompt_throughput(),
+                        gen_tok_s = s.generation_throughput(),
+                        total_ms = s.total_duration.as_millis(),
+                        "Benchmark llama.cpp speed probe completed"
+                    );
+                    s
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "Benchmark speed probe failed; speed metrics will be zeros"
+                    );
+                    SpeedMetrics::default()
+                }
+            };
+        let (token_metrics_tx2, _token_metrics_rx2) = token_metrics::channel();
+        let engine_for_orchestrator = AnyEngine::LlamaCpp(
+            LlamaCppClient::new(config_arc.clone())?.with_token_metrics(token_metrics_tx2),
+        );
+        (speed_sample, engine_for_orchestrator)
+    };
+
+    if config.llm_backend == LlmBackend::LlamaCpp {
+        apply_benchmark_llamacpp_grammar(&mut engine_for_orchestrator, &gatekeeper)?;
     }
 
     // Create orchestrator with correct signature
@@ -232,9 +349,12 @@ pub async fn run_benchmark(
         config_arc.clone(),
         identity_rx,
         Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        None,
     );
 
     let harness = BenchmarkHarness::new(&config.active_vault(), isolation_mode)?;
+
+    log_nvidia_vram_snapshot("pre-scenario-loop").await;
 
     // Run all scenarios (real orchestrator + LLM per step)
     println!("[benchmark] Running {} scenarios...", suite.len());
@@ -242,7 +362,13 @@ pub async fn run_benchmark(
     let mut suite_timing_steps: Vec<StepTiming> = Vec::new();
     let mut suite_timing_scenarios: u32 = 0;
 
+    let cooldown_ms = config.benchmark_inter_scenario_cooldown_ms;
+
     for (idx, scenario) in suite.scenarios.iter().enumerate() {
+        if idx > 0 && cooldown_ms > 0 {
+            tokio::time::sleep(Duration::from_millis(cooldown_ms)).await;
+        }
+        let scenario_started = std::time::Instant::now();
         println!("[benchmark] Scenario {}/{}: {}", idx + 1, suite.len(), scenario.name);
 
         match harness
@@ -277,7 +403,7 @@ pub async fn run_benchmark(
                     max_rounds: 0,
                     steps_completed: 0,
                     total_steps: scenario.steps.len() as u32,
-                    duration: std::time::Duration::from_secs(0),
+                    duration: scenario_started.elapsed(),
                     metrics: QualityMetrics::default(),
                     error_message: Some(e.to_string()),
                 });
@@ -304,14 +430,20 @@ pub async fn run_benchmark(
     }
 
     // Match chat exit: free VRAM on a long-lived host Ollama (`ollama stop` per model).
-    if config.unload_ollama_models_on_chat_exit && !eris_owned_ollama {
+    if config.llm_backend == LlmBackend::Ollama
+        && config.unload_ollama_models_on_chat_exit
+        && !eris_owned_ollama
+    {
         tracing::info!(
             chat_model = %config.model_name,
             embed_model = %config.embed_model_name,
             "Unloading benchmark models via `ollama stop` (host Ollama left running)"
         );
         crate::executive::peripherals::unload_ollama_models_cli_best_effort(config).await;
-    } else if config.unload_ollama_models_on_chat_exit && eris_owned_ollama {
+    } else if config.llm_backend == LlmBackend::Ollama
+        && config.unload_ollama_models_on_chat_exit
+        && eris_owned_ollama
+    {
         tracing::debug!(
             "Skipping `ollama stop` after benchmark; managed Ollama process for this run was stopped"
         );
@@ -380,6 +512,32 @@ pub async fn run_benchmark(
     );
 
     Ok(report)
+}
+
+/// Best-effort `nvidia-smi` snapshot logged via `tracing` for post-mortem VRAM analysis.
+async fn log_nvidia_vram_snapshot(label: &str) {
+    let label = label.to_string();
+    let result = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("nvidia-smi")
+            .args(["--query-gpu=index,name,memory.used,memory.total,temperature.gpu,power.draw", "--format=csv,noheader,nounits"])
+            .output()
+    })
+    .await;
+    match result {
+        Ok(Ok(output)) if output.status.success() => {
+            let text = String::from_utf8_lossy(&output.stdout);
+            for line in text.lines() {
+                tracing::info!(
+                    phase = %label,
+                    gpu_snapshot = %line.trim(),
+                    "Benchmark GPU VRAM snapshot"
+                );
+            }
+        }
+        _ => {
+            tracing::debug!(phase = %label, "nvidia-smi not available for VRAM snapshot");
+        }
+    }
 }
 
 /// Fixed layout width for terminal readability (no fragile box corners).
@@ -472,7 +630,7 @@ fn print_console_report(report: &BenchmarkReport) {
         &format!("{:.1} %", report.quality.overall_quality_score()),
     );
 
-    bench_section("SPEED PROBE (single minimal Ollama chat)");
+    bench_section("SPEED PROBE (single minimal chat completion)");
     bench_kv(
         "Prompt throughput",
         &format!("{:.1} tok/s", report.speed.prompt_throughput()),

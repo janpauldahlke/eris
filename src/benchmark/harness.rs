@@ -1,9 +1,9 @@
 //! Benchmark harness for executing scenarios against the real orchestrator.
 
-use crate::benchmark::suite::{Scenario, ScenarioResult, Step, SuccessCriteria};
+use crate::benchmark::suite::{CleanupAction, Scenario, ScenarioResult, Step, SuccessCriteria};
 use crate::benchmark::{CleanupReport, IsolationMode, QualityMetrics, SideEffectFilter};
 use crate::benchmark::metrics::StepTiming;
-use crate::engine::ollama::OllamaClient;
+use crate::engine::AnyEngine;
 use crate::engine::Message;
 use crate::executive::error::Result;
 use crate::orchestrator::core::Orchestrator;
@@ -46,7 +46,7 @@ impl BenchmarkHarness {
     /// Effective deadline: `max(scenario.timeout_seconds, scenario_timeout_floor_secs)`.
     pub async fn run_scenario_with_orchestrator(
         &self,
-        orchestrator: &mut Orchestrator<OllamaClient>,
+        orchestrator: &mut Orchestrator<AnyEngine>,
         scenario: &Scenario,
         scenario_timeout_floor_secs: u64,
     ) -> Result<(ScenarioResult, Vec<StepTiming>)> {
@@ -92,6 +92,8 @@ impl BenchmarkHarness {
             }
         };
 
+        Self::run_scenario_cleanup(orchestrator, scenario).await;
+
         {
             let mut global = self.metrics.lock().await;
             global.merge(&result.metrics);
@@ -100,8 +102,38 @@ impl BenchmarkHarness {
         Ok((result, timings))
     }
 
+    async fn run_scenario_cleanup(orchestrator: &Orchestrator<AnyEngine>, scenario: &Scenario) {
+        if scenario.cleanup.is_empty() {
+            return;
+        }
+        for step in &scenario.cleanup {
+            match &step.action {
+                CleanupAction::RemoveStagedMemories(keys) => {
+                    let n = orchestrator
+                        .ephemeral
+                        .invalidate_matching_benchmark_cleanup_keys(keys)
+                        .await;
+                    tracing::debug!(
+                        scenario = %scenario.name,
+                        removed = n,
+                        cleanup_step = %step.description,
+                        keys = ?keys,
+                        "Benchmark scenario cleanup applied"
+                    );
+                }
+                CleanupAction::RemoveEphemeralEntries(_) | CleanupAction::RemoveTempFiles(_) => {
+                    tracing::trace!(
+                        scenario = %scenario.name,
+                        cleanup_step = %step.description,
+                        "Benchmark cleanup action not implemented in harness (no-op)"
+                    );
+                }
+            }
+        }
+    }
+
     async fn execute_scenario(
-        orchestrator: &mut Orchestrator<OllamaClient>,
+        orchestrator: &mut Orchestrator<AnyEngine>,
         scenario: &Scenario,
         started: Instant,
     ) -> (ScenarioResult, Vec<StepTiming>) {

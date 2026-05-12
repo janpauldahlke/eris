@@ -1,4 +1,5 @@
 use super::app::{ActivePane, TuiApp};
+use crate::config::LlmBackend;
 use crate::engine::token_metrics::LlmTokenSnapshot;
 use crate::orchestrator::state::AgentState;
 use ratatui::{
@@ -19,6 +20,37 @@ fn truncate_status_line(s: &str, max_chars: usize) -> String {
     let mut out = s.chars().take(max_chars).collect::<String>();
     out.push('…');
     out
+}
+
+fn fmt_tok_per_s_milli(milli: u32) -> String {
+    if milli == 0 {
+        "-".to_string()
+    } else {
+        format!("{:.2}", f64::from(milli) / 1000.0)
+    }
+}
+
+/// Wall-clock duration for the last finished generation (engine-reported ms).
+fn fmt_infer_duration(ms: u64) -> String {
+    if ms == 0 {
+        "-".to_string()
+    } else if ms >= 1000 {
+        format!("{:.1}s", ms as f64 / 1000.0)
+    } else {
+        format!("{ms}ms")
+    }
+}
+
+fn format_token_status_line(engine: &str, snap: &LlmTokenSnapshot) -> String {
+    format!(
+        "{engine} · prompt {} · completion {} · {} tokens · infer {} · {} tok/s this reply · avg {} tok/s",
+        snap.prompt_tokens,
+        snap.generated_tokens,
+        snap.total(),
+        fmt_infer_duration(snap.last_generation_ms),
+        fmt_tok_per_s_milli(snap.last_tps_milli),
+        fmt_tok_per_s_milli(snap.ewma_tps_milli),
+    )
 }
 
 /// Word-wrap chat text to `width` display cells so scroll math matches the Paragraph (no widget wrap).
@@ -307,9 +339,15 @@ pub fn draw(f: &mut Frame, app: &TuiApp, llm_tokens: &LlmTokenSnapshot) {
     let max_t = app.state.max_tool_rounds.max(1);
     let max_r = app.state.max_recovery_attempts.max(1);
 
+    let engine_name = match app.state.llm_backend {
+        LlmBackend::Ollama => "Ollama",
+        LlmBackend::LlamaCpp => "llama.cpp",
+    };
+    let tok_status = format_token_status_line(engine_name, llm_tokens);
+
     let status_text = if let Some(ref act) = activity_line {
         format!(
-            "{}\n{}\n{}\nT:{}/{} R:{}/{}\nQ:{}\nrt:{}ms llm:{}ms\ntool:{}ms total:{}ms\nmatch:{}\nollama tok: p{} g{} sum{}",
+            "{}\n{}\n{}\nT:{}/{} R:{}/{}\nQ:{}\nrt:{}ms llm:{}ms\ntool:{}ms total:{}ms\nmatch:{}\n{}",
             pulse_str,
             state_label,
             act,
@@ -323,13 +361,11 @@ pub fn draw(f: &mut Frame, app: &TuiApp, llm_tokens: &LlmTokenSnapshot) {
             app.state.tool_ms,
             app.state.total_ms,
             app.state.top_tool_match.as_deref().unwrap_or("-"),
-            llm_tokens.prompt_tokens,
-            llm_tokens.generated_tokens,
-            llm_tokens.total(),
+            tok_status,
         )
     } else {
         format!(
-            "{}\n{}\nT:{}/{} R:{}/{}\nQ:{}\nrt:{}ms llm:{}ms\ntool:{}ms total:{}ms\nmatch:{}\nollama tok: p{} g{} sum{}",
+            "{}\n{}\nT:{}/{} R:{}/{}\nQ:{}\nrt:{}ms llm:{}ms\ntool:{}ms total:{}ms\nmatch:{}\n{}",
             pulse_str,
             state_label,
             app.state.tool_rounds,
@@ -342,9 +378,7 @@ pub fn draw(f: &mut Frame, app: &TuiApp, llm_tokens: &LlmTokenSnapshot) {
             app.state.tool_ms,
             app.state.total_ms,
             app.state.top_tool_match.as_deref().unwrap_or("-"),
-            llm_tokens.prompt_tokens,
-            llm_tokens.generated_tokens,
-            llm_tokens.total(),
+            tok_status,
         )
     };
     let status = Paragraph::new(status_text)

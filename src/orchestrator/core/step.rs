@@ -19,6 +19,13 @@ use super::{
 };
 use super::moltbook_browse_ledger::MoltbookBrowseLedger;
 
+use crate::config::AppConfig;
+
+/// Ollama-only: grammar-constrained backends cannot emit trailing prose after the JSON object.
+pub(crate) fn trailing_json_recovery_triggered(config: &AppConfig, content: &str) -> bool {
+    !config.is_llamacpp() && trailing_content_after_valid_llm_json(content)
+}
+
 impl<E: LlmEngine> Orchestrator<E> {
     /// The main cognitive loop.
     ///
@@ -172,7 +179,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             }
             let moltbook_overlay = moltbook_overlay_latched;
 
-            let system_prompt = if !tools_needed {
+            let mut system_prompt = if !tools_needed {
                 self.context_assembler
                     .assemble_conversational(&self.state, &self.ephemeral, moltbook_overlay)
                     .await?
@@ -241,34 +248,41 @@ impl<E: LlmEngine> Orchestrator<E> {
                     .await?
             };
             tracing::debug!(prompt_len = system_prompt.len(), "System prompt assembled");
-            Self::upsert_system_prompt(&mut self.chat_stack, system_prompt);
-            if tools_needed
-                && let Some(jit_guidance) = self.build_descriptor_jit_guidance(
+
+            // Compute JIT guidance before mutating chat_stack (immutable borrows only).
+            let jit_guidance = if tools_needed {
+                self.build_descriptor_jit_guidance(
                     &self.state,
                     &pre_llm_matched_tools,
                     &targeted_tools,
                 )
-            {
-                self.chat_stack.push(crate::engine::Message {
-                    role: "system".to_string(),
-                    content: jit_guidance,
-                });
+            } else {
+                None
+            };
+            let skill_guidance = if tools_needed {
+                self.build_skill_jit_guidance(
+                    &self.state,
+                    &pre_llm_matched_tools,
+                    &targeted_tools,
+                    &self.step_failed_tools,
+                )
+                .await?
+            } else {
+                None
+            };
+
+            // Merge JIT/skill guidance into the system prompt so all system
+            // content stays at index 0.  Strict chat templates (Qwen / llama.cpp)
+            // reject system messages after non-system messages.
+            if let Some(jit) = jit_guidance {
+                system_prompt.push_str("\n\n---\n\n");
+                system_prompt.push_str(&jit);
             }
-            if tools_needed
-                && let Some(skill_guidance) = self
-                    .build_skill_jit_guidance(
-                        &self.state,
-                        &pre_llm_matched_tools,
-                        &targeted_tools,
-                        &self.step_failed_tools,
-                    )
-                    .await?
-            {
-                self.chat_stack.push(crate::engine::Message {
-                    role: "system".to_string(),
-                    content: skill_guidance,
-                });
+            if let Some(skill) = skill_guidance {
+                system_prompt.push_str("\n\n---\n\n");
+                system_prompt.push_str(&skill);
             }
+            Self::upsert_system_prompt(&mut self.chat_stack, system_prompt);
 
             if self.config.optimize_context_proactive_condensation {
                 let est = estimate_stack_tokens(&self.chat_stack);
@@ -368,7 +382,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                 }
             };
 
-            if trailing_content_after_valid_llm_json(&response.content) {
+            if trailing_json_recovery_triggered(&self.config, &response.content) {
                 let (_, tail) = split_leading_json_object(&response.content);
                 let preview: String = tail.trim().chars().take(240).collect();
                 tracing::warn!(
@@ -402,12 +416,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                         turn_seq,
                         "LLM response failed protocol JSON parse; omitting assistant stack push and skipping condensation for this hop"
                     );
-                    let directive = LoopDirective::RecoverFromFuckup(
-                        crate::orchestrator::llm_support::json_envelope::llm_json_parse_recovery_message_with_excerpt(
-                            &e,
-                            &response.content,
-                        ),
-                    );
+                    let directive = self.protocol_parse_failure_directive(&e, &response.content);
                     let transition = decide_transition_from_directive(directive);
                     let control = self.apply_transition(transition).await?;
                     self.last_llm_ms = llm_ms_acc;
@@ -527,5 +536,30 @@ impl<E: LlmEngine> Orchestrator<E> {
             || pre_llm_matches
                 .iter()
                 .any(|n| n.starts_with("moltbook:"))
+    }
+}
+
+#[cfg(test)]
+mod trailing_json_recovery_tests {
+    use super::trailing_json_recovery_triggered;
+    use crate::config::{AppConfig, LlmBackend};
+
+    #[test]
+    fn trailing_content_check_skipped_for_grammar() {
+        let mut c = AppConfig::default();
+        c.llm_backend = LlmBackend::LlamaCpp;
+        let raw = r#"{"thought":"t","status":"Idle","message_to_user":"hi","tool_calls":[]}
+
+# Extra"#;
+        assert!(!trailing_json_recovery_triggered(&c, raw));
+    }
+
+    #[test]
+    fn trailing_content_still_triggers_for_ollama_when_tail_present() {
+        let c = AppConfig::default();
+        let raw = r#"{"thought":"t","status":"Idle","message_to_user":"hi","tool_calls":[]}
+
+# Extra"#;
+        assert!(trailing_json_recovery_triggered(&c, raw));
     }
 }

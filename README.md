@@ -4,7 +4,7 @@
 [![Rust edition](https://img.shields.io/badge/Rust-Edition%202024-dea584?logo=rust&logoColor=white)](https://doc.rust-lang.org/edition-guide/rust-2024/index.html)
 [![codecov](https://codecov.io/gh/janpauldahlke/eris/graph/badge.svg)](https://codecov.io/gh/janpauldahlke/eris)
 
-**Episodic Reasoning & Inference System** — a local, vault-centric assistant: same orchestrator and tools whether you use the **full-screen terminal UI (ratatui)**, **`eris chat --web`** (localhost Axum + SSE), or an **optional Discord sidecar** that shares the live session. Ollama drives chat and embeddings; optional Qdrant holds semantic memory; notes live in a Markdown vault; tools run only through the JSON-schema gatekeeper.
+**Episodic Reasoning & Inference System** — a local, vault-centric assistant: same orchestrator and tools whether you use the **full-screen terminal UI (ratatui)**, **`eris chat --web`** (localhost Axum + SSE), or an **optional Discord sidecar** that shares the live session. Two LLM backends: **Ollama** (default, easiest) or **llama.cpp** (direct GGUF inference with GBNF grammar enforcement). Optional Qdrant holds semantic memory; notes live in a Markdown vault; tools run only through the JSON-schema gatekeeper.
 
 Architecture detail: [docs/updated_architecture/README.md](docs/updated_architecture/README.md).
 
@@ -15,7 +15,11 @@ Architecture detail: [docs/updated_architecture/README.md](docs/updated_architec
 - **Stable** toolchain, **Edition 2024** (see `Cargo.toml`).
 - Used to compile and run tests from this repo.
 
-### Ollama (LLM + embeddings)
+### LLM Backend (choose one)
+
+Eris supports two backends. Select during first-run ignition or via `llm_backend` in `.fcp/config.toml`.
+
+#### Option A — Ollama (default)
 
 Eris talks to Ollama over HTTP; defaults match `AppConfig` (`ollama_host`, typically `http://localhost:11434`).
 
@@ -37,6 +41,16 @@ Use any tag you prefer; set `model_name` accordingly.
 4. **Context length:** If you raise `num_ctx` in config, ensure Ollama can serve that context for your model (see Ollama docs for `OLLAMA_CONTEXT_LENGTH` / model limits).
 
 If Ollama is down, chat cannot run.
+
+#### Option B — llama.cpp (GGUF + GBNF grammar)
+
+Direct inference via `llama-server`. Eris manages the server processes, compiles a **GBNF grammar** at session start that makes malformed JSON structurally impossible, and constrains tool arguments per-tool.
+
+1. **Build llama.cpp** from source (requires CMake + C/C++ compiler).
+2. **Download GGUF models** for chat and embeddings (e.g. from HuggingFace).
+3. **Configure** `llm_backend = "LlamaCpp"` and the `[llama_cpp]` section in `.fcp/config.toml`.
+
+Full instructions: **[docs/LLAMA_CPP_SETUP.md](docs/LLAMA_CPP_SETUP.md)**.
 
 ### Qdrant (vector DB)
 
@@ -77,9 +91,11 @@ Registration is explicit: ask Eris to register on Moltbook with a name and descr
 
 | Piece       | `.fcp/config.toml` keys                         | Notes                                                                     |
 | ----------- | ----------------------------------------------- | ------------------------------------------------------------------------- |
-| Ollama HTTP | `ollama_host`                                   | Default `http://localhost:11434`                                          |
+| Backend     | `llm_backend`                                   | `"Ollama"` (default) or `"LlamaCpp"`                                     |
+| Ollama HTTP | `ollama_host`                                   | Default `http://localhost:11434` (Ollama backend)                         |
 | Chat model  | `model_name`                                    | Match what you `ollama pull` (default `gemma4:26b`)                       |
 | Embed model | `embed_model_name`                              | Default `nomic-embed-text` (768-d vectors → Qdrant)                       |
+| llama.cpp   | `[llama_cpp]` table                             | `home`, model paths, ports, GPU layers — see [LLAMA_CPP_SETUP.md](docs/LLAMA_CPP_SETUP.md) |
 | Qdrant URL  | `qdrant_url`                                    | Default `http://localhost:6334` (gRPC)                                    |
 | Web UI      | `web_bind_addr`, `web_port`, `web_open_browser` | Loopback + port for `eris chat --web`; optional `FCP_WEB_*` env overrides |
 | Discord     | `[discord]` table                               | Optional; needs `bot_token` + app id + channel when `enabled = true`      |
@@ -265,6 +281,7 @@ flowchart LR
     end
     subgraph daemons["Local daemons"]
         OLL[Ollama]
+        LCPP[llama-server chat + embed]
         QD[Qdrant]
     end
     subgraph vaultdir["Vault cwd"]
@@ -276,6 +293,7 @@ flowchart LR
     KB --> surfaces
     surfaces <-->|UserAction / SessionEvent| ORC
     ORC -->|chat JSON + router embeds| OLL
+    ORC -->|chat JSON + GBNF grammar| LCPP
     ORC --> GK
     GK --> FS
     GK --> EPH
@@ -285,7 +303,7 @@ flowchart LR
     META -.->|read at startup| ORC
 ```
 
-You interact through the **TUI**, a **localhost web page**, and/or **Discord**; all paths funnel **`UserAction`** into the same orchestrator task and receive **`SessionEvent`** updates (see `src/presentation/`). The orchestrator calls **Ollama** for structured JSON and uses **ToolRouter** embeddings for pre-LLM gating. **Tools** run only through the **gatekeeper**: they read/write **Markdown**, use **ephemeral** staging, and hit **Qdrant** for semantic memory. **Logs** go to `.fcp/telemetry/` — not mixed into the chat deck.
+You interact through the **TUI**, a **localhost web page**, and/or **Discord**; all paths funnel **`UserAction`** into the same orchestrator task and receive **`SessionEvent`** updates (see `src/presentation/`). The orchestrator calls **Ollama** or **llama-server** (depending on `llm_backend`) for structured JSON and uses **ToolRouter** embeddings for pre-LLM gating. The llama.cpp path compiles a **GBNF grammar** at session start that constrains output to valid protocol JSON with per-tool argument schemas. **Tools** run only through the **gatekeeper**: they read/write **Markdown**, use **ephemeral** staging, and hit **Qdrant** for semantic memory. **Logs** go to `.fcp/telemetry/` — not mixed into the chat deck.
 
 - **Terminal:** Full-screen **ratatui** UI under `src/ui/terminal/`: chat deck, status, telemetry; `Ctrl+C` exits and tears down daemons this process started.
 - **Web:** `src/ui/web/` — Axum router, SSE stream of `SessionEvent`, small static JS; suitable for the same machine or SSH port-forward.

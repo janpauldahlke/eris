@@ -214,6 +214,56 @@ impl Default for VaultWatchConfig {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
+pub enum LlmBackend {
+    #[default]
+    Ollama,
+    LlamaCpp,
+}
+
+impl std::fmt::Display for LlmBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ollama => write!(f, "Ollama"),
+            Self::LlamaCpp => write!(f, "llama.cpp"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct LlamaCppConfig {
+    /// Path to the llama.cpp build directory (contains bin/llama-server).
+    pub home: PathBuf,
+    /// Host:port for the chat model llama-server instance.
+    #[serde(default = "default_llamacpp_chat_server_url")]
+    pub chat_server_url: String,
+    /// Host:port for the embedding model llama-server instance.
+    #[serde(default = "default_llamacpp_embed_server_url")]
+    pub embed_server_url: String,
+    /// GGUF model file for chat.
+    pub chat_model_path: PathBuf,
+    /// GGUF model file for embeddings.
+    pub embed_model_path: PathBuf,
+    /// GPU layers to offload (--n-gpu-layers); 0 = CPU only.
+    #[serde(default)]
+    pub n_gpu_layers: u32,
+    /// Max seconds to wait for each llama-server to become ready after spawn.
+    #[serde(default = "default_llamacpp_ready_timeout")]
+    pub ready_timeout_secs: u64,
+}
+
+pub(crate) fn default_llamacpp_ready_timeout() -> u64 {
+    30
+}
+
+fn default_llamacpp_chat_server_url() -> String {
+    "http://127.0.0.1:8090".into()
+}
+
+fn default_llamacpp_embed_server_url() -> String {
+    "http://127.0.0.1:8091".into()
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct AppConfig {
     /// Logical workspace id: Qdrant collection `fcp_vault_v2_{workspace}`, ephemeral file suffix, etc.
@@ -227,10 +277,16 @@ pub struct AppConfig {
     pub ollama_host: String,
     /// Default chat model id as understood by Ollama (`ollama pull …`).
     pub model_name: String,
+    /// Active LLM backend; existing vaults without this key default to Ollama.
+    #[serde(default)]
+    pub llm_backend: LlmBackend,
     /// Operator display name for UI / prompts; from TOML or `FCP_USER_NAME`; empty if unset.
     #[serde(default)]
     pub user_name: String,
-    /// Context window size passed to Ollama as `num_ctx` / generation options.
+    /// Context window: Ollama `num_ctx`, orchestrator budgets / condensation, and managed
+    /// `llama-server --ctx-size` for the **chat** server when [`LlmBackend::LlamaCpp`] is active.
+    /// The managed **embedding** server uses `min(num_ctx, 8192)` for `--ctx-size` so the second
+    /// GPU process does not reserve full chat KV (see `executive::peripherals`).
     pub num_ctx: usize,
     /// Optional Ollama GPU layer count override (`num_gpu`). `None` uses Ollama auto-placement.
     pub ollama_num_gpu: Option<u32>,
@@ -238,6 +294,9 @@ pub struct AppConfig {
     pub ollama_main_gpu: Option<u32>,
     /// Optional Ollama low-VRAM mode toggle (`low_vram`). `None` leaves runtime default.
     pub ollama_low_vram: Option<bool>,
+    /// llama.cpp-specific config; `None` when backend is Ollama.
+    #[serde(default)]
+    pub llama_cpp: Option<LlamaCppConfig>,
     /// Max seconds to wait for a single LLM generation (connect + stream).
     pub generation_timeout_secs: u64,
     /// Floor for `eris benchmark` per-scenario wall clock: effective timeout is
@@ -246,6 +305,18 @@ pub struct AppConfig {
     /// [`Self::generation_timeout_secs`]). Default **120**.
     #[serde(default = "default_benchmark_scenario_timeout_secs")]
     pub benchmark_scenario_timeout_secs: u64,
+    /// Override `--ctx-size` for the managed **chat** `llama-server` when the benchmark runner
+    /// spawns peripherals.  Benchmarks use much smaller prompts than long interactive sessions;
+    /// reserving the full chat `num_ctx` (e.g. 64 K) allocates enormous KV cache VRAM that is
+    /// never filled, and the resulting memory pressure can destabilise the display stack on
+    /// dual-GPU (iGPU + dGPU) systems.  `0` (default) means "use `num_ctx` unchanged."
+    #[serde(default)]
+    pub benchmark_num_ctx: usize,
+    /// Milliseconds to sleep between benchmark scenarios, giving the GPU power/thermal state
+    /// time to settle.  Helps on systems where rapid back-to-back completions cause transient
+    /// PCIe / display link instability.  Default **500** ms.
+    #[serde(default = "default_benchmark_inter_scenario_cooldown_ms")]
+    pub benchmark_inter_scenario_cooldown_ms: u64,
     /// Forwarded to Ollama on each chat request as `.think(...)` in `OllamaClient::generate` (`ollama-rs` `ChatMessageRequest`). `false` (default) turns off the separate thinking/reasoning channel for models that support it—saves tokens and RAM versus `true`. TOML key name is historical; unrelated to `engine::router::ReasoningRouter`.
     pub enable_reasoning_fsm: bool,
     /// Fraction of estimated context fill (0.0–1.0) at which rolling condensation runs.
@@ -484,6 +555,10 @@ fn default_unload_ollama_models_on_chat_exit() -> bool {
 
 fn default_benchmark_scenario_timeout_secs() -> u64 {
     120
+}
+
+fn default_benchmark_inter_scenario_cooldown_ms() -> u64 {
+    500
 }
 
 /// Default peripheral spawn: `qdrant` with no args (container/binary default config).
@@ -867,13 +942,17 @@ impl Default for AppConfig {
             log_level: "info".into(),
             ollama_host: "http://localhost:11434".into(),
             model_name: "gemma4:26b".into(),
+            llm_backend: LlmBackend::default(),
             user_name: String::new(),
             num_ctx: 16384,
             ollama_num_gpu: None,
             ollama_main_gpu: None,
             ollama_low_vram: None,
+            llama_cpp: None,
             generation_timeout_secs: 120,
             benchmark_scenario_timeout_secs: default_benchmark_scenario_timeout_secs(),
+            benchmark_num_ctx: 0,
+            benchmark_inter_scenario_cooldown_ms: default_benchmark_inter_scenario_cooldown_ms(),
             enable_reasoning_fsm: false,
             condensation_threshold: 0.5,
             condensation_target: 300,
@@ -1089,6 +1168,49 @@ impl AppConfig {
             }
             crate::memory::types::EphemeralTier::Promote => None,
         }
+    }
+
+    pub fn is_llamacpp(&self) -> bool {
+        self.llm_backend == LlmBackend::LlamaCpp
+    }
+
+    pub fn is_ollama(&self) -> bool {
+        self.llm_backend == LlmBackend::Ollama
+    }
+
+    /// Validate llama.cpp config when backend is LlamaCpp.
+    /// Returns Err if required paths are missing or llama-server binary not found.
+    pub fn validate_llamacpp_config(&self) -> crate::executive::error::Result<&LlamaCppConfig> {
+        if self.llm_backend != LlmBackend::LlamaCpp {
+            return Err(crate::executive::error::FcpError::Config(
+                "validate_llamacpp_config called but backend is not LlamaCpp".into(),
+            ));
+        }
+        let lc = self.llama_cpp.as_ref().ok_or_else(|| {
+            crate::executive::error::FcpError::Config(
+                "[llama_cpp] section required when llm_backend = LlamaCpp".into(),
+            )
+        })?;
+        let server_bin = lc.home.join("bin").join("llama-server");
+        if !server_bin.exists() {
+            return Err(crate::executive::error::FcpError::Config(format!(
+                "llama-server binary not found at {}",
+                server_bin.display()
+            )));
+        }
+        if !lc.chat_model_path.exists() {
+            return Err(crate::executive::error::FcpError::Config(format!(
+                "Chat GGUF not found: {}",
+                lc.chat_model_path.display()
+            )));
+        }
+        if !lc.embed_model_path.exists() {
+            return Err(crate::executive::error::FcpError::Config(format!(
+                "Embed GGUF not found: {}",
+                lc.embed_model_path.display()
+            )));
+        }
+        Ok(lc)
     }
 
     /// Physical directory for chat, ignition, tools, and `.fcp/` — always the process working directory
@@ -1347,5 +1469,212 @@ mod tests {
             assert_eq!(config.qdrant_collection_v2, "fcp_vault_v2_test_v2");
             Ok(())
         });
+    }
+
+    #[test]
+    fn round_trip_llamacpp_config() {
+        let mut config = AppConfig::default();
+        config.llm_backend = LlmBackend::LlamaCpp;
+        config.num_ctx = 32768;
+        config.llama_cpp = Some(LlamaCppConfig {
+            home: PathBuf::from("/opt/llama.cpp/build"),
+            chat_server_url: "http://127.0.0.1:8090".into(),
+            embed_server_url: "http://127.0.0.1:8091".into(),
+            chat_model_path: PathBuf::from("/models/chat.gguf"),
+            embed_model_path: PathBuf::from("/models/embed.gguf"),
+            n_gpu_layers: 99,
+            ready_timeout_secs: 30,
+        });
+
+        let toml_str = toml::to_string(&config).expect("serialize");
+        let deserialized: AppConfig = toml::from_str(&toml_str).expect("deserialize");
+
+        assert_eq!(deserialized.llm_backend, LlmBackend::LlamaCpp);
+        let lc = deserialized.llama_cpp.expect("llama_cpp section");
+        assert_eq!(lc.home, PathBuf::from("/opt/llama.cpp/build"));
+        assert_eq!(lc.chat_server_url, "http://127.0.0.1:8090");
+        assert_eq!(lc.embed_server_url, "http://127.0.0.1:8091");
+        assert_eq!(lc.chat_model_path, PathBuf::from("/models/chat.gguf"));
+        assert_eq!(lc.embed_model_path, PathBuf::from("/models/embed.gguf"));
+        assert_eq!(deserialized.num_ctx, 32768);
+        assert_eq!(lc.n_gpu_layers, 99);
+    }
+
+    #[test]
+    fn missing_backend_defaults_to_ollama() {
+        let toml_str = r#"
+            workspace = "test"
+            vault_root = "/tmp"
+            log_level = "info"
+            ollama_host = "http://localhost:11434"
+            model_name = "test:7b"
+            num_ctx = 8192
+            generation_timeout_secs = 60
+            enable_reasoning_fsm = false
+            condensation_threshold = 0.5
+            condensation_target = 300
+            max_tool_rounds = 5
+            max_recovery_attempts = 3
+            qdrant_url = "http://localhost:6334"
+            snapshot_interval_secs = 300
+            embed_model_name = "nomic-embed-text"
+            idle_timeout_secs = 900
+            web_fetch_timeout_secs = 10
+            web_fetch_max_bytes = 20480
+            vault_read_ratio = 0.5
+            tool_match_threshold = 0.5
+            [ollama_daemon]
+            command = "ollama"
+            args = ["serve"]
+            [qdrant_daemon]
+            command = "qdrant"
+            args = []
+        "#;
+        let config: AppConfig = toml::from_str(toml_str).expect("deserialize");
+        assert_eq!(config.llm_backend, LlmBackend::Ollama);
+    }
+
+    #[test]
+    fn missing_llamacpp_section_is_none() {
+        let toml_str = r#"
+            workspace = "test"
+            vault_root = "/tmp"
+            log_level = "info"
+            ollama_host = "http://localhost:11434"
+            model_name = "test:7b"
+            llm_backend = "Ollama"
+            num_ctx = 8192
+            generation_timeout_secs = 60
+            enable_reasoning_fsm = false
+            condensation_threshold = 0.5
+            condensation_target = 300
+            max_tool_rounds = 5
+            max_recovery_attempts = 3
+            qdrant_url = "http://localhost:6334"
+            snapshot_interval_secs = 300
+            embed_model_name = "nomic-embed-text"
+            idle_timeout_secs = 900
+            web_fetch_timeout_secs = 10
+            web_fetch_max_bytes = 20480
+            vault_read_ratio = 0.5
+            tool_match_threshold = 0.5
+            [ollama_daemon]
+            command = "ollama"
+            args = ["serve"]
+            [qdrant_daemon]
+            command = "qdrant"
+            args = []
+        "#;
+        let config: AppConfig = toml::from_str(toml_str).expect("deserialize");
+        assert_eq!(config.llm_backend, LlmBackend::Ollama);
+        assert!(config.llama_cpp.is_none());
+    }
+
+    #[test]
+    fn validate_llamacpp_catches_missing_section() {
+        let mut config = AppConfig::default();
+        config.llm_backend = LlmBackend::LlamaCpp;
+        config.llama_cpp = None;
+
+        let err = config.validate_llamacpp_config().unwrap_err();
+        assert!(err.to_string().contains("[llama_cpp] section required"));
+    }
+
+    #[test]
+    fn validate_llamacpp_catches_missing_binary() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        std::fs::create_dir_all(tmp.path().join("bin")).expect("mkdir");
+
+        let mut config = AppConfig::default();
+        config.llm_backend = LlmBackend::LlamaCpp;
+        config.llama_cpp = Some(LlamaCppConfig {
+            home: tmp.path().to_path_buf(),
+            chat_server_url: "http://127.0.0.1:8090".into(),
+            embed_server_url: "http://127.0.0.1:8091".into(),
+            chat_model_path: PathBuf::from("/fake/chat.gguf"),
+            embed_model_path: PathBuf::from("/fake/embed.gguf"),
+            n_gpu_layers: 0,
+            ready_timeout_secs: 30,
+        });
+
+        let err = config.validate_llamacpp_config().unwrap_err();
+        assert!(err.to_string().contains("llama-server binary not found"));
+    }
+
+    #[test]
+    fn validate_llamacpp_catches_missing_gguf() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let bin_dir = tmp.path().join("bin");
+        std::fs::create_dir_all(&bin_dir).expect("mkdir");
+        std::fs::write(bin_dir.join("llama-server"), b"fake").expect("write");
+
+        let mut config = AppConfig::default();
+        config.llm_backend = LlmBackend::LlamaCpp;
+        config.llama_cpp = Some(LlamaCppConfig {
+            home: tmp.path().to_path_buf(),
+            chat_server_url: "http://127.0.0.1:8090".into(),
+            embed_server_url: "http://127.0.0.1:8091".into(),
+            chat_model_path: PathBuf::from("/nonexistent/chat.gguf"),
+            embed_model_path: PathBuf::from("/nonexistent/embed.gguf"),
+            n_gpu_layers: 0,
+            ready_timeout_secs: 30,
+        });
+
+        let err = config.validate_llamacpp_config().unwrap_err();
+        assert!(err.to_string().contains("Chat GGUF not found"));
+    }
+
+    #[test]
+    fn is_llamacpp_and_is_ollama_helpers() {
+        let mut config = AppConfig::default();
+        assert!(config.is_ollama());
+        assert!(!config.is_llamacpp());
+
+        config.llm_backend = LlmBackend::LlamaCpp;
+        assert!(config.is_llamacpp());
+        assert!(!config.is_ollama());
+    }
+
+    #[test]
+    fn default_urls_populated() {
+        let toml_str = r#"
+            workspace = "test"
+            vault_root = "/tmp"
+            log_level = "info"
+            ollama_host = "http://localhost:11434"
+            model_name = "test:7b"
+            llm_backend = "LlamaCpp"
+            num_ctx = 8192
+            generation_timeout_secs = 60
+            enable_reasoning_fsm = false
+            condensation_threshold = 0.5
+            condensation_target = 300
+            max_tool_rounds = 5
+            max_recovery_attempts = 3
+            qdrant_url = "http://localhost:6334"
+            snapshot_interval_secs = 300
+            embed_model_name = "nomic-embed-text"
+            idle_timeout_secs = 900
+            web_fetch_timeout_secs = 10
+            web_fetch_max_bytes = 20480
+            vault_read_ratio = 0.5
+            tool_match_threshold = 0.5
+            [ollama_daemon]
+            command = "ollama"
+            args = ["serve"]
+            [qdrant_daemon]
+            command = "qdrant"
+            args = []
+            [llama_cpp]
+            home = "/opt/llama.cpp/build"
+            chat_model_path = "/models/chat.gguf"
+            embed_model_path = "/models/embed.gguf"
+        "#;
+        let config: AppConfig = toml::from_str(toml_str).expect("deserialize");
+        let lc = config.llama_cpp.expect("llama_cpp present");
+        assert_eq!(lc.chat_server_url, "http://127.0.0.1:8090");
+        assert_eq!(lc.embed_server_url, "http://127.0.0.1:8091");
+        assert_eq!(config.num_ctx, 8192);
+        assert_eq!(lc.n_gpu_layers, 0);
     }
 }

@@ -122,10 +122,57 @@ pub fn retain_budget_tokens(num_ctx: usize) -> usize {
 }
 
 /// Split `tail` into (older messages to fold, recent messages to keep).
+///
+/// When the tail contains any `user` message, the **last** `user` message and every message after
+/// it are always kept (the active human request plus the model’s reply/tool work for that turn).
+/// Older prefix bytes are budgeted separately so a long assistant trace cannot evict the latest
+/// user line from the verbatim tail.
 pub fn split_tail_fold_and_keep(tail: &[Message], budget: usize) -> (Vec<Message>, Vec<Message>) {
     if tail.is_empty() {
         return (Vec::new(), Vec::new());
     }
+    match tail.iter().rposition(|m| m.role == "user") {
+        Some(last_user_idx) => {
+            split_tail_fold_and_keep_with_last_user_anchor(tail, last_user_idx, budget)
+        }
+        None => split_tail_fold_and_keep_no_user_anchor(tail, budget),
+    }
+}
+
+fn split_tail_fold_and_keep_with_last_user_anchor(
+    tail: &[Message],
+    last_user_idx: usize,
+    budget: usize,
+) -> (Vec<Message>, Vec<Message>) {
+    let suffix = &tail[last_user_idx..];
+    let suffix_tokens = estimate_stack_tokens(suffix);
+    let prefix = &tail[..last_user_idx];
+    let prefix_budget = budget.saturating_sub(suffix_tokens);
+
+    let mut kept_from_prefix_rev: Vec<Message> = Vec::new();
+    let mut used = 0usize;
+    for m in prefix.iter().rev() {
+        let t = estimate_message_tokens(m);
+        if used.saturating_add(t) > prefix_budget && !kept_from_prefix_rev.is_empty() {
+            break;
+        }
+        used = used.saturating_add(t);
+        kept_from_prefix_rev.push(m.clone());
+    }
+    kept_from_prefix_rev.reverse();
+    let kept_prefix_len = kept_from_prefix_rev.len();
+    let split_at = prefix.len().saturating_sub(kept_prefix_len);
+    let old_part = prefix[..split_at].to_vec();
+    let mut kept_tail = Vec::with_capacity(kept_from_prefix_rev.len() + suffix.len());
+    kept_tail.extend(kept_from_prefix_rev);
+    kept_tail.extend_from_slice(suffix);
+    (old_part, kept_tail)
+}
+
+fn split_tail_fold_and_keep_no_user_anchor(
+    tail: &[Message],
+    budget: usize,
+) -> (Vec<Message>, Vec<Message>) {
     let mut kept: Vec<Message> = Vec::new();
     let mut used = 0usize;
     for m in tail.iter().rev() {
@@ -208,7 +255,9 @@ pub fn condensation_system_instruction() -> String {
            \"open_threads\": [\"unresolved items\"],\n\
            \"last_updated\": \"RFC3339 timestamp\"\n\
          }}\n\
-         Merge prior rolling summary (if provided) with the new messages; do not drop critical constraints.",
+         Merge prior rolling summary (if provided) with the new messages; do not drop critical constraints.\n\
+         If any folded `user` lines exist, copy the **latest human request / goal** into `open_threads` or `key_facts` \
+         in clear, quotable form so the assistant still knows what the user is trying to accomplish after compaction.",
         kind = ROLLING_SUMMARY_KIND
     )
 }
@@ -302,5 +351,47 @@ mod tests {
         assert!(!old.is_empty());
         assert!(!kept.is_empty());
         assert_eq!(old.len() + kept.len(), tail.len());
+    }
+
+    #[test]
+    fn split_keeps_last_user_turn_even_with_heavy_assistant_suffix() {
+        let heavy = "w".repeat(500);
+        let tail = vec![
+            Message {
+                role: "user".into(),
+                content: "stale ask".into(),
+            },
+            Message {
+                role: "assistant".into(),
+                content: heavy.clone(),
+            },
+            Message {
+                role: "assistant".into(),
+                content: heavy.clone(),
+            },
+            Message {
+                role: "user".into(),
+                content: "CURRENT_USER_GOAL".into(),
+            },
+            Message {
+                role: "assistant".into(),
+                content: heavy.clone(),
+            },
+            Message {
+                role: "assistant".into(),
+                content: "tiny".into(),
+            },
+        ];
+        let budget = 120usize;
+        let (old, kept) = split_tail_fold_and_keep(&tail, budget);
+        let joined: String = kept.iter().map(|m| m.content.as_str()).collect();
+        assert!(
+            joined.contains("CURRENT_USER_GOAL"),
+            "expected latest user line in kept tail; old={old:?} kept={kept:?}"
+        );
+        assert!(
+            !old.iter().any(|m| m.content == "CURRENT_USER_GOAL"),
+            "latest user line must not be folded; old={old:?}"
+        );
     }
 }

@@ -3,8 +3,8 @@
 mod markers;
 
 pub use markers::{
-    DUPLICATE_TOOL_BATCH_PREFIX, FUCKUP_OVERRIDE_PREFIX, SYSTEM_RECOVERY_PREFIX,
-    is_recovery_system_content,
+    DUPLICATE_TOOL_BATCH_PREFIX, JSON_REPAIR_TELEMETRY, PROTOCOL_FAULT_PREFIX,
+    SYSTEM_RECOVERY_PREFIX, is_recovery_system_content,
 };
 
 use crate::engine::Message;
@@ -188,7 +188,7 @@ mod tests {
         let stack = vec![
             user("hi"),
             asst("bad"),
-            sys("[SYSTEM OVERRIDE: FUCKUP DETECTED] Invalid LLM Output: x"),
+            sys("[SYSTEM] Invalid model output: x"),
             asst(r#"{"tool_calls":[{"name":"t:x","args":{}}]}"#),
             sys(&format_tool_success_line("t:x", "ok")),
         ];
@@ -216,7 +216,7 @@ mod tests {
         let stack = vec![
             user("hi"),
             asst("bad"),
-            sys("[SYSTEM RECOVERY] schema"),
+            sys("[SYSTEM] Recovery — schema"),
             sys(jit),
             asst(r#"{"tool_calls":[{"name":"t:x","args":{}}]}"#),
             sys(&format_tool_success_line("t:x", "ok")),
@@ -238,7 +238,7 @@ mod tests {
             asst("old"),
             user("second"),
             asst("bad"),
-            sys("[SYSTEM OVERRIDE: FUCKUP DETECTED] x"),
+            sys("[SYSTEM] Invalid model output: x"),
             asst(r#"{"tool_calls":[{"name":"t:x","args":{}}]}"#),
             sys(&format_tool_success_line("t:x", "ok")),
         ];

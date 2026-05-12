@@ -137,6 +137,24 @@ pub struct AgentStateUpdate {
     pub tool_ms: u64,
     pub total_ms: u64,
     pub top_tool_match: Option<String>,
+    /// Active chat engine from config (UI labels only). Omitted in older payloads default to Ollama.
+    #[serde(default)]
+    pub llm_backend: crate::config::LlmBackend,
+    /// Prompt tokens reported by the engine for the last completed generation (`0` until first completion).
+    #[serde(default)]
+    pub llm_prompt_tokens: usize,
+    /// Completion tokens reported by the engine for the last finished generation.
+    #[serde(default)]
+    pub llm_completion_tokens: usize,
+    /// Wall-clock ms inside the engine for that generation (llama-server / Ollama round-trip).
+    #[serde(default)]
+    pub llm_last_generation_ms: u64,
+    /// Completion tokens/sec × 1000 (fixed-point). Display as `llm_last_tps_milli / 1000.0`.
+    #[serde(default)]
+    pub llm_last_tps_milli: u32,
+    /// EWMA of the same scale as [`Self::llm_last_tps_milli`].
+    #[serde(default)]
+    pub llm_tps_ewma_milli: u32,
 }
 
 #[cfg(test)]

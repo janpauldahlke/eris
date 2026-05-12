@@ -15,7 +15,9 @@ Forbidden in crate: `unsafe`; `unwrap`/`expect` outside tests (see workspace rul
 
 `AppConfig` holds:
 
-- **LLM:** `ollama_host`, `model_name`, `num_ctx`, `generation_timeout_secs`, `embed_model_name`.
+- **Backend:** `llm_backend` (`LlmBackend` enum: `Ollama` default, `LlamaCpp`).
+- **LLM (Ollama):** `ollama_host`, `model_name`, `num_ctx`, `generation_timeout_secs`, `embed_model_name`.
+- **LLM (llama.cpp):** `llama_cpp` (`LlamaCppConfig` struct: `home`, `chat_server_url`, `embed_server_url`, `chat_model_path`, `embed_model_path`, `n_gpu_layers`, `ready_timeout_secs`). `num_ctx` is top-level (shared).
 - **Loop limits:** `max_tool_rounds`, `max_recovery_attempts`, condensation thresholds.
 - **Semantic:** `qdrant_url`, computed `qdrant_collection_v2` = `fcp_vault_v2_{workspace}` (see `AppConfig` merge), `require_semantic_brain`, retry knobs.
 - **Ephemeral promotion:** TTLs per `EphemeralTier`, score thresholds, `promotion_eval_interval_secs`, decay per tick, optional `turn_end_mention_enabled` and `staged_memory_prompt_max_chars` (see `config.rs` and [04_MEMORY_SUBSYSTEM.md](./04_MEMORY_SUBSYSTEM.md)).
@@ -57,7 +59,8 @@ Canonical paths from a workspace root:
 8. **Inside `start_chat_session`** (shared by both views — see `executive/chat_session.rs`):
    - If `.fcp/seal` still missing: `ignition::run_ignition_sequence`, then **reload** `AppConfig`.
    - Identity sync + `watch` snapshot; optional vault `notify` watcher.
-   - Peripherals, engine, semantic brain, boot ingest, **gatekeeper** registration (vault, agenda, web, system, clock, weather, wiki, DB, mail when Google enabled, memory when semantic online), descriptors, ToolRouter.
+   - Peripherals (Ollama or llama-server), engine (`OllamaClient` or `LlamaCppClient` based on `llm_backend`), `EmbeddingProvider` (`OllamaEmbedding` or `LlamaCppEmbedding`), semantic brain, boot ingest, **gatekeeper** registration (vault, agenda, web, system, clock, weather, wiki, DB, mail when Google enabled, memory when semantic online), descriptors, ToolRouter (takes `Arc<dyn EmbeddingProvider>`).
+   - **Grammar compilation (llama.cpp only):** after gatekeeper registration, collects tool names and `parameters_schema()` from all registered tools, calls `compile_fcp_envelope_grammar_dynamic()`, and sets the resulting GBNF string on `LlamaCppClient` via `set_grammar()`. Logs `tool_count`, `typed_count`, `fallback_count`, `grammar_len`.
    - **Idle heartbeat:** `spawn_heartbeat_monitor` **only if** `idle_heartbeat_enabled` is `true` (default in `AppConfig` is **false**); otherwise log that idle injection is off while Esc cancel remains.
    - Alarm scheduler, missed-agenda hint, ephemeral snapshot daemon + `promotion_suppressed_during_step` shared flag.
    - **`Orchestrator::new`** with `vault_root` = cwd, orchestrator `workspace` argument **`""`** so `ContextAssembler` uses `vault_root/00_Invariants` (flat v2 layout for normal chat).
@@ -70,7 +73,7 @@ Canonical paths from a workspace root:
 
 ## Ignition (`executive/ignition.rs`)
 
-Interactive `inquire` prompts (in `spawn_blocking`) when no seal: agent name, user name, model, scaffold **v2** dirs (`00_Invariants`, `10_Topology`, …), write config + seal. Runs inside `start_chat_session` after optional welder.
+Interactive `inquire` prompts (in `spawn_blocking`) when no seal: agent name, user name, **backend selection** (`Ollama` or `llama.cpp`), model (Ollama model list or GGUF path), scaffold **v2** dirs (`00_Invariants`, `10_Topology`, ...), write config + seal. When `llama.cpp` is selected, ignition also prompts for `llama_cpp_home` (validates `bin/llama-server`), chat GGUF path, embed GGUF path, and GPU layers. Runs inside `start_chat_session` after optional welder.
 
 ## Setup welder (`executive/setup_welder/`)
 
@@ -82,7 +85,11 @@ Interactive `inquire` prompts (in `spawn_blocking`) when no seal: agent name, us
 
 ## Peripherals (`executive/peripherals.rs`)
 
-TCP checks against `ollama_host` and `qdrant_url`; may spawn child processes from `DaemonCommand` in config or Docker for Qdrant in some paths. `PeripheralLifecycle` tracks what this process started so shutdown can kill only those.
+TCP checks against `ollama_host` and `qdrant_url` (Ollama path) or llama-server health endpoints (llama.cpp path); may spawn child processes from `DaemonCommand` in config or Docker for Qdrant in some paths.
+
+When `llm_backend = LlamaCpp`, `PeripheralLifecycle` spawns **two llama-server processes**: chat (port from `chat_server_url`, default 8090) and embed (port from `embed_server_url`, default 8091, with `--embedding` flag). Ready probe: TCP connect + `GET /health` returning `200 {"status":"ok"}` within `ready_timeout_secs`. If servers are already running on those ports (external mode), spawn is skipped.
+
+`PeripheralLifecycle` tracks what this process started so shutdown can kill only those (same SIGTERM-then-SIGKILL pattern as existing Ollama child management).
 
 ## Identity helpers
 

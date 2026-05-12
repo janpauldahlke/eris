@@ -1,6 +1,6 @@
 # Eris — quick start for users
 
-Eris is a **local**, vault-centric assistant: you keep your notes in a folder (the **vault**), run `eris chat` from that folder, and chat in the terminal or in a small browser window on your machine. Ollama powers the model; optional Qdrant holds semantic memory over your notes.
+Eris is a **local**, vault-centric assistant: you keep your notes in a folder (the **vault**), run `eris chat` from that folder, and chat in the terminal or in a small browser window on your machine. Two LLM backends are available: **Ollama** (default, easiest setup) or **llama.cpp** (direct GGUF inference with grammar-enforced structured output). Optional Qdrant holds semantic memory over your notes.
 
 This page is for **people installing a pre-built binary**. Developers building from source should use the [project README](../README.md).
 
@@ -58,13 +58,16 @@ Eris itself may suggest a similar layout if it detects the binary still living u
 
 ## 2. What you need running before the first real chat
 
-Eris expects **Ollama** for chat and embeddings. For full semantic memory (and the default strict startup), it also expects **Qdrant** reachable at the address in your config (defaults are described in the [main README](../README.md#prerequisites)).
+Eris needs an LLM backend for chat and embeddings. For full semantic memory (and the default strict startup), it also expects **Qdrant** reachable at the address in your config (defaults are described in the [main README](../README.md#prerequisites)).
 
 Minimal checklist:
 
-1. Install [Ollama](https://ollama.com) and start it (the installer usually leaves a background service running).
-2. Pull at least one **chat** model and one **embedding** model, matching what you will select or configure (defaults are documented in the main README).
-3. If you use Qdrant: run it (for example via Docker) or let Eris try to start it when possible; otherwise adjust `require_semantic_brain` in `.fcp/config.toml` once that file exists.
+1. **Choose a backend:**
+   - **Ollama** (default): Install [Ollama](https://ollama.com), start it, pull a chat model and an embedding model.
+   - **llama.cpp**: Build llama.cpp from source, download GGUF model files. See **[LLAMA_CPP_SETUP.md](LLAMA_CPP_SETUP.md)** for the full guide.
+2. If you use Qdrant: run it (for example via Docker) or let Eris try to start it when possible; otherwise adjust `require_semantic_brain` in `.fcp/config.toml` once that file exists.
+
+The first-run wizard (ignition) will ask which backend to use and guide you through model selection.
 
 Details and environment variables live in the [Prerequisites](../README.md#prerequisites) section of the main README.
 

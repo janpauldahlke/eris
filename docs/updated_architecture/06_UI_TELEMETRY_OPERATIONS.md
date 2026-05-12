@@ -42,7 +42,7 @@ If `discord.enabled` is true but **`bot_token`** is unset/empty, **`discord_side
 
 - **`logger.rs`:** `tracing` subscriber with file appender under vault `.fcp/telemetry/logs/`. **No `println!` in logic** (per rules); user-facing stderr is reserved for startup/shutdown errors in `main` / teardown paths.
 - **`routing_codes.rs`:** Structured log field constants for pre-LLM routing outcomes.
-- **`preflight.rs`:** For non-`Chat` commands, checks Ollama/Qdrant reachability; **Chat** skips this global preflight and relies on `ensure_peripherals_for_chat` inside `start_chat_session`.
+- **`preflight.rs`:** For non-`Chat` commands, checks Ollama/Qdrant reachability (or llama-server when `llm_backend = LlamaCpp`); **Chat** skips this global preflight and relies on `ensure_peripherals_for_chat` inside `start_chat_session`.
 
 ## Idle heartbeat (`orchestrator/heartbeat/`)
 
@@ -58,7 +58,7 @@ If `discord.enabled` is true but **`bot_token`** is unset/empty, **`discord_side
 
 - `CancellationToken` cancels the orchestrator consumer task, alarm scheduler, and web server (when active).
 - Terminal path: `restore_terminal()` after `TuiApp::run`.
-- `PeripheralLifecycle::shutdown_started_peripherals` stops only daemons this process started (Ollama/Qdrant child processes, etc.).
+- `PeripheralLifecycle::shutdown_started_peripherals` stops only daemons this process started (Ollama/Qdrant child processes, llama-server chat + embed when `LlamaCpp` backend, etc.).
 
 ```mermaid
 flowchart LR

@@ -9,9 +9,10 @@ use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-use crate::config::AppConfig;
+use crate::config::{AppConfig, LlmBackend};
 use crate::engine::ollama::OllamaClient;
 use crate::engine::token_metrics::LlmTokenSnapshot;
+use crate::engine::{AnyEngine, LlamaCppClient};
 use crate::executive::cli::Cli;
 use crate::executive::error::{FcpError, Result};
 use crate::executive::ignition::IgnitionOptions;
@@ -171,18 +172,38 @@ pub async fn start_chat_session(
         drop(identity_tx);
     }
 
+    let backend_label = &config.llm_backend;
     let _ = presentation_tx
-        .send(SessionEvent::SystemError(
-            "[startup] Checking peripheral daemons (Ollama, Qdrant)...".into(),
-        ))
+        .send(SessionEvent::SystemError(format!(
+            "[startup] Checking peripheral daemons ({backend_label}, Qdrant)..."
+        )))
         .await;
 
     let peripheral_lifecycle =
         crate::executive::peripherals::ensure_peripherals_for_chat(&config).await?;
-    let ollama_status = if peripheral_lifecycle.started_ollama() {
-        "started by eris"
-    } else {
-        "already running"
+
+    let llm_status = match config.llm_backend {
+        crate::config::LlmBackend::Ollama => {
+            if peripheral_lifecycle.started_ollama() {
+                "ollama=started by eris"
+            } else {
+                "ollama=already running"
+            }
+            .to_string()
+        }
+        crate::config::LlmBackend::LlamaCpp => {
+            let chat = if peripheral_lifecycle.started_llama_chat() {
+                "started by eris"
+            } else {
+                "external"
+            };
+            let embed = if peripheral_lifecycle.started_llama_embed() {
+                "started by eris"
+            } else {
+                "external"
+            };
+            format!("llama-chat={chat}, llama-embed={embed}")
+        }
     };
     let qdrant_status = if peripheral_lifecycle.started_qdrant() {
         "started by eris"
@@ -191,7 +212,7 @@ pub async fn start_chat_session(
     };
     let _ = presentation_tx
         .send(SessionEvent::SystemError(format!(
-            "[startup] Peripheral readiness: ollama={ollama_status}, qdrant={qdrant_status}"
+            "[startup] Peripheral readiness: {llm_status}, qdrant={qdrant_status}"
         )))
         .await;
 
@@ -206,15 +227,49 @@ pub async fn start_chat_session(
 
     let client = Ollama::new(host, port);
     let (token_metrics_tx, token_metrics_rx) = crate::engine::token_metrics::channel();
-    let engine = OllamaClient::with_token_metrics(client.clone(), config.clone(), token_metrics_tx);
+    let mut engine: AnyEngine = match config.llm_backend {
+        LlmBackend::Ollama => {
+            let ollama_engine =
+                OllamaClient::with_token_metrics(client.clone(), config.clone(), token_metrics_tx);
+            AnyEngine::Ollama(ollama_engine)
+        }
+        LlmBackend::LlamaCpp => {
+            let llamacpp_engine = LlamaCppClient::new(config.clone())?
+                .with_token_metrics(token_metrics_tx);
+            AnyEngine::LlamaCpp(llamacpp_engine)
+        }
+    };
     let ollama_arc = Arc::new(client);
+
+    let embed_provider: Arc<dyn crate::engine::EmbeddingProvider> = match config.llm_backend {
+        crate::config::LlmBackend::Ollama => Arc::new(
+            crate::engine::embedding::OllamaEmbedding::new(
+                ollama_arc.clone(),
+                config.embed_model_name.clone(),
+            ),
+        ),
+        crate::config::LlmBackend::LlamaCpp => {
+            let lc = config.validate_llamacpp_config()?;
+            Arc::new(crate::engine::embedding::LlamaCppEmbedding::new(
+                &lc.embed_server_url,
+                config.generation_timeout_secs,
+            )?)
+        }
+    };
+
+    crate::memory::semantic::validate_embedding_provider_vs_qdrant(
+        config.as_ref(),
+        embed_provider.dimensions(),
+    )
+    .await?;
+
     let ephemeral = Arc::new(EphemeralMemory::new(config.workspace.clone()));
     let connect_attempts = config.semantic_brain_connect_attempts;
     let connect_retry_ms = config.semantic_brain_connect_retry_delay_ms;
     let semantic_arc: Option<Arc<crate::memory::semantic::SemanticBrain>> =
         match crate::memory::semantic::SemanticBrain::new_with_connect_retries(
             config.clone(),
-            ollama_arc.clone(),
+            embed_provider.clone(),
             connect_attempts,
             connect_retry_ms,
         )
@@ -560,8 +615,7 @@ pub async fn start_chat_session(
     };
 
     let tool_router = match crate::orchestrator::tool_router::ToolRouter::new(
-        ollama_arc,
-        config.embed_model_name.clone(),
+        embed_provider,
         gatekeeper.all_tool_descriptions(),
         descriptor_registry.clone(),
         config.tool_match_threshold,
@@ -648,6 +702,46 @@ pub async fn start_chat_session(
         hints: Arc::new(context_view_hints),
     };
 
+    if config.is_llamacpp() {
+        let tool_names = gatekeeper.registered_tool_names();
+        let mut typed_count: usize = 0;
+        let mut fallback_count: usize = 0;
+
+        let entries: Vec<crate::engine::grammar::ToolGrammarEntry> = tool_names
+            .iter()
+            .map(|name| {
+                let per_tool_rules = gatekeeper
+                    .parameters_root_schema_for(name)
+                    .and_then(|schema| {
+                        crate::engine::grammar::schema_to_gbnf_rule(name, &schema)
+                    })
+                    .map(|(_rule_name, rules)| rules);
+
+                if per_tool_rules.is_some() {
+                    typed_count += 1;
+                } else {
+                    fallback_count += 1;
+                }
+
+                crate::engine::grammar::ToolGrammarEntry {
+                    name: name.clone(),
+                    per_tool_rules,
+                }
+            })
+            .collect();
+
+        let grammar =
+            crate::engine::grammar::compile_fcp_envelope_grammar_dynamic(&entries);
+        tracing::info!(
+            tool_count = tool_names.len(),
+            typed_count,
+            fallback_count,
+            grammar_len = grammar.len(),
+            "Compiled dynamic per-tool GBNF grammar for llama.cpp"
+        );
+        engine.set_grammar(grammar);
+    }
+
     let mut orchestrator = Orchestrator::new(
         engine,
         gatekeeper,
@@ -670,6 +764,7 @@ pub async fn start_chat_session(
         config.clone(),
         identity_rx,
         promotion_suppressed_during_step,
+        Some(token_metrics_rx.clone()),
     );
 
     tracing::info!(

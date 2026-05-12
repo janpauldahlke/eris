@@ -65,7 +65,7 @@ Submodules (all re-exported at `crate::orchestrator::context::…`):
 - **`window.rs`:** sliding-window condensation, rolling summary JSON, `plan_sliding_condensation`, etc.
 - **`compendium.rs`:** `build_phrase_compendium` / typical phrasing lines for slim tool prompts.
 
-System prompt text mandates **single JSON object** output, no markdown fences; model uses `FormatType::Json` in Ollama.
+System prompt text mandates **single JSON object** output, no markdown fences. **Ollama path:** model uses `FormatType::Json`. **llama.cpp path:** output shape is enforced by the GBNF grammar at the token level — the system prompt still describes the protocol for the model's benefit, but compliance is guaranteed by grammar constraint.
 
 `Orchestrator::force_full_tool_schemas_in_llm_view` forces full schemas for one pass after certain gatekeeper schema faults.
 
@@ -91,13 +91,13 @@ Note: **Pre-LLM** routing uses **user input** string, not the model’s `thought
 
 ## LLM support text (`orchestrator/llm_support/`)
 
-- **`llm_support/json_envelope.rs`:** split leading JSON object from trailing prose, trailing-content protocol check, `llm_json_parse_recovery_message` for `RecoverFromFuckup`.
+- **`llm_support/json_envelope.rs`:** split leading JSON object from trailing prose, trailing-content protocol check, `llm_json_parse_recovery_message` for `RecoverFromFuckup` (Ollama path only). Also provides `llm_schema_recovery_natural_language` for the grammar path — describes expected args in prose instead of raw JSON, since the grammar already constrains the output structure.
 - **`llm_support/post_tool_guidance.rs`:** `POST_TOOL_*` strings and `recover_override_message_for_tool_failure` injected after tool batches / failures.
 
 ## Loop policy modules (`orchestrator/loop/`)
 
 - **`transition.rs`:** `StateTransition` / `TransitionControl` — coordinator applies these.
-- **`directive_policy.rs` / `recovery_policy.rs`:** classify failures and next action.
+- **`directive_policy.rs` / `recovery_policy.rs`:** classify failures and next action. Recovery classification is **backend-aware**: the grammar path (llama.cpp) eliminates `RecoverFromFuckup` entirely (JSON parse failures are structurally impossible under GBNF). If it somehow fires, it is logged at `error!` level and treated as fatal (indicates a grammar bug). Schema retries on the grammar path use **natural-language descriptions** of the expected args instead of raw JSON injection.
 - **`tool_batch.rs`:** `ToolBatchDecision` — Continue, Halt, RetryWithTargetedSchema, Recover, Fatal.
 
 ```mermaid

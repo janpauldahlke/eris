@@ -242,6 +242,7 @@ mod tests {
                 content: r#"{"thought":"test","status":"Idle","message_to_user":"hi","tool_calls":[]}"#.to_string(),
                 prompt_tokens: 10,
                 generated_tokens: 5,
+                generation_ms: 0,
             };
 
             instrumented.analyze_response(&response).await;
@@ -263,6 +264,7 @@ mod tests {
                 content: "not valid json".to_string(),
                 prompt_tokens: 10,
                 generated_tokens: 5,
+                generation_ms: 0,
             };
 
             instrumented.analyze_response(&response).await;

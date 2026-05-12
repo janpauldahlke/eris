@@ -99,6 +99,8 @@ pub struct Orchestrator<E: LlmEngine> {
     pub turn_seq: u64,
     /// Shown in TUI Status while tools are pending; cleared when a final deck message is emitted or at `step` entry.
     pub activity_line: Option<String>,
+    /// Latest engine token snapshot for web [`AgentStateUpdate`] (optional; TUI reads the same watch directly).
+    pub token_metrics_rx: Option<tokio::sync::watch::Receiver<crate::engine::token_metrics::LlmTokenSnapshot>>,
     /// Last `message_to_user` body sent to the TUI deck this `step()`; avoids duplicate bubbles when Task → Reflect replays the same line.
     pub(crate) last_deck_message_body: Option<String>,
     /// After [`Self::max_tool_rounds`] successful tool runs in this `step()`, the next loop iteration runs one final conversational generation (no tools / no JIT), then idles.
@@ -116,6 +118,11 @@ pub struct Orchestrator<E: LlmEngine> {
 impl<E: LlmEngine> Orchestrator<E> {
     pub async fn broadcast_state(&self) {
         if let Some(tx) = &self.presentation_tx {
+            let token_snap = self
+                .token_metrics_rx
+                .as_ref()
+                .map(|rx| rx.borrow().clone())
+                .unwrap_or_default();
             let update = AgentStateUpdate {
                 state: self.state,
                 tool_rounds: self.tool_rounds,
@@ -130,6 +137,12 @@ impl<E: LlmEngine> Orchestrator<E> {
                 tool_ms: self.last_tool_ms,
                 total_ms: self.last_total_ms,
                 top_tool_match: self.last_top_tool_match.clone(),
+                llm_backend: self.config.llm_backend.clone(),
+                llm_prompt_tokens: token_snap.prompt_tokens,
+                llm_completion_tokens: token_snap.generated_tokens,
+                llm_last_generation_ms: token_snap.last_generation_ms,
+                llm_last_tps_milli: token_snap.last_tps_milli,
+                llm_tps_ewma_milli: token_snap.ewma_tps_milli,
             };
             let _ = tx.send(SessionEvent::StateUpdate(update)).await;
         }
@@ -158,6 +171,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         config: Arc<AppConfig>,
         identity: tokio::sync::watch::Receiver<Arc<str>>,
         promotion_suppressed_during_step: Arc<AtomicBool>,
+        token_metrics_rx: Option<tokio::sync::watch::Receiver<crate::engine::token_metrics::LlmTokenSnapshot>>,
     ) -> Self {
         Self {
             state: AgentState::Idle,
@@ -169,7 +183,8 @@ impl<E: LlmEngine> Orchestrator<E> {
                 workspace,
                 identity,
                 config.staged_memory_prompt_max_chars,
-            ),
+            )
+            .with_grammar_constraint(config.is_llamacpp()),
             tool_router,
             max_recovery_attempts,
             max_tool_rounds,
@@ -204,6 +219,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             moltbook_browse_ledger: None,
             tool_repeat_failure_streak: HashMap::new(),
             step_failed_tools: HashSet::new(),
+            token_metrics_rx,
         }
     }
 
