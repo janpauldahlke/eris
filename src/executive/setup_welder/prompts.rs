@@ -133,7 +133,7 @@ pub fn run_interactive_sequence(
         tracing::info!(target: "fcp.setup", "Welder: Ollama API reachable");
     }
 
-    if !report.qdrant_tcp_ok && report.require_semantic_brain {
+    if !report.qdrant_ready && report.require_semantic_brain {
         tracing::info!(
             target: "fcp.setup",
             "Welder: Qdrant not up yet; peripherals will try native binary or Docker"

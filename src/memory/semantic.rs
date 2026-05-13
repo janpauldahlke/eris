@@ -218,8 +218,8 @@ impl SemanticBrain {
         }
     }
 
-    /// Qdrant gRPC connect with bounded retries. Peripheral checks only TCP; this covers the gap
-    /// where the port accepts connections before gRPC is fully ready.
+    /// Qdrant gRPC connect with bounded retries. Chat startup still uses this for transient
+    /// errors after [`crate::executive::peripherals::qdrant_grpc_ready`] (e.g. load spikes).
     pub async fn new_with_connect_retries(
         config: Arc<AppConfig>,
         embed: Arc<dyn EmbeddingProvider>,

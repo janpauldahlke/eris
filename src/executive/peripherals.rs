@@ -5,9 +5,10 @@ use std::time::Duration;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
-use tokio::net::TcpStream;
 use tokio::time::timeout;
 use url::Url;
+
+use qdrant_client::Qdrant;
 
 use crate::config::{AppConfig, DaemonCommand, LlmBackend};
 
@@ -16,8 +17,12 @@ use crate::config::{AppConfig, DaemonCommand, LlmBackend};
 const OLLAMA_CONTEXT_LENGTH_ENV: &str = "OLLAMA_CONTEXT_LENGTH";
 use crate::executive::error::{FcpError, Result};
 
-const READY_TIMEOUT_SECS: u64 = 20;
-const READY_POLL_MS: u64 = 250;
+/// After spawning Qdrant (or Docker sidecar), poll until gRPC answers, not just TCP accept.
+const READY_TIMEOUT_SECS: u64 = 45;
+const READY_POLL_MS: u64 = 300;
+/// Single-probe limits for [`qdrant_grpc_ready`] (tonic connect + one `health_check` RPC).
+const QDRANT_PROBE_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+const QDRANT_PROBE_RPC_TIMEOUT: Duration = Duration::from_secs(5);
 /// If the first probe misses a slow-starting system Ollama (e.g. login item), wait this long
 /// before spawning a second `ollama serve`, which duplicates RAM use.
 const PRE_SPAWN_OLLAMA_WAIT_SECS: u64 = 30;
@@ -552,8 +557,8 @@ pub async fn ensure_peripherals_for_chat(config: &AppConfig) -> Result<Periphera
         }
     }
 
-    if !qdrant_reachable(&config.qdrant_url).await {
-        tracing::warn!("Qdrant not reachable at startup, attempting Rust-managed launch");
+    if !qdrant_grpc_ready(&config.qdrant_url).await {
+        tracing::warn!("Qdrant gRPC not ready at startup, attempting Rust-managed launch");
         match spawn_daemon("qdrant", &config.qdrant_daemon) {
             Ok(mut child) => {
                 if !wait_for_qdrant(&config.qdrant_url, READY_TIMEOUT_SECS).await {
@@ -804,13 +809,24 @@ pub async fn llama_server_reachable(base_url: &str) -> bool {
     )
 }
 
-pub async fn qdrant_reachable(qdrant_url: &str) -> bool {
-    let addr = match parse_socket_addr(qdrant_url, 6334) {
-        Ok(v) => v,
+/// True when Qdrant serves gRPC on `qdrant_url` (same readiness signal as the semantic brain).
+///
+/// Uses `skip_compatibility_check` so repeated polls do not spam stdout from `qdrant-client`.
+pub async fn qdrant_grpc_ready(qdrant_url: &str) -> bool {
+    if parse_socket_addr(qdrant_url, 6334).is_err() {
+        return false;
+    }
+    let client = match Qdrant::from_url(qdrant_url)
+        .skip_compatibility_check()
+        .connect_timeout(QDRANT_PROBE_CONNECT_TIMEOUT)
+        .timeout(QDRANT_PROBE_RPC_TIMEOUT)
+        .build()
+    {
+        Ok(c) => c,
         Err(_) => return false,
     };
     matches!(
-        timeout(Duration::from_secs(2), TcpStream::connect(addr)).await,
+        timeout(QDRANT_PROBE_RPC_TIMEOUT, client.health_check()).await,
         Ok(Ok(_))
     )
 }
@@ -820,7 +836,7 @@ async fn wait_for_ollama(host: &str, timeout_secs: u64) -> bool {
 }
 
 async fn wait_for_qdrant(url: &str, timeout_secs: u64) -> bool {
-    wait_until(timeout_secs, || qdrant_reachable(url)).await
+    wait_until(timeout_secs, || qdrant_grpc_ready(url)).await
 }
 
 async fn wait_until<F, Fut>(timeout_secs: u64, mut check: F) -> bool
@@ -851,6 +867,19 @@ pub fn parse_socket_addr(service_url: &str, default_port: u16) -> Result<String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn qdrant_grpc_ready_false_on_dead_port() {
+        assert!(
+            !qdrant_grpc_ready("http://127.0.0.1:65535").await,
+            "no listener on ephemeral port"
+        );
+    }
+
+    #[tokio::test]
+    async fn qdrant_grpc_ready_false_on_invalid_url() {
+        assert!(!qdrant_grpc_ready("not-a-url").await);
+    }
 
     #[test]
     fn parse_socket_addr_works() {

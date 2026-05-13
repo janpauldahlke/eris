@@ -1,7 +1,7 @@
 use crate::config::{AppConfig, LlmBackend};
 use crate::executive::cli::Commands;
 use crate::executive::error::{FcpError, Result};
-use crate::executive::peripherals::{llama_server_reachable, ollama_reachable, qdrant_reachable};
+use crate::executive::peripherals::{llama_server_reachable, ollama_reachable, qdrant_grpc_ready};
 
 pub async fn run_preflight_checks(command: &Commands, config: &AppConfig) -> Result<()> {
     // Chat and Benchmark manage their own peripheral lifecycle
@@ -35,9 +35,10 @@ pub async fn run_preflight_checks(command: &Commands, config: &AppConfig) -> Res
         }
     }
 
-    if !qdrant_reachable(&config.qdrant_url).await {
+    if !qdrant_grpc_ready(&config.qdrant_url).await {
         return Err(FcpError::NetworkFault(
-            "FATAL: Qdrant sidecar not detected. Run your vector db.".into(),
+            "FATAL: Qdrant is not answering gRPC at qdrant_url. Start Qdrant or fix the URL."
+                .into(),
         ));
     }
 

@@ -7,7 +7,8 @@ use crate::executive::peripherals;
 #[derive(Debug, Clone)]
 pub struct WelderReport {
     pub ollama_api_ok: bool,
-    pub qdrant_tcp_ok: bool,
+    /// Qdrant answered a gRPC health check at `qdrant_url` (not merely TCP open).
+    pub qdrant_ready: bool,
     pub ollama_cli: bool,
     pub qdrant_cli: bool,
     pub docker_cli: bool,
@@ -35,10 +36,10 @@ async fn path_command_ok(program: &'static str, args: &[&'static str]) -> bool {
     }
 }
 
-/// Collect reachability and PATH probes (Ollama/Qdrant are cheap HTTP/TCP).
+/// Collect reachability and PATH probes (Ollama HTTP; Qdrant gRPC health).
 pub async fn gather(config: &AppConfig) -> WelderReport {
     let ollama_api_ok = peripherals::ollama_reachable(&config.ollama_host).await;
-    let qdrant_tcp_ok = peripherals::qdrant_reachable(&config.qdrant_url).await;
+    let qdrant_ready = peripherals::qdrant_grpc_ready(&config.qdrant_url).await;
     let require_semantic_brain = config.require_semantic_brain;
 
     let (ollama_cli, qdrant_cli, docker_cli) = tokio::join!(
@@ -49,7 +50,7 @@ pub async fn gather(config: &AppConfig) -> WelderReport {
 
     WelderReport {
         ollama_api_ok,
-        qdrant_tcp_ok,
+        qdrant_ready,
         ollama_cli,
         qdrant_cli,
         docker_cli,
@@ -60,7 +61,7 @@ pub async fn gather(config: &AppConfig) -> WelderReport {
 impl WelderReport {
     /// Qdrant can still be auto-started if native binary or Docker exists.
     pub fn qdrant_can_be_auto_started(&self) -> bool {
-        self.qdrant_tcp_ok || self.qdrant_cli || self.docker_cli
+        self.qdrant_ready || self.qdrant_cli || self.docker_cli
     }
 
     /// Hard preflight: semantic brain required but no path to start Qdrant.
@@ -77,7 +78,7 @@ mod tests {
     fn qdrant_blocked_semantics() {
         let r = WelderReport {
             ollama_api_ok: false,
-            qdrant_tcp_ok: false,
+            qdrant_ready: false,
             ollama_cli: false,
             qdrant_cli: false,
             docker_cli: false,
