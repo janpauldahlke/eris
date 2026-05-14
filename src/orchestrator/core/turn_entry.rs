@@ -263,7 +263,7 @@ fn is_operational_skill_id(id: &str) -> bool {
 mod tests {
     use super::*;
     use crate::config::AppConfig;
-    use crate::engine::{EngineResponse, LlmEngine, Message};
+    use crate::engine::{EngineResponse, LlmEngine, LlmGenerateOptions, Message};
     use crate::memory::ephemeral::EphemeralMemory;
     use crate::orchestrator::context::ContextViewSettings;
     use crate::tools::Gatekeeper;
@@ -284,6 +284,7 @@ mod tests {
             _stack: &[Message],
             _available_tools_json: &str,
             _stream_tx: Option<mpsc::UnboundedSender<String>>,
+            _options: LlmGenerateOptions,
         ) -> Result<EngineResponse> {
             Ok(EngineResponse {
                 content: "{}".into(),

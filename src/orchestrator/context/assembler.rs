@@ -644,4 +644,15 @@ mod tests {
         assert!(out.contains("calendar:list"));
         assert!(out.starts_with("PREAMBLE"));
     }
+
+    /// Empty `offered` in slim mode means the assembler keeps **all** allowed tools in the
+    /// prompt; llama.cpp GBNF must fall back to session grammar (see `step.rs`).
+    #[test]
+    fn empty_offered_keeps_full_tool_roster_for_slim_assembly_contract() {
+        let a = serde_json::json!({"type":"function","function":{"name":"tool_a","description":"da","parameters":{}}});
+        let b = serde_json::json!({"type":"function","function":{"name":"tool_b","description":"db","parameters":{}}});
+        let allowed = vec![a, b];
+        let out = super::filter_tools_by_offered_order(allowed, &[]);
+        assert_eq!(out.len(), 2);
+    }
 }

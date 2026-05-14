@@ -185,6 +185,22 @@ impl<E: LlmEngine> Orchestrator<E> {
             match result {
                 Ok(result) => {
                     self.tool_repeat_failure_streak.remove(&repeat_streak_key);
+                    if matches!(
+                        tool_name.as_str(),
+                        "moltbook:home" | "moltbook:search" | "moltbook:feed"
+                    ) && self.moltbook_browse_ledger.is_none()
+                    {
+                        self.moltbook_browse_ledger =
+                            Some(super::moltbook_browse_ledger::MoltbookBrowseLedger::new(
+                                turn_seq,
+                            ));
+                        tracing::info!(
+                            turn_seq,
+                            tool = %tool_name,
+                            event = "moltbook.browse.ledger_opened",
+                            "Moltbook browse ledger opened after successful browse entrypoint (cycle policy applies only inside this session)"
+                        );
+                    }
                     if let Some(ref mut ledger) = self.moltbook_browse_ledger {
                         ledger.record_success(&tool_name, &args);
                     }
@@ -489,7 +505,7 @@ mod clock_before_db_tests {
 mod repeat_failure_streak_tests {
     use super::*;
     use crate::config::AppConfig;
-    use crate::engine::{EngineResponse, LlmEngine, Message};
+    use crate::engine::{EngineResponse, LlmEngine, LlmGenerateOptions, Message};
     use crate::executive::error::Result;
     use crate::memory::ephemeral::EphemeralMemory;
     use crate::orchestrator::context::ContextViewSettings;
@@ -516,6 +532,7 @@ mod repeat_failure_streak_tests {
             _stack: &[Message],
             _available_tools_json: &str,
             _stream_tx: Option<mpsc::UnboundedSender<String>>,
+            _options: LlmGenerateOptions,
         ) -> Result<EngineResponse> {
             Ok(EngineResponse {
                 content: "{}".into(),
@@ -636,7 +653,7 @@ mod repeat_failure_streak_tests {
 mod targeted_schema_retry_phase5_tests {
     use super::*;
     use crate::config::{AppConfig, LlmBackend};
-    use crate::engine::{EngineResponse, LlmEngine, Message};
+    use crate::engine::{EngineResponse, LlmEngine, LlmGenerateOptions, Message};
     use crate::executive::error::Result;
     use crate::memory::ephemeral::EphemeralMemory;
     use crate::orchestrator::context::ContextViewSettings;
@@ -691,6 +708,7 @@ mod targeted_schema_retry_phase5_tests {
             _stack: &[Message],
             _available_tools_json: &str,
             _stream_tx: Option<mpsc::UnboundedSender<String>>,
+            _options: LlmGenerateOptions,
         ) -> Result<EngineResponse> {
             Ok(EngineResponse {
                 content: "{}".into(),

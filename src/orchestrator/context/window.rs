@@ -116,9 +116,10 @@ pub fn tail_after_head(stack: &[Message], head: &StackHead) -> Vec<Message> {
 }
 
 /// Max estimated tokens to keep verbatim in the tail (recent window).
-pub fn retain_budget_tokens(num_ctx: usize) -> usize {
+pub fn retain_budget_tokens(num_ctx: usize, retain_ratio: f32) -> usize {
     let n = num_ctx.max(1);
-    ((n as f32) * 0.55).floor() as usize
+    let r = retain_ratio.clamp(0.05_f32, 0.95_f32);
+    ((n as f32) * r).floor() as usize
 }
 
 /// Split `tail` into (older messages to fold, recent messages to keep).
@@ -214,6 +215,7 @@ pub struct CondensationPlan {
 pub fn plan_sliding_condensation(
     stack: &[Message],
     num_ctx: usize,
+    retain_ratio: f32,
 ) -> Result<Option<CondensationPlan>> {
     let head = split_stack_head(stack)?;
     let tail = tail_after_head(stack, &head);
@@ -227,7 +229,7 @@ pub fn plan_sliding_condensation(
         .map(|m| m.content.clone())
         .filter(|s| !s.trim().is_empty());
 
-    let budget = retain_budget_tokens(num_ctx).max(32);
+    let budget = retain_budget_tokens(num_ctx, retain_ratio).max(32);
     let (messages_to_fold, kept_tail) = split_tail_fold_and_keep(&tail, budget);
 
     if messages_to_fold.is_empty() {
@@ -241,6 +243,50 @@ pub fn plan_sliding_condensation(
         messages_to_fold,
         kept_tail,
     }))
+}
+
+/// Drop oldest tail messages (after the fixed head) until the estimated stack is at most `ceiling`,
+/// without removing the latest `user` message or anything after it.
+pub fn trim_chat_stack_to_est_token_ceiling(
+    stack: &mut Vec<Message>,
+    ceiling: usize,
+) -> Result<usize> {
+    let mut dropped = 0usize;
+    if ceiling == 0 {
+        return Ok(0);
+    }
+    while estimate_stack_tokens(stack) > ceiling {
+        let head = split_stack_head(stack)?;
+        let n_head = 1 + usize::from(head.jit.is_some()) + usize::from(head.rolling.is_some());
+        if stack.len() <= n_head {
+            break;
+        }
+        let last_user_rel = stack[n_head..].iter().rposition(|m| m.role == "user");
+        let removed_one = match last_user_rel {
+            Some(rel) => {
+                let abs = n_head + rel;
+                if abs > n_head {
+                    stack.remove(n_head);
+                    true
+                } else {
+                    false
+                }
+            }
+            None => {
+                if stack.len() > n_head + 1 {
+                    stack.remove(n_head);
+                    true
+                } else {
+                    false
+                }
+            }
+        };
+        if !removed_one {
+            break;
+        }
+        dropped = dropped.saturating_add(1);
+    }
+    Ok(dropped)
 }
 
 pub fn condensation_system_instruction() -> String {
@@ -282,6 +328,23 @@ pub fn build_summarization_stack(
         out.push(m.clone());
     }
     out
+}
+
+/// llama-server + Qwen3 chat template can raise `No user query found in messages` when the
+/// wire `messages` array contains no `user` role, or when the last message is not `user`
+/// (condensation stacks are often `system…` + folded `assistant` rows only). Append a
+/// single internal user line so the template always has an explicit query to answer.
+pub fn ensure_condensation_user_query_tail(stack: &mut Vec<Message>) {
+    let last_is_user = stack
+        .last()
+        .is_some_and(|m| m.role == "user");
+    if last_is_user {
+        return;
+    }
+    stack.push(Message {
+        role: "user".into(),
+        content: "[FCP internal — condensation] Reply with exactly one JSON object as specified in the system instructions (rolling_summary_v1). No markdown fences, no prose before or after the object.".into(),
+    });
 }
 
 pub fn normalize_rolling_summary_response(raw: &str) -> Result<String> {
@@ -354,6 +417,41 @@ mod tests {
     }
 
     #[test]
+    fn retain_budget_respects_ratio() {
+        assert_eq!(retain_budget_tokens(1000, 0.55), 550);
+        assert_eq!(retain_budget_tokens(1000, 0.2), 200);
+    }
+
+    #[test]
+    fn hard_trim_drops_oldest_tail_under_ceiling() {
+        let main = Message {
+            role: "system".into(),
+            content: "main".into(),
+        };
+        let u1 = Message {
+            role: "user".into(),
+            content: "x".repeat(400),
+        };
+        let a1 = Message {
+            role: "assistant".into(),
+            content: "y".repeat(400),
+        };
+        let u2 = Message {
+            role: "user".into(),
+            content: "current".into(),
+        };
+        let mut stack = vec![main, u1, a1, u2];
+        let ceiling = 80usize;
+        let dropped = trim_chat_stack_to_est_token_ceiling(&mut stack, ceiling).expect("trim");
+        assert!(dropped > 0);
+        assert!(estimate_stack_tokens(&stack) <= ceiling);
+        assert!(
+            stack.iter().any(|m| m.content == "current"),
+            "latest user line preserved"
+        );
+    }
+
+    #[test]
     fn split_keeps_last_user_turn_even_with_heavy_assistant_suffix() {
         let heavy = "w".repeat(500);
         let tail = vec![
@@ -393,5 +491,40 @@ mod tests {
             !old.iter().any(|m| m.content == "CURRENT_USER_GOAL"),
             "latest user line must not be folded; old={old:?}"
         );
+    }
+
+    #[test]
+    fn condensation_user_tail_appended_when_last_not_user() {
+        use super::ensure_condensation_user_query_tail;
+        let mut stack = vec![
+            Message {
+                role: "system".into(),
+                content: "instr".into(),
+            },
+            Message {
+                role: "assistant".into(),
+                content: "{}".into(),
+            },
+        ];
+        ensure_condensation_user_query_tail(&mut stack);
+        assert_eq!(stack.len(), 3);
+        assert_eq!(stack.last().map(|m| m.role.as_str()), Some("user"));
+    }
+
+    #[test]
+    fn condensation_user_tail_skipped_when_already_user() {
+        use super::ensure_condensation_user_query_tail;
+        let mut stack = vec![
+            Message {
+                role: "system".into(),
+                content: "instr".into(),
+            },
+            Message {
+                role: "user".into(),
+                content: "hi".into(),
+            },
+        ];
+        ensure_condensation_user_query_tail(&mut stack);
+        assert_eq!(stack.len(), 2);
     }
 }

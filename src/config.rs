@@ -317,12 +317,29 @@ pub struct AppConfig {
     /// PCIe / display link instability.  Default **500** ms.
     #[serde(default = "default_benchmark_inter_scenario_cooldown_ms")]
     pub benchmark_inter_scenario_cooldown_ms: u64,
-    /// Forwarded to Ollama on each chat request as `.think(...)` in `OllamaClient::generate` (`ollama-rs` `ChatMessageRequest`). `false` (default) turns off the separate thinking/reasoning channel for models that support it—saves tokens and RAM versus `true`. TOML key name is historical; unrelated to `engine::router::ReasoningRouter`.
+    /// Forwarded to Ollama on each chat request as `.think(...)` in `OllamaClient::generate` (`ollama-rs` `ChatMessageRequest`), and to llama-server as `chat_template_kwargs` (`{"enable_thinking": false}` when `false`). When Eris spawns the managed chat `llama-server`, `false` also adds `--reasoning off` and `--reasoning-budget 0` (embed server unchanged). If chat is already listening on the configured port, you must pass equivalent flags on that process yourself. `false` (default) turns off the separate thinking/reasoning channel for models that support it—saves tokens and RAM versus `true`. TOML key name is historical; unrelated to `engine::router::ReasoningRouter`.
     pub enable_reasoning_fsm: bool,
     /// Fraction of estimated context fill (0.0–1.0) at which rolling condensation runs.
     pub condensation_threshold: f32,
-    /// Target token budget after condensation (rolling summary + retained tail).
+    /// When **≥ 4096**, caps the post-compaction estimated stack ceiling to at most this many
+    /// tokens (same cheap proxy as [`crate::orchestrator::context::estimate_stack_tokens`]). Values
+    /// below 4096 are ignored so legacy placeholder values (for example `300`) do not collapse the stack.
     pub condensation_target: usize,
+    /// Fraction of `num_ctx` kept as verbatim tail when planning a fold (`0.05`–`0.95`). Replaces the
+    /// former hardcoded **0.55** in [`crate::orchestrator::context::retain_budget_tokens`].
+    #[serde(default = "default_condensation_retain_ratio")]
+    pub condensation_retain_ratio: f32,
+    /// Max LLM summarization passes per [`crate::orchestrator::core::Orchestrator::execute_condensation`]
+    /// call while the stack is still above the estimated ceiling.
+    #[serde(default = "default_condensation_max_chained_passes")]
+    pub condensation_max_chained_passes: usize,
+    /// Estimated stack ceiling as `floor(num_ctx * ratio)` (combined with [`Self::condensation_target`]
+    /// when that target is large enough to matter).
+    #[serde(default = "default_condensation_stack_est_ceiling_ratio")]
+    pub condensation_stack_est_ceiling_ratio: f32,
+    /// Strip JSON-repair / recovery system rows from the stack tail before folding.
+    #[serde(default = "default_condensation_strip_recovery_system_messages")]
+    pub condensation_strip_recovery_system_messages: bool,
     /// Max tool-call rounds per user `step()` before cap recovery / final pass.
     pub max_tool_rounds: u8,
     /// Max schema/recovery retries before the orchestrator bails to idle.
@@ -690,6 +707,22 @@ fn default_optimize_context_proactive_condensation() -> bool {
     false
 }
 
+fn default_condensation_retain_ratio() -> f32 {
+    0.55
+}
+
+fn default_condensation_max_chained_passes() -> usize {
+    3
+}
+
+fn default_condensation_stack_est_ceiling_ratio() -> f32 {
+    0.92
+}
+
+fn default_condensation_strip_recovery_system_messages() -> bool {
+    true
+}
+
 fn default_optimize_context_proactive_condensation_ratio() -> f32 {
     0.85
 }
@@ -955,7 +988,12 @@ impl Default for AppConfig {
             benchmark_inter_scenario_cooldown_ms: default_benchmark_inter_scenario_cooldown_ms(),
             enable_reasoning_fsm: false,
             condensation_threshold: 0.5,
-            condensation_target: 300,
+            condensation_target: 0,
+            condensation_retain_ratio: default_condensation_retain_ratio(),
+            condensation_max_chained_passes: default_condensation_max_chained_passes(),
+            condensation_stack_est_ceiling_ratio: default_condensation_stack_est_ceiling_ratio(),
+            condensation_strip_recovery_system_messages:
+                default_condensation_strip_recovery_system_messages(),
             max_tool_rounds: 5,
             max_recovery_attempts: 3,
             ephemeral_ttl_session_secs: default_ephemeral_ttl_session_secs(),
@@ -1041,6 +1079,21 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
+    /// Cheap-token ceiling for the full chat stack after condensation / hard trim.
+    pub fn condensation_stack_est_ceiling_tokens(&self, num_ctx: usize) -> usize {
+        let n = num_ctx.max(1);
+        let ratio = self
+            .condensation_stack_est_ceiling_ratio
+            .clamp(0.55_f32, 1.0_f32);
+        let derived = ((n as f32) * ratio).floor() as usize;
+        let t = self.condensation_target;
+        if t >= 4096 {
+            derived.min(t)
+        } else {
+            derived
+        }
+    }
+
     pub fn load(cli: crate::executive::cli::Cli) -> crate::executive::error::Result<Self> {
         use figment::{
             Figment,

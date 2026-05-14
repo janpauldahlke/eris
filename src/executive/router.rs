@@ -541,7 +541,7 @@ mod tests {
         use async_trait::async_trait;
         use tokio::sync::mpsc;
 
-        use crate::engine::{EngineResponse, LlmEngine, Message};
+        use crate::engine::{EngineResponse, LlmEngine, LlmGenerateOptions, Message};
         use crate::memory::ephemeral::EphemeralMemory;
         use crate::orchestrator::core::Orchestrator;
         use crate::orchestrator::state::AgentState;
@@ -562,6 +562,7 @@ mod tests {
                 _stack: &[Message],
                 _available_tools_json: &str,
                 _stream_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+                _options: LlmGenerateOptions,
             ) -> crate::executive::error::Result<EngineResponse> {
                 let i = self.calls.fetch_add(1, AtomicOrdering::SeqCst);
                 let content = self

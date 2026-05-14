@@ -7,7 +7,7 @@
 use crate::benchmark::metrics::SpeedMetrics;
 use crate::engine::llama_cpp::LlamaCppClient;
 use crate::engine::ollama::OllamaClient;
-use crate::engine::{LlmEngine, Message};
+use crate::engine::{LlmEngine, LlmGenerateOptions, Message};
 use crate::executive::error::{FcpError, Result};
 use ollama_rs::generation::chat::request::ChatMessageRequest;
 use ollama_rs::generation::chat::ChatMessage;
@@ -58,7 +58,7 @@ pub async fn probe_llamacpp_chat_latency(client: &LlamaCppClient) -> Result<Spee
     }];
     let wall_start = std::time::Instant::now();
     let resp = client
-        .generate(&stack, "[]", None)
+        .generate(&stack, "[]", None, LlmGenerateOptions::default())
         .await
         .map_err(|e| {
             FcpError::NetworkFault(format!("Benchmark speed probe: llama.cpp chat failed: {e}"))

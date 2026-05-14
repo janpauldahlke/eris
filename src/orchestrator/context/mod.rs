@@ -21,7 +21,8 @@ pub use view::{
 pub use window::{
     CondensationPlan, ROLLING_SUMMARY_KIND, ROLLING_SUMMARY_TITLE, RollingSummaryV1, StackHead,
     build_summarization_stack, condensation_system_instruction, estimate_message_tokens,
-    estimate_stack_tokens, is_jit_system_message, is_rolling_summary_message,
+    estimate_stack_tokens, ensure_condensation_user_query_tail, is_jit_system_message, is_rolling_summary_message,
     normalize_rolling_summary_response, plan_sliding_condensation, retain_budget_tokens,
-    rolling_summary_system_message, split_stack_head, split_tail_fold_and_keep, tail_after_head,
+    rolling_summary_system_message, split_stack_head, split_tail_fold_and_keep,
+    tail_after_head, trim_chat_stack_to_est_token_ceiling,
 };

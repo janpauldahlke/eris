@@ -6,7 +6,7 @@
 
 use crate::benchmark::metrics::{QualityMetrics, SpeedMetrics};
 use crate::engine::ollama::OllamaClient;
-use crate::engine::traits::{EngineResponse, LlmEngine, Message};
+use crate::engine::traits::{EngineResponse, LlmEngine, LlmGenerateOptions, Message};
 use crate::executive::error::Result;
 use crate::orchestrator::llm_support::json_envelope::parse_llm_response_protocol;
 use async_trait::async_trait;
@@ -80,6 +80,7 @@ impl LlmEngine for InstrumentedOllamaClient {
         stack: &[Message],
         available_tools_json: &str,
         stream_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+        options: LlmGenerateOptions,
     ) -> Result<EngineResponse> {
         let start = Instant::now();
 
@@ -92,7 +93,7 @@ impl LlmEngine for InstrumentedOllamaClient {
         // Call the real Ollama client
         let result = self
             .inner
-            .generate(stack, available_tools_json, stream_tx)
+            .generate(stack, available_tools_json, stream_tx, options)
             .await;
 
         let total_duration = start.elapsed();

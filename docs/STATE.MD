@@ -158,16 +158,24 @@
 
 12/05/2026
 
-- [x] feature (LLAMA_CCP): phase 0 — config types, `LlmBackend` enum, `LlamaCppConfig`, ignition backend selector
-- [x] feature (LLAMA_CCP): phase 1 — `LlamaCppClient` implements `LlmEngine` via HTTP `/v1/chat/completions`
-- [x] feature (LLAMA_CCP): phase 2 — `PeripheralLifecycle` spawns/probes/shuts down llama-server (chat + embed)
-- [x] feature (LLAMA_CCP): phase 3 — `EmbeddingProvider` trait, Ollama + LlamaCpp impls, router/semantic use `Arc<dyn>`
-- [x] feature (LLAMA_CCP): phase 4 — static GBNF envelope grammar, `compile_fcp_envelope_grammar()`
-- [x] feature (LLAMA_CCP): phase 5 — recovery redesign: grammar path eliminates `RecoverFromFuckup`, NL schema retry
-- [x] feature (LLAMA_CCP): phase 6 — `system:health` backend awareness, llama-server `/health` probe, preflight
-- [x] feature (LLAMA_CCP): phase 7 — dynamic per-tool arg grammar: JSON Schema → GBNF compiler for 40+ tools
-- [x] feature (LLAMA_CCP): phase 8 — documentation: `LLAMA_CPP_SETUP.md`, README/END_USER_README/STATE updates
+- [x] feature (LLAMA_CPP): phase 0 — config types, `LlmBackend` enum, `LlamaCppConfig`, ignition backend selector
+- [x] feature (LLAMA_CPP): phase 1 — `LlamaCppClient` implements `LlmEngine` via HTTP `/v1/chat/completions`
+- [x] feature (LLAMA_CPP): phase 2 — `PeripheralLifecycle` spawns/probes/shuts down llama-server (chat + embed)
+- [x] feature (LLAMA_CPP): phase 3 — `EmbeddingProvider` trait, Ollama + LlamaCpp impls, router/semantic use `Arc<dyn>`
+- [x] feature (LLAMA_CPP): phase 4 — static GBNF envelope grammar, `compile_fcp_envelope_grammar()`
+- [x] feature (LLAMA_CPP): phase 5 — recovery redesign: grammar path eliminates `RecoverFromFuckup`, NL schema retry
+- [x] feature (LLAMA_CPP): phase 6 — `system:health` backend awareness, llama-server `/health` probe, preflight
+- [x] feature (LLAMA_CPP): phase 7 — dynamic per-tool arg grammar: JSON Schema → GBNF compiler for 40+ tools
+- [x] feature (LLAMA_CPP): phase 8 — documentation: `LLAMA_CPP_SETUP.md`, README/END_USER_README/STATE updates
 - [x] fix: unify `num_ctx` usage across both LLM engines
 - [x] fix: system prompt ordering for llama.cpp path
 - [x] fix: benchmark and error/metrics improvements
 - [x] improve: TUI polish
+
+13/05/2026
+
+- [x] testing (LLAMA_CPP): and fixing
+
+14/05/2026
+
+- [x] testing (LLAMA_CPP): and handling improving codensation and errors, checking on logs

@@ -1,4 +1,9 @@
-//! Browse-cycle accounting for Moltbook alarm turns.
+//! Browse-cycle accounting once a **real Moltbook browse** has started.
+//!
+//! The ledger (and `[MOLTBOOK CYCLE — policy]` nudges) exists only after a successful
+//! **`moltbook:home`**, **`moltbook:search`**, or **`moltbook:feed`** in the current user turn —
+//! not from semantic tool routing, overlay latch, or unrelated tools such as `memory:query`.
+//! This keeps private vault/memory work from inheriting public-swarm completion pressure.
 //!
 //! **Engagement (merge default, Workstream E):** conservative autonomy — after a successful
 //! `moltbook:comments` read, the model should record **`moltbook:vote`** or **`memory:stage`**.

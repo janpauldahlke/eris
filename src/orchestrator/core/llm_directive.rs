@@ -152,7 +152,7 @@ impl<E: LlmEngine> Orchestrator<E> {
 mod phase5_recovery_tests {
     use super::*;
     use crate::config::{AppConfig, LlmBackend};
-    use crate::engine::{EngineResponse, LlmEngine, Message};
+    use crate::engine::{EngineResponse, LlmEngine, LlmGenerateOptions, Message};
     use crate::memory::ephemeral::EphemeralMemory;
     use crate::orchestrator::context::ContextViewSettings;
     use crate::orchestrator::llm_support::json_envelope::FCP_JSON_REPAIR_MARKER;
@@ -173,6 +173,7 @@ mod phase5_recovery_tests {
             _stack: &[Message],
             _available_tools_json: &str,
             _stream_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+            _options: LlmGenerateOptions,
         ) -> crate::executive::error::Result<EngineResponse> {
             Ok(EngineResponse {
                 content: "{}".into(),

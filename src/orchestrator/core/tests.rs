@@ -1,6 +1,6 @@
 use super::*;
 use crate::config::AppConfig;
-use crate::engine::{EngineResponse, LlmEngine, Message};
+use crate::engine::{EngineResponse, LlmEngine, LlmGenerateOptions, Message};
 use crate::executive::error::Result;
 use crate::memory::ephemeral::EphemeralMemory;
 use crate::orchestrator::context::ContextViewSettings;
@@ -63,6 +63,7 @@ impl LlmEngine for MockEngine {
         _stack: &[Message],
         _available_tools_json: &str,
         _stream_tx: Option<mpsc::UnboundedSender<String>>,
+        _options: LlmGenerateOptions,
     ) -> Result<EngineResponse> {
         if let Some(msg) = &self.fault {
             return Err(crate::executive::error::FcpError::NetworkFault(msg.clone()));
@@ -539,6 +540,7 @@ async fn test_async_guillotine_interrupts_generation() {
             _stack: &[Message],
             _available_tools_json: &str,
             _stream_tx: Option<mpsc::UnboundedSender<String>>,
+            _options: LlmGenerateOptions,
         ) -> Result<EngineResponse> {
             // Hang forever
             tokio::time::sleep(Duration::from_secs(10)).await;
@@ -651,6 +653,7 @@ async fn test_duplicate_only_batch_halts_without_extra_generation() {
             _stack: &[Message],
             _available_tools_json: &str,
             _stream_tx: Option<mpsc::UnboundedSender<String>>,
+            _options: LlmGenerateOptions,
         ) -> Result<EngineResponse> {
             let idx = self.calls.fetch_add(1, Ordering::SeqCst);
             let content = self.responses.get(idx).cloned().unwrap_or_else(|| {

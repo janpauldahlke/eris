@@ -1,6 +1,6 @@
 use crate::config::AppConfig;
 use crate::engine::token_metrics::{self, LlmTokenSnapshot};
-use crate::engine::{EngineResponse, LlmEngine, Message};
+use crate::engine::{EngineResponse, LlmEngine, LlmGenerateOptions, Message};
 use crate::executive::error::Result;
 use async_trait::async_trait;
 use ollama_rs::Ollama;
@@ -43,6 +43,7 @@ impl LlmEngine for OllamaClient {
         stack: &[Message],
         available_tools_json: &str,
         stream_tx: Option<mpsc::UnboundedSender<String>>,
+        options: LlmGenerateOptions,
     ) -> Result<EngineResponse> {
         use crate::executive::error::FcpError;
         use ollama_rs::generation::chat::request::ChatMessageRequest;
@@ -96,6 +97,9 @@ impl LlmEngine for OllamaClient {
 
         let mut gen_options = ModelOptions::default()
             .num_ctx(self.config.num_ctx as u64);
+        if let Some(t) = options.temperature {
+            gen_options = gen_options.temperature(t);
+        }
         if let Some(num_gpu) = self.config.ollama_num_gpu {
             gen_options = gen_options.num_gpu(num_gpu);
         }
@@ -242,7 +246,7 @@ mod tests {
         let client = Ollama::new("http://localhost".to_string(), 65535);
         let engine = OllamaClient::new(client, Arc::new(config));
 
-        let result = engine.generate(&[], "{}", None).await;
+        let result = engine.generate(&[], "{}", None, LlmGenerateOptions::default()).await;
 
         match result {
             Err(FcpError::NetworkFault(_)) => (),
@@ -275,7 +279,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let result = engine.generate(&[], "{}", None).await;
+        let result = engine.generate(&[], "{}", None, LlmGenerateOptions::default()).await;
 
         match result {
             Err(FcpError::EngineFault(_)) => (),
@@ -324,7 +328,7 @@ mod tests {
             .await;
 
         let result = engine
-            .generate(&[], "{}", None)
+            .generate(&[], "{}", None, LlmGenerateOptions::default())
             .await
             .expect("Expected a valid EngineResponse");
 

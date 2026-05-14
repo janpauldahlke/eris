@@ -1,9 +1,11 @@
 use crate::config::AppConfig;
 use crate::engine::token_metrics;
-use crate::engine::{EngineResponse, LlmEngine, Message};
+use crate::engine::{EngineResponse, LlmEngine, LlmGenerateOptions, Message};
 use crate::executive::error::{FcpError, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, watch};
@@ -20,17 +22,23 @@ pub struct LlamaCppClient {
     grammar: Option<Arc<String>>,
 }
 
-/// Qwen3 chat templates emit `<think>…` before the assistant body unless the template is told
-/// otherwise. If that prose lands in `message.content`, our JSON parser sees plain text even when
-/// a GBNF grammar is attached — so whenever we send `grammar`, we **always** pass this kwargs
-/// block (independent of [`AppConfig::enable_reasoning_fsm`], which is not wired for llama.cpp).
-fn chat_template_kwargs_when_grammar_present(
-    grammar: Option<&Arc<String>>,
-) -> Option<serde_json::Value> {
-    if grammar.is_some() {
-        Some(serde_json::json!({ "enable_thinking": false }))
-    } else {
+/// Fingerprint of the active GBNF string for log correlation (not cryptographic).
+fn grammar_stable_id(grammar: &str) -> u64 {
+    let mut h = DefaultHasher::new();
+    grammar.hash(&mut h);
+    h.finish()
+}
+
+/// When [`AppConfig::enable_reasoning_fsm`] is `false` (default), forward `enable_thinking: false` into
+/// llama-server’s Jinja chat template so Qwen3-style models omit `<think>…` from the assistant
+/// prefix—matching [`crate::engine::ollama::OllamaClient`]'s `.think(false)` and keeping `message.content`
+/// usable for JSON / GBNF from the first token. When `true`, kwargs are omitted so the template may enable
+/// thinking (operators often pair with `llama-server --reasoning on` on recent builds).
+fn chat_template_kwargs_for_reasoning_config(enable_reasoning_fsm: bool) -> Option<serde_json::Value> {
+    if enable_reasoning_fsm {
         None
+    } else {
+        Some(serde_json::json!({ "enable_thinking": false }))
     }
 }
 
@@ -76,9 +84,8 @@ struct ChatCompletionRequest<'a> {
     n_predict: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     grammar: Option<&'a str>,
-    /// Forwarded to the Jinja chat template inside llama-server.
-    /// `{"enable_thinking": false}` suppresses Qwen3 `<think>` tokens so the
-    /// GBNF grammar can constrain output from token 0.
+    /// Forwarded to the Jinja chat template inside llama-server when
+    /// [`AppConfig::enable_reasoning_fsm`] is `false` (`{"enable_thinking": false}` for Qwen3 templates).
     #[serde(skip_serializing_if = "Option::is_none")]
     chat_template_kwargs: Option<serde_json::Value>,
 }
@@ -172,6 +179,45 @@ fn normalize_system_messages(messages: Vec<ChatMsg>) -> Vec<ChatMsg> {
     out
 }
 
+/// llama-server rejects requests where two or more `assistant` messages appear at the end of
+/// `messages` (`invalid_request_error`). The orchestrator stack can legitimately end with several
+/// assistant rows (e.g. failed protocol JSON kept for recovery). Merge trailing assistant messages
+/// into one wire message so the API accepts the payload.
+fn merge_trailing_assistant_messages(mut messages: Vec<ChatMsg>) -> Vec<ChatMsg> {
+    if messages.len() < 2 {
+        return messages;
+    }
+    let n = messages.len();
+    let mut tail_asst = 0usize;
+    for i in (0..n).rev() {
+        if messages[i].role == "assistant" {
+            tail_asst += 1;
+        } else {
+            break;
+        }
+    }
+    if tail_asst < 2 {
+        return messages;
+    }
+    let start = n - tail_asst;
+    tracing::debug!(
+        tail_asst,
+        "llama_cpp: merging trailing assistant messages for llama-server wire format"
+    );
+    const SEP: &str = "\n\n---[FCP prior assistant message]---\n\n";
+    let merged_content: String = messages[start..]
+        .iter()
+        .map(|m| m.content.as_str())
+        .collect::<Vec<_>>()
+        .join(SEP);
+    messages.truncate(start);
+    messages.push(ChatMsg {
+        role: "assistant".into(),
+        content: merged_content,
+    });
+    messages
+}
+
 async fn stream_sse_response(
     response: reqwest::Response,
     stream_tx: &mpsc::UnboundedSender<String>,
@@ -239,6 +285,7 @@ impl LlmEngine for LlamaCppClient {
         stack: &[Message],
         _available_tools_json: &str,
         stream_tx: Option<mpsc::UnboundedSender<String>>,
+        options: LlmGenerateOptions,
     ) -> Result<EngineResponse> {
         let raw_messages: Vec<ChatMsg> = stack
             .iter()
@@ -247,19 +294,49 @@ impl LlmEngine for LlamaCppClient {
                 content: m.content.clone(),
             })
             .collect();
-        let messages = normalize_system_messages(raw_messages);
+        let messages = merge_trailing_assistant_messages(normalize_system_messages(raw_messages));
 
         let use_stream = stream_tx.is_some();
         let message_count = messages.len();
 
-        let chat_template_kwargs = chat_template_kwargs_when_grammar_present(self.grammar.as_ref());
+        let chat_template_kwargs =
+            chat_template_kwargs_for_reasoning_config(self.config.enable_reasoning_fsm);
+
+        let temperature = options.temperature.unwrap_or(0.7f32);
+
+        let wire_grammar: Option<&str> = if !options.attach_session_grammar {
+            options.grammar_override.as_deref()
+        } else if let Some(ref o) = options.grammar_override {
+            Some(o.as_ref())
+        } else {
+            self.grammar.as_deref().map(|s| s.as_str())
+        };
+
+        let grammar_source: &'static str = if !options.attach_session_grammar {
+            if wire_grammar.is_some() {
+                "override_only"
+            } else {
+                "none"
+            }
+        } else if options.grammar_override.is_some() {
+            "subset_override"
+        } else if self.grammar.is_some() {
+            "session"
+        } else {
+            "none"
+        };
+
+        let (grammar_attached, grammar_len, grammar_stable_id_opt) = match wire_grammar {
+            Some(g) => (true, Some(g.len()), Some(grammar_stable_id(g))),
+            None => (false, None, None),
+        };
 
         let request_body = ChatCompletionRequest {
             messages,
             stream: use_stream,
-            temperature: Some(0.7),
+            temperature: Some(temperature),
             n_predict: Some(-1),
-            grammar: self.grammar.as_ref().map(|s| s.as_str()),
+            grammar: wire_grammar,
             chat_template_kwargs,
         };
 
@@ -278,6 +355,12 @@ impl LlmEngine for LlamaCppClient {
             message_count,
             timeout_secs = self.config.generation_timeout_secs,
             streaming = use_stream,
+            temperature,
+            enable_reasoning_fsm = self.config.enable_reasoning_fsm,
+            grammar_attached,
+            grammar_len,
+            grammar_stable_id = grammar_stable_id_opt,
+            grammar_source,
             "Sending chat request to llama-server"
         );
 
@@ -372,6 +455,7 @@ mod tests {
     use super::*;
     use crate::config::{LlamaCppConfig, LlmBackend};
     use std::path::PathBuf;
+    use tracing_test::traced_test;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -424,7 +508,7 @@ mod tests {
             role: "user".into(),
             content: "Hi".into(),
         }];
-        let result = client.generate(&stack, "", None).await.expect("generate");
+        let result = client.generate(&stack, "", None, LlmGenerateOptions::default()).await.expect("generate");
         assert_eq!(result.content, "Hello, world!");
         assert_eq!(result.prompt_tokens, 10);
         assert_eq!(result.generated_tokens, 5);
@@ -461,7 +545,7 @@ mod tests {
             role: "user".into(),
             content: "Hi".into(),
         }];
-        client.generate(&stack, "", None).await.expect("generate");
+        client.generate(&stack, "", None, LlmGenerateOptions::default()).await.expect("generate");
         let snap = reader.snapshot();
         assert_eq!(snap.prompt_tokens, 42);
         assert_eq!(snap.generated_tokens, 7);
@@ -486,7 +570,7 @@ mod tests {
             content: "Hi".into(),
         }];
         let result = client
-            .generate(&stack, "", Some(tx))
+            .generate(&stack, "", Some(tx), LlmGenerateOptions::default())
             .await
             .expect("generate");
         assert_eq!(result.content, "Hello world");
@@ -520,7 +604,7 @@ mod tests {
             content: "test".into(),
         }];
         client
-            .generate(&stack, "", Some(tx))
+            .generate(&stack, "", Some(tx), LlmGenerateOptions::default())
             .await
             .expect("generate");
 
@@ -556,7 +640,7 @@ mod tests {
             role: "user".into(),
             content: "Hi".into(),
         }];
-        let err = client.generate(&stack, "", None).await.unwrap_err();
+        let err = client.generate(&stack, "", None, LlmGenerateOptions::default()).await.unwrap_err();
         assert!(err.to_string().contains("timed out"));
     }
 
@@ -574,7 +658,7 @@ mod tests {
             role: "user".into(),
             content: "Hi".into(),
         }];
-        let err = client.generate(&stack, "", None).await.unwrap_err();
+        let err = client.generate(&stack, "", None, LlmGenerateOptions::default()).await.unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("500"));
         assert!(msg.contains("internal error"));
@@ -598,7 +682,7 @@ mod tests {
             role: "user".into(),
             content: "Hi".into(),
         }];
-        let err = client.generate(&stack, "", None).await.unwrap_err();
+        let err = client.generate(&stack, "", None, LlmGenerateOptions::default()).await.unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("connection refused") || msg.contains("request failed"));
     }
@@ -620,7 +704,7 @@ mod tests {
             role: "user".into(),
             content: "Hi".into(),
         }];
-        let result = client.generate(&stack, "", None).await.expect("generate");
+        let result = client.generate(&stack, "", None, LlmGenerateOptions::default()).await.expect("generate");
         assert_eq!(result.prompt_tokens, 0);
         assert_eq!(result.generated_tokens, 0);
     }
@@ -644,7 +728,7 @@ mod tests {
             content: "test".into(),
         }];
         let result = client
-            .generate(&stack, "", Some(tx))
+            .generate(&stack, "", Some(tx), LlmGenerateOptions::default())
             .await
             .expect("generate");
         assert_eq!(result.content, "ok");
@@ -675,11 +759,122 @@ mod tests {
             content: "test".into(),
         }];
         let result = client
-            .generate(&stack, "", Some(tx))
+            .generate(&stack, "", Some(tx), LlmGenerateOptions::default())
             .await
             .expect("generate");
         assert_eq!(result.content, "first");
         assert!(!result.content.contains("SHOULD_NOT_APPEAR"));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn grammar_subset_override_wires_short_grammar_and_logs_source() {
+        let mock_server = MockServer::start().await;
+        let body = serde_json::json!({
+            "choices": [{"message": {"content": "{\"thought\":\"\",\"status\":\"Idle\",\"message_to_user\":null,\"tool_calls\":[]}"}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1}
+        });
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = test_config_with_url(&mock_server.uri(), std::env::temp_dir());
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .expect("http client");
+        let chat_url = format!("{}/v1/chat/completions", mock_server.uri());
+        let client = LlamaCppClient {
+            http,
+            chat_url,
+            config,
+            token_metrics_tx: None,
+            grammar: Some(Arc::new("SESSION_GRAMMAR_BLOAT_MARKER".repeat(400))),
+        };
+        let tiny: Arc<str> = Arc::from("tiny-root-gbnf");
+        let stack = vec![Message {
+            role: "user".into(),
+            content: "Hi".into(),
+        }];
+        client
+            .generate(
+                &stack,
+                "",
+                None,
+                LlmGenerateOptions {
+                    grammar_override: Some(tiny),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("generate");
+
+        let reqs = mock_server.received_requests().await.expect("reqs");
+        let posted: serde_json::Value = serde_json::from_slice(&reqs[0].body).expect("body json");
+        assert_eq!(
+            posted.get("grammar").and_then(|v| v.as_str()),
+            Some("tiny-root-gbnf")
+        );
+        assert!(
+            logs_contain("subset_override"),
+            "expected grammar_source=subset_override in request log"
+        );
+        assert!(
+            logs_contain("grammar_len"),
+            "expected grammar_len field in request log"
+        );
+    }
+
+    #[tokio::test]
+    async fn attach_session_grammar_false_omits_grammar_json_field_even_with_session_set() {
+        let mock_server = MockServer::start().await;
+        let body = serde_json::json!({
+            "choices": [{"message": {"content": "x"}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1}
+        });
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = test_config_with_url(&mock_server.uri(), std::env::temp_dir());
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .expect("http client");
+        let chat_url = format!("{}/v1/chat/completions", mock_server.uri());
+        let client = LlamaCppClient {
+            http,
+            chat_url,
+            config,
+            token_metrics_tx: None,
+            grammar: Some(Arc::new("large".repeat(500))),
+        };
+        let stack = vec![Message {
+            role: "user".into(),
+            content: "Hi".into(),
+        }];
+        client
+            .generate(
+                &stack,
+                "",
+                None,
+                LlmGenerateOptions {
+                    attach_session_grammar: false,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("generate");
+
+        let reqs = mock_server.received_requests().await.expect("reqs");
+        let posted: serde_json::Value = serde_json::from_slice(&reqs[0].body).expect("body json");
+        assert!(posted.get("grammar").is_none());
     }
 
     #[tokio::test]
@@ -712,11 +907,10 @@ mod tests {
     }
 
     #[test]
-    fn chat_template_kwargs_always_when_grammar_present() {
-        let g = Arc::new("root ::= \"x\"".into());
-        let k = chat_template_kwargs_when_grammar_present(Some(&g)).expect("some");
+    fn chat_template_kwargs_when_reasoning_fsm_off() {
+        let k = chat_template_kwargs_for_reasoning_config(false).expect("some");
         assert_eq!(k["enable_thinking"], false);
-        assert!(chat_template_kwargs_when_grammar_present(None).is_none());
+        assert!(chat_template_kwargs_for_reasoning_config(true).is_none());
     }
 
     #[test]
@@ -842,6 +1036,73 @@ mod tests {
             assert_eq!(out.len(), 2);
             assert_eq!(out[0].role, "user");
             assert_eq!(out[1].role, "assistant");
+        }
+    }
+
+    mod merge_trailing_assistant_messages_tests {
+        use super::super::{ChatMsg, merge_trailing_assistant_messages};
+
+        fn user(s: &str) -> ChatMsg {
+            ChatMsg {
+                role: "user".into(),
+                content: s.into(),
+            }
+        }
+        fn asst(s: &str) -> ChatMsg {
+            ChatMsg {
+                role: "assistant".into(),
+                content: s.into(),
+            }
+        }
+
+        #[test]
+        fn empty_and_single_unchanged() {
+            assert!(merge_trailing_assistant_messages(vec![]).is_empty());
+            let one = vec![asst("only")];
+            let out = merge_trailing_assistant_messages(one);
+            assert_eq!(out.len(), 1);
+            assert_eq!(out[0].content, "only");
+        }
+
+        #[test]
+        fn two_trailing_assistants_merged() {
+            let out = merge_trailing_assistant_messages(vec![user("u"), asst("a1"), asst("a2")]);
+            assert_eq!(out.len(), 2);
+            assert_eq!(out[0].role, "user");
+            assert_eq!(out[1].role, "assistant");
+            assert!(out[1].content.contains("a1"));
+            assert!(out[1].content.contains("a2"));
+            assert!(out[1].content.contains("[FCP prior assistant message]"));
+        }
+
+        #[test]
+        fn internal_assistant_pair_not_merged() {
+            let out = merge_trailing_assistant_messages(vec![
+                user("u1"),
+                asst("mid1"),
+                asst("mid2"),
+                user("u2"),
+                asst("last"),
+            ]);
+            assert_eq!(out.len(), 5);
+            assert_eq!(out[3].role, "user");
+            assert_eq!(out[4].role, "assistant");
+            assert_eq!(out[4].content, "last");
+        }
+
+        #[test]
+        fn three_trailing_assistants_one_block() {
+            let out = merge_trailing_assistant_messages(vec![
+                user("u"),
+                asst("x"),
+                asst("y"),
+                asst("z"),
+            ]);
+            assert_eq!(out.len(), 2);
+            assert_eq!(out[1].role, "assistant");
+            assert!(out[1].content.contains('x'));
+            assert!(out[1].content.contains('y'));
+            assert!(out[1].content.contains('z'));
         }
     }
 }

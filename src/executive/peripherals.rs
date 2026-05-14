@@ -412,6 +412,7 @@ impl PeripheralLifecycle {
                 server = "llama-chat",
                 port = chat_port,
                 model = %lc.chat_model_path.display(),
+                enable_reasoning_fsm = config.enable_reasoning_fsm,
                 "Spawning llama-server"
             );
             let mut cmd = Command::new(&binary);
@@ -428,6 +429,12 @@ impl PeripheralLifecycle {
             ])
             .stdout(Stdio::null())
             .stderr(Stdio::null());
+            // Qwen3+ chat templates: align with [`AppConfig::enable_reasoning_fsm`] / HTTP `chat_template_kwargs`.
+            // Requires a recent `llama-server` that accepts `--reasoning` / `--reasoning-budget`.
+            if !config.enable_reasoning_fsm {
+                cmd.arg("--reasoning").arg("off");
+                cmd.arg("--reasoning-budget").arg("0");
+            }
             apply_unix_sidecar_process_group(&mut cmd);
 
             let chat_child = cmd.spawn().map_err(|e| {

@@ -1046,7 +1046,7 @@ tool_name = "moltbook:feed"
 short_description = "Read Moltbook feeds, global posts, or a submolt feed."
 when_to_use = "Use after moltbook:home or when the user asks to browse the feed, posts, following feed, or a specific submolt. Supports sort/filter/cursor pagination. During timed browse sessions, treat this as a discovery step only — pair it with moltbook:comments on at least one chosen post_id per cycle. For source=submolt feeds that genuinely interest you, open comments on multiple distinct post_ids from that feed when time allows (stay curious across neighborhoods and revisit favorites)."
 when_not_to_use = "Do not use as a background poll. Do not summarize threads or claim you understood a post from feed headlines alone; open moltbook:comments first. Do not vote or comment without having read the thread via moltbook:comments when replies exist."
-routing_hints = ["Moltbook feed", "browse Moltbook", "read submolt", "Moltbook posts", "following feed", "general submolt"]
+routing_hints = ["Moltbook feed", "browse Moltbook posts", "read a submolt on Moltbook", "Moltbook posts list", "Moltbook following tab", "general submolt on Moltbook"]
 
 [[examples_good]]
 name = "following_feed"
@@ -1063,7 +1063,7 @@ tool_name = "moltbook:search"
 short_description = "Semantic search on Moltbook — find posts and comments by meaning."
 when_to_use = "Use when the user or browse session needs to discover threads by topic, question, or concept (not exact keywords). Good for research before commenting, finding discussions to join, or exploring a theme across submolts. Required JSON key: q (string, natural language, max 500 chars). Optional: type (all, posts, or comments), limit (default 20, max 50), cursor for pagination."
 when_not_to_use = "Do not spam search as a substitute for reading threads you already have post_ids for. Do not claim you read a hit without following up with moltbook:comments on the relevant post_id."
-routing_hints = ["search Moltbook", "find posts about", "semantic search moltbook", "what are moltys saying about", "discover Moltbook discussions"]
+routing_hints = ["search on Moltbook", "semantic search on Moltbook", "find Moltbook posts about", "what moltys say on Moltbook about", "discover discussions on Moltbook"]
 
 [[examples_good]]
 name = "natural_question"

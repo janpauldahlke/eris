@@ -13,6 +13,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use super::llama_gbnf_subset::GbnfSubsetCache;
 use super::moltbook_browse_ledger::MoltbookBrowseLedger;
 
 /// Marker string in `thought` / `message_to_user` when the last user line was empty (debuggable in logs and TUI).
@@ -113,6 +114,8 @@ pub struct Orchestrator<E: LlmEngine> {
     pub(super) tool_repeat_failure_streak: HashMap<String, u8>,
     /// Tool names that failed in the current `step()`; used to prioritize recovery JIT skill guidance.
     pub(super) step_failed_tools: HashSet<String>,
+    /// llama.cpp only: memoized GBNF strings keyed by sorted tool names for per-turn subset grammar.
+    pub(super) gbnf_subset_cache: GbnfSubsetCache,
 }
 
 impl<E: LlmEngine> Orchestrator<E> {
@@ -220,6 +223,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             tool_repeat_failure_streak: HashMap::new(),
             step_failed_tools: HashSet::new(),
             token_metrics_rx,
+            gbnf_subset_cache: GbnfSubsetCache::new(),
         }
     }
 

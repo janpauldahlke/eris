@@ -1,4 +1,4 @@
-use crate::engine::LlmEngine;
+use crate::engine::{LlmEngine, LlmGenerateOptions};
 use crate::executive::error::{FcpError, Result};
 use crate::orchestrator::context::{build_llm_view, estimate_stack_tokens};
 use crate::orchestrator::llm_support::json_envelope::{
@@ -14,12 +14,13 @@ use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use super::{
-    Orchestrator, PromotionSuppressedDuringStep, RECOVERY_BUDGET_EXHAUSTED_DECK_LINE,
-    TOOL_ROUND_CAP_SYSTEM_GUIDANCE,
+    llama_gbnf_subset::slim_offered_tool_names, Orchestrator, PromotionSuppressedDuringStep,
+    RECOVERY_BUDGET_EXHAUSTED_DECK_LINE, TOOL_ROUND_CAP_SYSTEM_GUIDANCE,
 };
-use super::moltbook_browse_ledger::MoltbookBrowseLedger;
-
 use crate::config::AppConfig;
+
+/// Sampling temperature for LLM calls after at least one recovery message was pushed this `step()`.
+const RECOVERY_PASS_LLM_TEMPERATURE: f32 = 0.25;
 
 /// Ollama-only: grammar-constrained backends cannot emit trailing prose after the JSON object.
 pub(crate) fn trailing_json_recovery_triggered(config: &AppConfig, content: &str) -> bool {
@@ -85,9 +86,6 @@ impl<E: LlmEngine> Orchestrator<E> {
 
         // ── Pre-LLM semantic routing ─────────────────────────────────
         let (mut tools_needed, pre_llm_matched_tools) = self.run_pre_llm_routing().await;
-        if Self::moltbook_browse_cycle_hint(&self.last_user_content(), &pre_llm_matched_tools) {
-            self.moltbook_browse_ledger = Some(MoltbookBrowseLedger::new(turn_seq));
-        }
         let mut execution_ledger: HashMap<String, ToolIntentTicket> = HashMap::new();
         let mut schema_recovery_attempted: HashSet<String> = HashSet::new();
         let mut targeted_tools: HashSet<String> = HashSet::new();
@@ -173,9 +171,6 @@ impl<E: LlmEngine> Orchestrator<E> {
                     .any(|name| name.starts_with("moltbook:"));
             if moltbook_overlay_base {
                 moltbook_overlay_latched = true;
-            }
-            if self.moltbook_browse_ledger.is_none() && moltbook_overlay_latched {
-                self.moltbook_browse_ledger = Some(MoltbookBrowseLedger::new(turn_seq));
             }
             let moltbook_overlay = moltbook_overlay_latched;
 
@@ -326,10 +321,61 @@ impl<E: LlmEngine> Orchestrator<E> {
             }
             let view = build_llm_view(&self.chat_stack, &view_settings);
 
+            // llama.cpp: GBNF must match the tool names visible in this hop's system prompt.
+            // - Conversational / tool-cap final pass: no-tool envelope (empty `tool_calls` only).
+            // - `assemble_with_selected_tools`: grammar ⊆ `targeted_tools`.
+            // - Slim phrase map: same `offered` list as assembly (including Moltbook union).
+            //   When `offered` is empty, [`ContextAssembler::assemble_slim_tool_map`] still injects
+            //   the full allowed roster (`filter_tools_by_offered_order`); use session GBNF so
+            //   grammar and prompt stay consistent (subset grammar would wrongly allow only `[]`).
+            // - Full `assemble` (including recovery when `force_full_tool_schemas_in_llm_view`
+            //   disables slim): session grammar from `set_grammar` (full registry).
+            let (grammar_override, attach_session_grammar) = if !self.config.is_llamacpp() {
+                (None, true)
+            } else if !tools_needed {
+                let g = self
+                    .gbnf_subset_cache
+                    .get_or_compile_subset(&self.gatekeeper, &[])?;
+                (Some(g), true)
+            } else if !targeted_tools.is_empty() {
+                let names: Vec<String> = targeted_tools.iter().cloned().collect();
+                let g = self
+                    .gbnf_subset_cache
+                    .get_or_compile_subset(&self.gatekeeper, &names)?;
+                (Some(g), true)
+            } else if slim_assembly {
+                let offered = slim_offered_tool_names(
+                    &pre_llm_matched_tools,
+                    self.tool_map_offer_cap,
+                    moltbook_overlay_latched,
+                    &self.gatekeeper,
+                    &self.state,
+                );
+                if offered.is_empty() {
+                    (None, true)
+                } else {
+                    let g = self
+                        .gbnf_subset_cache
+                        .get_or_compile_subset(&self.gatekeeper, &offered)?;
+                    (Some(g), true)
+                }
+            } else {
+                (None, true)
+            };
+
             let response_result = tokio::select! {
                 res = async {
                     let llm_started = Instant::now();
-                    let out = self.engine.generate(&view, "", None).await;
+                    let gen_options = LlmGenerateOptions {
+                        temperature: if self.recovery_count > 0 {
+                            Some(RECOVERY_PASS_LLM_TEMPERATURE)
+                        } else {
+                            None
+                        },
+                        grammar_override,
+                        attach_session_grammar,
+                    };
+                    let out = self.engine.generate(&view, "", None, gen_options).await;
                     llm_ms_acc = llm_ms_acc.saturating_add(llm_started.elapsed().as_millis() as u64);
                     out
                 } => res,
@@ -529,13 +575,6 @@ impl<E: LlmEngine> Orchestrator<E> {
             self.last_total_ms = step_start.elapsed().as_millis() as u64;
             self.broadcast_state().await;
         }
-    }
-
-    fn moltbook_browse_cycle_hint(user_line: &str, pre_llm_matches: &[String]) -> bool {
-        user_line.to_ascii_lowercase().contains("moltbook")
-            || pre_llm_matches
-                .iter()
-                .any(|n| n.starts_with("moltbook:"))
     }
 }
 

@@ -12,7 +12,7 @@ pub use self::token_metrics::{
     LlmTokenSnapshot, TokenMetricsReader, channel as token_metrics_channel,
     publish as publish_llm_token_snapshot,
 };
-pub use self::traits::{EngineResponse, LlmEngine, Message};
+pub use self::traits::{EngineResponse, LlmEngine, LlmGenerateOptions, Message};
 
 use self::ollama::OllamaClient;
 use async_trait::async_trait;
@@ -42,10 +42,11 @@ impl LlmEngine for AnyEngine {
         stack: &[Message],
         available_tools_json: &str,
         stream_tx: Option<mpsc::UnboundedSender<String>>,
+        options: LlmGenerateOptions,
     ) -> crate::executive::error::Result<EngineResponse> {
         match self {
-            Self::Ollama(e) => e.generate(stack, available_tools_json, stream_tx).await,
-            Self::LlamaCpp(e) => e.generate(stack, available_tools_json, stream_tx).await,
+            Self::Ollama(e) => e.generate(stack, available_tools_json, stream_tx, options).await,
+            Self::LlamaCpp(e) => e.generate(stack, available_tools_json, stream_tx, options).await,
         }
     }
 }

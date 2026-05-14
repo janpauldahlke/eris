@@ -27,6 +27,11 @@ If the error says expected ',' or '}' at a line that shows `]`, you probably nee
 
 Reply with one JSON object only (thought, status, message_to_user, tool_calls). No prose or markdown outside it."##;
 
+/// When the model never entered JSON (prose, thinking-only, etc.): serde often reports `expected value at line 1 column 1`.
+const LLM_JSON_PARSE_RECOVERY_HINT_NON_JSON_PREFIX: &str = r##"Your last reply was not FCP protocol JSON: it did not begin with a `{` object after optional `<think>` blocks.
+
+Emit exactly one JSON object. The first non-space character of your reply must be `{`. Put all assistant prose in the string fields (`thought`, `message_to_user`), not before the object. No markdown code fences, no preamble, no trailing commentary outside the object."##;
+
 /// Max chars for the optional single-line preview appended to JSON-parse recovery messages.
 pub const LLM_JSON_PARSE_RECOVERY_PREVIEW_MAX_CHARS: usize = 200;
 
@@ -47,6 +52,13 @@ pub fn capped_single_line_protocol_preview(raw: &str, max_chars: usize) -> Strin
     s
 }
 
+/// `true` when the visible payload does not start a JSON object (after stripping Qwen-style thinking wrappers).
+#[must_use]
+pub fn raw_appears_to_start_without_json_object(raw: &str) -> bool {
+    let t = strip_leading_redacted_thinking_block(raw).trim_start();
+    !t.starts_with('{')
+}
+
 /// Parse the leading JSON object as [`LlmResponse`] after tool-call normalization (same contract as the orchestrator directive path).
 pub fn parse_llm_response_protocol(raw: &str) -> Result<LlmResponse, serde_json::Error> {
     let json_str = split_leading_json_object(raw).0;
@@ -56,10 +68,15 @@ pub fn parse_llm_response_protocol(raw: &str) -> Result<LlmResponse, serde_json:
 }
 
 /// Full recovery payload for [`crate::orchestrator::state::LoopDirective::RecoverFromFuckup`].
-pub fn llm_json_parse_recovery_message(err: &serde_json::Error) -> String {
+pub fn llm_json_parse_recovery_message(err: &serde_json::Error, raw: &str) -> String {
+    let hint_body = if raw_appears_to_start_without_json_object(raw) {
+        LLM_JSON_PARSE_RECOVERY_HINT_NON_JSON_PREFIX
+    } else {
+        LLM_JSON_PARSE_RECOVERY_HINT_BODY
+    };
     format!(
         "{err}\n\n{}\n{}",
-        FCP_JSON_REPAIR_MARKER, LLM_JSON_PARSE_RECOVERY_HINT_BODY
+        FCP_JSON_REPAIR_MARKER, hint_body
     )
 }
 
@@ -67,9 +84,14 @@ pub fn llm_json_parse_recovery_message(err: &serde_json::Error) -> String {
 pub fn llm_json_parse_recovery_message_with_excerpt(err: &serde_json::Error, raw: &str) -> String {
     let preview =
         capped_single_line_protocol_preview(raw, LLM_JSON_PARSE_RECOVERY_PREVIEW_MAX_CHARS);
+    let hint_body = if raw_appears_to_start_without_json_object(raw) {
+        LLM_JSON_PARSE_RECOVERY_HINT_NON_JSON_PREFIX
+    } else {
+        LLM_JSON_PARSE_RECOVERY_HINT_BODY
+    };
     format!(
         "{err}\n\n{}\n{}\n\n[FCP: protocol_preview]\n{}",
-        FCP_JSON_REPAIR_MARKER, LLM_JSON_PARSE_RECOVERY_HINT_BODY, preview
+        FCP_JSON_REPAIR_MARKER, hint_body, preview
     )
 }
 
@@ -384,11 +406,23 @@ mod tests {
 
     #[test]
     fn json_parse_recovery_message_includes_brace_and_tool_calls_hints() {
-        let err = serde_json::from_str::<LlmResponse>("not json").expect_err("invalid json");
-        let msg = llm_json_parse_recovery_message(&err);
+        let raw = r#"{"thought":"t","status":"Idle","message_to_user":"","tool_calls":[{"name":"t","args":{}"#;
+        let err = parse_llm_response_protocol(raw).expect_err("invalid json");
+        assert!(!raw_appears_to_start_without_json_object(raw));
+        let msg = llm_json_parse_recovery_message(&err, raw);
         assert!(msg.contains("tool_calls"));
         assert!(msg.contains(FCP_JSON_REPAIR_MARKER));
         assert!(msg.contains("one more"));
+    }
+
+    #[test]
+    fn json_parse_recovery_non_json_prefix_uses_leading_brace_hint() {
+        let raw = "You've sharpened the blade.";
+        let err = parse_llm_response_protocol(raw).expect_err("expected parse failure");
+        assert!(raw_appears_to_start_without_json_object(raw));
+        let msg = llm_json_parse_recovery_message_with_excerpt(&err, raw);
+        assert!(msg.contains("first non-space"));
+        assert!(!msg.contains("one more"));
     }
 
     #[test]

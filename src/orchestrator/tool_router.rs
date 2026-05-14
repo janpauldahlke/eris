@@ -3,6 +3,39 @@ use crate::executive::error::{FcpError, Result};
 use crate::tools::ToolDescriptorRegistry;
 use std::sync::Arc;
 
+/// Cosine similarity floor for `moltbook:*` tools when the user line has no explicit Moltbook wording.
+///
+/// General chat often lands near ~0.50–0.56 against notification/comment/search embeddings; memory
+/// recall phrases are particularly close. Real Moltbook requests typically score clearly above this.
+const MOLTBOOK_SEMANTIC_MIN: f32 = 0.58;
+
+fn has_moltbook_lexical_intent(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("moltbook") || lower.contains("submolt")
+}
+
+fn filter_moltbook_semantic_hits(thought: &str, hits: Vec<(String, f32)>) -> Vec<(String, f32)> {
+    let lexical = has_moltbook_lexical_intent(thought);
+    if lexical {
+        return hits;
+    }
+    hits.into_iter()
+        .filter(|(name, sim)| {
+            if name.starts_with("moltbook:") && *sim < MOLTBOOK_SEMANTIC_MIN {
+                tracing::debug!(
+                    tool = %name,
+                    similarity = sim,
+                    min_without_lexical = MOLTBOOK_SEMANTIC_MIN,
+                    "Moltbook tool match dropped (raise similarity or mention Moltbook explicitly)"
+                );
+                false
+            } else {
+                true
+            }
+        })
+        .collect()
+}
+
 pub struct ToolRouter {
     embed: Arc<dyn EmbeddingProvider>,
     tool_embeddings: Vec<(String, Vec<f32>)>,
@@ -175,6 +208,8 @@ impl ToolRouter {
             })
             .collect();
 
+        hits = filter_moltbook_semantic_hits(thought, hits);
+
         hits.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         if hits.is_empty() {
@@ -286,5 +321,35 @@ mod tests {
         assert!(!ToolRouter::short_input_guard_conversational_only(
             "/health"
         ));
+    }
+
+    #[test]
+    fn test_moltbook_lexical_intent() {
+        assert!(has_moltbook_lexical_intent("check Moltbook for replies"));
+        assert!(has_moltbook_lexical_intent(
+            "read the rust submolt feed"
+        ));
+        assert!(!has_moltbook_lexical_intent(
+            "what do you remember from last time"
+        ));
+    }
+
+    #[test]
+    fn test_filter_moltbook_semantic_hits_drops_weak_without_lexical() {
+        let hits = vec![
+            ("memory:query".to_string(), 0.62f32),
+            ("moltbook:notifications_read".to_string(), 0.505f32),
+        ];
+        let out = filter_moltbook_semantic_hits("what did we talk about yesterday", hits);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].0, "memory:query");
+    }
+
+    #[test]
+    fn test_filter_moltbook_semantic_hits_keeps_weak_with_lexical() {
+        let hits = vec![("moltbook:notifications_read".to_string(), 0.505f32)];
+        let out = filter_moltbook_semantic_hits("clear moltbook notifications", hits);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].0, "moltbook:notifications_read");
     }
 }

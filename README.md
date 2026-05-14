@@ -382,6 +382,13 @@ To change operator-facing routing text, prefer **`routing_hints`** in `[src/tool
 - **`vault:taglist`** provides a taxonomy map for `30_Synthesis/` frontmatter tags (`tag -> count`, optional paths) so you can browse “unknown unknowns” before running keyword search.
 - `vault:taglist` cache is persisted at `.fcp/tools/taglist.json`, built once at startup, and lazily rebuilt after successful `vault:write` operations under `30_Synthesis/*.md` (or via `refresh: true`).
 
+
+---
+
+introspect full tcp of llamacpp ` sudo tcpdump -i lo -s 0 -l -A 'tcp port 8090'`
+
+---
+
 ## Copyright
 
 Copyright (c) 2026 Jan Dahlke. All Rights Reserved.
