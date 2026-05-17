@@ -70,6 +70,27 @@ impl WebMissionStore {
         fs::create_dir_all(vault_layout::web_missions_dir(&self.vault_root)).map_err(FcpError::Io)
     }
 
+    /// Delete every mission directory under [`vault_layout::web_missions_dir`].
+    ///
+    /// Used on chat exit so fetched page chunks do not accumulate in `20_Discourse/web/`.
+    /// Returns the number of mission directories removed.
+    pub fn purge_all_missions(&self) -> Result<u32> {
+        let root = vault_layout::web_missions_dir(&self.vault_root);
+        if !root.is_dir() {
+            return Ok(0);
+        }
+        let mut removed = 0u32;
+        for entry in fs::read_dir(&root).map_err(FcpError::Io)? {
+            let entry = entry.map_err(FcpError::Io)?;
+            let path = entry.path();
+            if entry.file_type().map_err(FcpError::Io)?.is_dir() {
+                fs::remove_dir_all(&path).map_err(FcpError::Io)?;
+                removed = removed.saturating_add(1);
+            }
+        }
+        Ok(removed)
+    }
+
     pub fn create_mission(
         &self,
         mission_id: &str,
@@ -406,6 +427,25 @@ mod tests {
             .expect("finalize");
         assert_eq!(done.status, MissionStatus::Done);
         assert_eq!(done.stop_reason.as_deref(), Some("user_ended"));
+    }
+
+    #[test]
+    fn purge_all_missions_removes_every_mission_dir() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = WebMissionStore::new(dir.path());
+        let mid_a = Uuid::new_v4().to_string();
+        let mid_b = Uuid::new_v4().to_string();
+        store.create_mission(&mid_a, None, 1).expect("a");
+        store.create_mission(&mid_b, None, 1).expect("b");
+        let removed = store.purge_all_missions().expect("purge");
+        assert_eq!(removed, 2);
+        assert!(vault_layout::web_missions_dir(dir.path()).is_dir());
+        assert!(
+            fs::read_dir(vault_layout::web_missions_dir(dir.path()))
+                .expect("read")
+                .next()
+                .is_none()
+        );
     }
 
     #[test]

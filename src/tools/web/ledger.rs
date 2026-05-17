@@ -94,15 +94,23 @@ impl WebSessionLedger {
     }
 
     /// Clamp agent `fetch_budget` against config and optional continuing mission headroom.
+    ///
+    /// New missions: never below [`WebConfig::default_fetch_budget`] (model cannot pass `2` and
+    /// starve home→article flows). Continuing missions: capped by remaining mission pages only.
     pub fn clamp_fetch_budget(
         request: Option<u32>,
         config: &WebConfig,
         mission_remaining: Option<u32>,
     ) -> u32 {
         let requested = request.unwrap_or(config.default_fetch_budget);
-        let mut budget = requested
-            .min(config.default_fetch_budget)
-            .min(config.max_fetch_budget_override);
+        let mut budget = if mission_remaining.is_some() {
+            requested
+                .min(config.max_fetch_budget_override)
+        } else {
+            requested
+                .max(config.default_fetch_budget)
+                .min(config.max_fetch_budget_override)
+        };
         if let Some(remaining) = mission_remaining {
             budget = budget.min(remaining);
         }
@@ -248,8 +256,13 @@ impl WebSessionLedger {
         self.last_find_at_by_artifact
             .insert(artifact_id.to_string(), now);
         if let Some(host) = self.host_for_artifact(artifact_id) {
-            self.hosts_pending_find.remove(&host);
+            self.clear_host_pending_find(&host);
         }
+    }
+
+    /// After `news:today` (or similar multi-fetch flows), allow a fresh ad-hoc `web:fetch` on the homepage host.
+    pub fn clear_host_pending_find(&mut self, host: &str) {
+        self.hosts_pending_find.remove(host);
     }
 
     pub fn persist_path(vault_root: &Path) -> std::path::PathBuf {
@@ -427,6 +440,14 @@ mod tests {
     }
 
     #[test]
+    fn new_mission_fetch_budget_floors_to_default() {
+        let config = test_config();
+        let budget = WebSessionLedger::clamp_fetch_budget(Some(2), &config, None);
+        assert_eq!(budget, config.default_fetch_budget);
+        assert!(budget >= 2);
+    }
+
+    #[test]
     fn duplicate_url_returns_cache_hit_without_consuming_budget() {
         let mut ledger = WebSessionLedger::new();
         let config = test_config();
@@ -588,6 +609,31 @@ mod tests {
             .expect("reserved");
         assert_eq!(res.artifact_id, "art-deep");
         assert_eq!(res.mission_id, mid);
+    }
+
+    #[test]
+    fn clear_host_pending_find_allows_ad_hoc_refetch() {
+        let mut ledger = WebSessionLedger::new();
+        let config = test_config();
+        ledger.commit_fetch(
+            "https://www.bbc.com/".into(),
+            "art-home".into(),
+            "mis-1".into(),
+            "bbc.com".into(),
+        );
+        ledger.clear_host_pending_find("bbc.com");
+        let res = ledger
+            .reserve_fetch(
+                &config,
+                "https://www.bbc.com/news",
+                None,
+                None,
+                "art-news",
+                "mis-2",
+            )
+            .expect("ok")
+            .expect("reserved");
+        assert_eq!(res.artifact_id, "art-news");
     }
 
     #[test]

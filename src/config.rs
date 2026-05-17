@@ -232,6 +232,26 @@ pub struct WebConfig {
     /// When false, skip `.fcp/web_allowlist.toml` checks (useful for local dev; default on for safety).
     #[serde(default = "default_web_allowlist_enabled")]
     pub allowlist_enabled: bool,
+    /// Try browser39 link-by-text clicks when fetched markdown is thin (see `consent_profiles.toml`).
+    #[serde(default = "default_web_consent_helper_enabled")]
+    pub consent_helper_enabled: bool,
+    /// Persist browser39 cookies under `.fcp/browser39/sessions/hosts/{host}/` (required for multi-step consent).
+    #[serde(default)]
+    pub persist_browser39_sessions: bool,
+    #[serde(default = "default_web_thin_page_char_threshold")]
+    pub thin_page_char_threshold: usize,
+    #[serde(default = "default_web_consent_max_attempts")]
+    pub consent_max_attempts: u32,
+    /// When true, never use host sessions / consent batch (one-shot `batch --no-persist` per artifact only).
+    #[serde(default)]
+    pub use_legacy_batch: bool,
+    /// Remove `20_Discourse/web/missions/*` when a chat session ends (`/exit`, web shutdown, SIGINT).
+    #[serde(default = "default_web_cleanup_missions_on_chat_exit")]
+    pub cleanup_missions_on_chat_exit: bool,
+}
+
+fn default_web_cleanup_missions_on_chat_exit() -> bool {
+    true
 }
 
 fn default_web_allowlist_enabled() -> bool {
@@ -270,6 +290,18 @@ fn default_web_require_find_before_refetch() -> bool {
     true
 }
 
+fn default_web_consent_helper_enabled() -> bool {
+    true
+}
+
+fn default_web_thin_page_char_threshold() -> usize {
+    300
+}
+
+fn default_web_consent_max_attempts() -> u32 {
+    2
+}
+
 impl Default for WebConfig {
     fn default() -> Self {
         Self {
@@ -284,6 +316,12 @@ impl Default for WebConfig {
             search_enabled: default_web_search_enabled(),
             persist_ledger: false,
             allowlist_enabled: default_web_allowlist_enabled(),
+            consent_helper_enabled: default_web_consent_helper_enabled(),
+            persist_browser39_sessions: false,
+            thin_page_char_threshold: default_web_thin_page_char_threshold(),
+            consent_max_attempts: default_web_consent_max_attempts(),
+            use_legacy_batch: false,
+            cleanup_missions_on_chat_exit: default_web_cleanup_missions_on_chat_exit(),
         }
     }
 }
@@ -1773,6 +1811,10 @@ mod tests {
         assert!(defaults.require_find_before_refetch);
         assert!(!defaults.explore_site_enabled);
         assert!(!defaults.persist_ledger);
+        assert!(defaults.consent_helper_enabled);
+        assert_eq!(defaults.thin_page_char_threshold, 300);
+        assert_eq!(defaults.consent_max_attempts, 2);
+        assert!(defaults.cleanup_missions_on_chat_exit);
 
         let parsed: WebConfig = toml::from_str(
             r#"

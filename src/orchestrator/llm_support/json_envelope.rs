@@ -59,6 +59,86 @@ pub fn raw_appears_to_start_without_json_object(raw: &str) -> bool {
     !t.starts_with('{')
 }
 
+/// Best-effort extraction of `tool_calls[].name` values from malformed model output.
+///
+/// Used on Recover passes so the orchestrator can inject full JSON schemas for the tool(s) the
+/// model was attempting — instead of slim phrase-map mode with a fresh semantic-router subset.
+pub fn extract_tool_call_names_best_effort(raw: &str) -> Vec<String> {
+    let mut names = Vec::<String>::new();
+    let mut rest = raw;
+    while let Some(i) = rest.find("\"name\"") {
+        let mut after = rest[i + 6..].trim_start();
+        if let Some(stripped) = after.strip_prefix(':') {
+            after = stripped.trim_start();
+        }
+        let Some(inner) = after.strip_prefix('"') else {
+            rest = &rest[i + 6..];
+            continue;
+        };
+        let Some(end) = inner.find('"') else {
+            rest = &rest[i + 6..];
+            continue;
+        };
+        let name = &inner[..end];
+        if name.contains(':') && !name.contains(char::is_whitespace) {
+            if !names.iter().any(|n| n == name) {
+                names.push(name.to_string());
+            }
+        }
+        rest = &rest[i + 6..];
+    }
+    names
+}
+
+/// Infer web-related tool names from the latest user turn (Recover fallback when JSON parse fails).
+pub fn infer_tools_from_user_message(user: &str) -> Vec<String> {
+    let lower = user.to_lowercase();
+    let mut out = Vec::<String>::new();
+    let wants_find = lower.contains("web:find")
+        || lower.contains("find on")
+        || lower.contains("search within")
+        || lower.contains("search the fetched")
+        || lower.contains("search for")
+        || lower.contains("match_count")
+        || lower.contains("best_match_url")
+        || lower.contains("bullet points from find");
+    let wants_fetch = lower.contains("http://")
+        || lower.contains("https://")
+        || lower.contains("web:fetch")
+        || lower.contains("fetch http")
+        || lower.contains("fetch https")
+        || lower.contains("fetch www")
+        || lower.contains("fetch that")
+        || lower.contains("fetch the")
+        || lower.contains("receipt_summary");
+    let wants_news =
+        lower.contains("news:today") || lower.contains("headline_count") || lower.contains("deep_fetch");
+    if wants_find {
+        out.push("web:find".into());
+    }
+    if wants_fetch {
+        out.push("web:fetch".into());
+    }
+    if wants_news {
+        out.push("news:today".into());
+    }
+    out
+}
+
+/// Last successful tool from the chat stack (system tool-success lines).
+pub fn last_tool_name_from_chat_stack(stack: &[crate::engine::Message]) -> Option<String> {
+    use crate::orchestrator::context::try_parse_tool_success_line;
+    for msg in stack.iter().rev() {
+        if msg.role == "system"
+            && let Some(ts) = try_parse_tool_success_line(&msg.content)
+            && ts.tool_name.contains(':')
+        {
+            return Some(ts.tool_name.to_string());
+        }
+    }
+    None
+}
+
 /// Parse the leading JSON object as [`LlmResponse`] after tool-call normalization (same contract as the orchestrator directive path).
 pub fn parse_llm_response_protocol(raw: &str) -> Result<LlmResponse, serde_json::Error> {
     let json_str = split_leading_json_object(raw).0;
@@ -402,6 +482,20 @@ mod tests {
     #[test]
     fn no_violation_when_no_json_brace() {
         assert!(!trailing_content_after_valid_llm_json("plain text only"));
+    }
+
+    #[test]
+    fn extract_tool_call_names_from_broken_tool_calls_array() {
+        let raw = r#"{"thought":"t","status":"Task","tool_calls":[{"name":"web:fetch","args":{"url":"https://x"}]"#;
+        let names = extract_tool_call_names_best_effort(raw);
+        assert_eq!(names, vec!["web:fetch".to_string()]);
+    }
+
+    #[test]
+    fn extract_tool_call_names_dedupes_and_skips_non_tools() {
+        let raw = r#"{"name":"web:search","tool_calls":[{"name":"web:search","args":{}},{"name":"web:search","args":{}}]}"#;
+        let names = extract_tool_call_names_best_effort(raw);
+        assert_eq!(names, vec!["web:search".to_string()]);
     }
 
     #[test]

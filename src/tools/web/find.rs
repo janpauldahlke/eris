@@ -2,8 +2,9 @@
 
 use crate::executive::error::{FcpError, Result};
 use crate::ingest::trim_chars;
-use crate::tools::context_view_hint::{ARTIFACT_QUERY_SNIPPET_CHARS, ToolContextViewHint};
+use crate::tools::context_view_hint::ToolContextViewHint;
 use crate::tools::traits::Tool;
+use crate::tools::web::artifact::WebOutboundLink;
 use crate::tools::web::cache::WebMissionStore;
 use crate::tools::web::context::WebToolContext;
 use async_trait::async_trait;
@@ -29,14 +30,30 @@ struct FindMatch {
     chunk_index: u32,
     score: f32,
     snippet: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
+}
+
+#[derive(Serialize)]
+struct LinkMatch {
+    url: String,
+    score: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    anchor_text: Option<String>,
 }
 
 #[derive(Serialize)]
 struct WebFindResponse {
+    receipt_summary: String,
+    match_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    best_match_url: Option<String>,
     artifact_id: String,
     mission_id: String,
     url: String,
     matches: Vec<FindMatch>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    link_matches: Vec<LinkMatch>,
     #[serde(default)]
     suggest_stop: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -62,6 +79,21 @@ fn score_chunk(chunk: &str, tokens: &[String]) -> f32 {
     tokens.iter().map(|t| usize::from(c.contains(t))).sum::<usize>() as f32
 }
 
+fn score_link(link: &WebOutboundLink, tokens: &[String]) -> f32 {
+    let anchor = link.anchor_text.as_deref().unwrap_or("");
+    let hay = format!("{} {}", link.url.to_lowercase(), anchor.to_lowercase());
+    tokens
+        .iter()
+        .map(|t| {
+            let mut score = usize::from(hay.contains(t.as_str()));
+            if link.url.to_lowercase().contains(t) {
+                score += 1;
+            }
+            score
+        })
+        .sum::<usize>() as f32
+}
+
 fn chunk_heading_weight(chunk: &str) -> f32 {
     if chunk.lines().any(|l| l.starts_with("# ")) {
         1.15
@@ -70,6 +102,48 @@ fn chunk_heading_weight(chunk: &str) -> f32 {
     } else {
         1.0
     }
+}
+
+/// Pull the first absolute https URL from a snippet (markdown or plain).
+pub(crate) fn extract_first_https_url(text: &str) -> Option<String> {
+    for token in text.split_whitespace() {
+        let t = token.trim_matches(|c: char| "()[]<>\"'".contains(c));
+        if t.starts_with("https://") || t.starts_with("http://") {
+            return Some(t.to_string());
+        }
+    }
+    None
+}
+
+fn resolve_url_token(token: &str, page_url: &str) -> Option<String> {
+    let t = token.trim_matches(|c: char| "()[]<>\"'".contains(c));
+    if t.starts_with("http://") || t.starts_with("https://") {
+        return Some(t.to_string());
+    }
+    if t.starts_with('/') {
+        let base = url::Url::parse(page_url).ok()?;
+        return base.join(t).ok().map(|u| u.to_string());
+    }
+    None
+}
+
+/// First article URL in a chunk: absolute https link or taz-style relative path.
+pub(crate) fn extract_first_article_url(snippet: &str, page_url: &str) -> Option<String> {
+    if let Some(u) = extract_first_https_url(snippet) {
+        return Some(u);
+    }
+    for token in snippet.split_whitespace() {
+        if let Some(u) = resolve_url_token(token, page_url) {
+            let path = url::Url::parse(&u)
+                .ok()
+                .and_then(|p| p.path().to_string().into())
+                .filter(|p| p.len() > 1);
+            if path.is_some() {
+                return Some(u);
+            }
+        }
+    }
+    None
 }
 
 fn suggest_stop_heuristic(
@@ -107,6 +181,21 @@ fn suggest_stop_heuristic(
     }
 }
 
+fn best_match_url_from(matches: &[FindMatch], link_matches: &[LinkMatch]) -> Option<String> {
+    if let Some(l) = link_matches.first() {
+        return Some(l.url.clone());
+    }
+    for m in matches {
+        if let Some(url) = &m.url {
+            return Some(url.clone());
+        }
+        if let Some(url) = extract_first_https_url(&m.snippet) {
+            return Some(url);
+        }
+    }
+    None
+}
+
 #[async_trait]
 impl Tool for WebFindTool {
     fn name(&self) -> &'static str {
@@ -118,9 +207,7 @@ impl Tool for WebFindTool {
     }
 
     fn context_view_hint(&self) -> ToolContextViewHint {
-        ToolContextViewHint::Snippet {
-            max_chars: ARTIFACT_QUERY_SNIPPET_CHARS,
-        }
+        ToolContextViewHint::Full
     }
 
     fn parameters_schema(&self) -> RootSchema {
@@ -153,15 +240,73 @@ impl Tool for WebFindTool {
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| a.0.cmp(&b.0))
         });
-        let matches: Vec<FindMatch> = scored
+
+        let mut link_scored: Vec<(f32, WebOutboundLink)> = Vec::new();
+        if let Ok(links) = store.read_links(&mission_id, &args.artifact_id) {
+            for link in links {
+                let score = score_link(&link, &tokens);
+                if score > 0.0 {
+                    link_scored.push((score, link));
+                }
+            }
+            link_scored.sort_by(|a, b| {
+                b.0.partial_cmp(&a.0)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+
+        let mut matches: Vec<FindMatch> = scored
             .into_iter()
             .take(top_k)
-            .map(|(chunk_index, score, snippet)| FindMatch {
-                chunk_index,
-                score,
-                snippet,
+            .map(|(chunk_index, score, snippet)| {
+                let url = extract_first_article_url(&snippet, &meta.url);
+                FindMatch {
+                    chunk_index,
+                    score,
+                    snippet,
+                    url,
+                }
             })
             .collect();
+
+        let link_matches: Vec<LinkMatch> = link_scored
+            .into_iter()
+            .take(top_k)
+            .map(|(score, link)| LinkMatch {
+                url: link.url,
+                score,
+                anchor_text: link.anchor_text,
+            })
+            .collect();
+
+        if matches.is_empty() && !link_matches.is_empty() {
+            for lm in link_matches.iter().take(top_k) {
+                let anchor = lm.anchor_text.as_deref().unwrap_or("");
+                matches.push(FindMatch {
+                    chunk_index: 0,
+                    score: lm.score,
+                    snippet: if anchor.is_empty() {
+                        lm.url.clone()
+                    } else {
+                        format!("{anchor}\n{}", lm.url)
+                    },
+                    url: Some(lm.url.clone()),
+                });
+            }
+        }
+
+        let match_count = matches.len();
+        let best_match_url = best_match_url_from(&matches, &link_matches);
+        let receipt_summary = format!(
+            "match_count={} artifact_id={} mission_id={}{}",
+            match_count,
+            args.artifact_id,
+            mission_id,
+            best_match_url
+                .as_ref()
+                .map(|u| format!(" best_match_url={u}"))
+                .unwrap_or_default()
+        );
 
         {
             let mut ledger = self.ctx.ledger.lock().await;
@@ -173,10 +318,14 @@ impl Tool for WebFindTool {
             suggest_stop_heuristic(&matches, args.mission_note.as_deref());
 
         let body = WebFindResponse {
+            receipt_summary,
+            match_count,
+            best_match_url,
             artifact_id: args.artifact_id,
             mission_id: mission_id.clone(),
             url: meta.url,
             matches,
+            link_matches,
             suggest_stop,
             suggest_stop_reason,
         };
@@ -194,7 +343,6 @@ impl Tool for WebFindTool {
 mod tests {
     use super::*;
     use crate::config::WebConfig;
-    use crate::tools::web::cache::WebMissionStore;
     use crate::tools::web::context::WebFetcherKind;
     use crate::tools::web::fetcher::MockWebFetcher;
     use crate::tools::web::fetch_inner::run_vault_web_fetch;
@@ -202,6 +350,24 @@ mod tests {
     use crate::tools::web::WebSessionLedger;
     use std::sync::Arc;
     use tokio::sync::Mutex;
+
+    #[test]
+    fn extract_url_from_snippet() {
+        let s = "See https://www.taz.de/path/artikel for more.";
+        assert_eq!(
+            extract_first_https_url(s).as_deref(),
+            Some("https://www.taz.de/path/artikel")
+        );
+    }
+
+    #[test]
+    fn extract_relative_taz_path() {
+        let s = "Headline [/Klima/!123/](anchor) more text";
+        let u = extract_first_article_url(s, "https://www.taz.de/").expect("url");
+        assert!(u.contains("taz.de"));
+        assert!(u.contains("Klima"));
+    }
+
     #[tokio::test]
     async fn find_returns_lexical_hit() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -240,7 +406,6 @@ mod tests {
         };
         let mission_id = receipt["mission_id"].as_str().expect("mid").to_string();
         let artifact_id = receipt["artifact_id"].as_str().expect("aid").to_string();
-        let _store = WebMissionStore::new(dir.path());
         let tool = WebFindTool {
             ctx,
             max_snippet_chars: 400,
@@ -255,8 +420,9 @@ mod tests {
             }))
             .await
             .expect("find");
+        assert!(out.contains("match_count"));
         assert!(out.contains("Product X"));
-        assert!(out.contains("suggest_stop"));
+        assert!(out.contains("receipt_summary"));
     }
 }
 

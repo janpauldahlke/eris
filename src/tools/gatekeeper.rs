@@ -674,6 +674,19 @@ mod tests {
     }
 
     #[test]
+    fn normalize_web_fetch_strips_deep_fetch_top_n() {
+        let args = normalize_tool_args(
+            "web:fetch",
+            json!({
+                "url": "https://www.kicker.de/",
+                "mission_note": "x",
+                "deep_fetch_top_n": 0
+            }),
+        );
+        assert!(args.get("deep_fetch_top_n").is_none());
+    }
+
+    #[test]
     fn normalize_web_find_maps_url_uuid_to_artifact_id() {
         let id = "f6534031-61a2-46bd-a7e9-36deaed3bc5c";
         let args = normalize_tool_args("web:find", json!({"url": id, "query": "goals"}));

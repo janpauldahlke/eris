@@ -1,5 +1,5 @@
 use crate::executive::error::{FcpError, Result};
-use crate::tools::context_view_hint::{API_TOOL_SNIPPET_CHARS, ToolContextViewHint};
+use crate::tools::context_view_hint::ToolContextViewHint;
 use crate::tools::traits::Tool;
 use crate::tools::web::context::WebToolContext;
 use crate::tools::web::fetch_inner::{WebFetchArgs, WebFetchRunOutcome, run_vault_web_fetch};
@@ -26,9 +26,8 @@ impl Tool for WebFetchTool {
     }
 
     fn context_view_hint(&self) -> ToolContextViewHint {
-        ToolContextViewHint::Snippet {
-            max_chars: API_TOOL_SNIPPET_CHARS,
-        }
+        // Receipt includes page_quality, consent_*, artifact_id — must not be truncated for the model.
+        ToolContextViewHint::Full
     }
 
     async fn execute(&self, args: Value) -> Result<String> {

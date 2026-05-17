@@ -1,7 +1,7 @@
 //! `web:search` — run a web search via browser39's configured search engine, then vault-cache results.
 
 use crate::executive::error::{FcpError, Result};
-use crate::tools::context_view_hint::{API_TOOL_SNIPPET_CHARS, ToolContextViewHint};
+use crate::tools::context_view_hint::ToolContextViewHint;
 use crate::tools::traits::Tool;
 use crate::tools::web::allowlist::{enforce_allowlist, load_allowlist};
 use crate::tools::web::context::WebToolContext;
@@ -91,9 +91,7 @@ impl Tool for WebSearchTool {
     }
 
     fn context_view_hint(&self) -> ToolContextViewHint {
-        ToolContextViewHint::Snippet {
-            max_chars: API_TOOL_SNIPPET_CHARS,
-        }
+        ToolContextViewHint::Full
     }
 
     async fn execute(&self, args: Value) -> Result<String> {

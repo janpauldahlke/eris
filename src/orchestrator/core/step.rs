@@ -449,6 +449,13 @@ impl<E: LlmEngine> Orchestrator<E> {
                 );
                 let transition = decide_transition_from_directive(directive);
                 let control = self.apply_transition(transition).await?;
+                if matches!(control, TransitionControl::ContinueLoop) {
+                    self.arm_recover_pass_with_targeted_full_schemas(
+                        &mut targeted_tools,
+                        Some(&response.content),
+                        &pre_llm_matched_tools,
+                    );
+                }
                 self.last_llm_ms = llm_ms_acc;
                 self.last_tool_ms = tool_ms_acc;
                 self.last_total_ms = step_start.elapsed().as_millis() as u64;
@@ -469,6 +476,13 @@ impl<E: LlmEngine> Orchestrator<E> {
                     let directive = self.protocol_parse_failure_directive(&e, &response.content);
                     let transition = decide_transition_from_directive(directive);
                     let control = self.apply_transition(transition).await?;
+                    if matches!(control, TransitionControl::ContinueLoop) {
+                        self.arm_recover_pass_with_targeted_full_schemas(
+                            &mut targeted_tools,
+                            Some(&response.content),
+                            &pre_llm_matched_tools,
+                        );
+                    }
                     self.last_llm_ms = llm_ms_acc;
                     self.last_tool_ms = tool_ms_acc;
                     self.last_total_ms = step_start.elapsed().as_millis() as u64;
@@ -556,6 +570,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                                 schema_retry: false,
                             })
                             .await?;
+                            continue;
                         }
                         ToolBatchDecision::Fatal(e) => {
                             tracing::error!(error = %e, "System fatality - aborting orchestrator");
@@ -569,6 +584,13 @@ impl<E: LlmEngine> Orchestrator<E> {
                 }
                 non_tool_transition => {
                     let control = self.apply_transition(non_tool_transition).await?;
+                    if self.state == AgentState::Recover {
+                        self.arm_recover_pass_with_targeted_full_schemas(
+                            &mut targeted_tools,
+                            Some(&response.content),
+                            &pre_llm_matched_tools,
+                        );
+                    }
                     if matches!(control, TransitionControl::ReturnOk) {
                         return Ok(());
                     }

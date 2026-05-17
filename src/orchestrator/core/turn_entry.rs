@@ -195,6 +195,82 @@ impl<E: LlmEngine> Orchestrator<E> {
         ))
     }
 
+    /// Narrow the next Recover hop to full parameter schemas for the tool(s) that failed.
+    ///
+    /// Schema-fault retry already sets [`Orchestrator::force_full_tool_schemas_in_llm_view`] and
+    /// `targeted_tools`; protocol JSON parse and recoverable tool failures use this helper.
+    pub(super) fn arm_recover_pass_with_targeted_full_schemas(
+        &mut self,
+        targeted_tools: &mut HashSet<String>,
+        raw_llm_output: Option<&str>,
+        router_hints: &[String],
+    ) {
+        if self.force_full_tool_schemas_in_llm_view && !targeted_tools.is_empty() {
+            return;
+        }
+        let mut candidates = raw_llm_output
+            .map(crate::orchestrator::llm_support::json_envelope::extract_tool_call_names_best_effort)
+            .unwrap_or_default();
+        if candidates.is_empty() {
+            candidates =
+                crate::orchestrator::llm_support::json_envelope::infer_tools_from_user_message(
+                    self.last_user_content(),
+                );
+        }
+        if candidates.is_empty() {
+            candidates.extend(self.step_failed_tools.iter().cloned());
+        }
+        if candidates.is_empty() {
+            if let Some(name) =
+                crate::orchestrator::llm_support::json_envelope::last_tool_name_from_chat_stack(
+                    &self.chat_stack,
+                )
+            {
+                candidates.push(name);
+            }
+        }
+        if candidates.is_empty() {
+            candidates.extend(
+                router_hints
+                    .iter()
+                    .filter(|n| n.starts_with("web:") || n.as_str() == "news:today")
+                    .take(3)
+                    .cloned(),
+            );
+        }
+        if candidates.is_empty() {
+            if let Some(first) = router_hints.first() {
+                candidates.push(first.clone());
+            }
+        }
+        let allowed: HashSet<String> = self
+            .gatekeeper
+            .get_allowed_tools(&AgentState::Chat)
+            .into_iter()
+            .filter_map(|t| {
+                t.get("function")
+                    .and_then(|f| f.get("name"))
+                    .and_then(|n| n.as_str())
+                    .map(|s| s.to_string())
+            })
+            .collect();
+        candidates.retain(|n| allowed.contains(n));
+        candidates.sort();
+        candidates.dedup();
+        if candidates.is_empty() {
+            return;
+        }
+        targeted_tools.clear();
+        for name in candidates {
+            targeted_tools.insert(name);
+        }
+        self.force_full_tool_schemas_in_llm_view = true;
+        tracing::info!(
+            targeted_tools = ?targeted_tools,
+            "Recover pass armed with targeted full tool schemas"
+        );
+    }
+
     pub(super) async fn build_skill_jit_guidance(
         &self,
         state: &AgentState,

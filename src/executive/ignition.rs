@@ -430,5 +430,32 @@ patterns = [
 "#;
         fs::write(&b39_cfg, body).await?;
     }
+    let consent_profiles = b39_dir.join("consent_profiles.toml");
+    if !consent_profiles.exists() {
+        let body = r#"# Host-specific consent button labels for browser39 `fetch` by link text.
+# eris tries these when page markdown is below [web].thin_page_char_threshold.
+
+[[host]]
+host = "kicker.de"
+accept_link_text = ["Alle akzeptieren", "Accept all", "Zustimmen", "Akzeptieren"]
+
+[[host]]
+host = "gamestar.de"
+accept_link_text = ["Alle akzeptieren", "Accept all", "Zustimmen", "I agree"]
+
+[[host]]
+host = "bbc.com"
+accept_link_text = ["Yes, I agree", "Allow all", "Accept"]
+
+[[host]]
+host = "spiegel.de"
+accept_link_text = ["Alle akzeptieren", "Akzeptieren", "Zustimmen"]
+
+[[host]]
+host = "taz.de"
+accept_link_text = ["Alle akzeptieren", "Akzeptieren", "Zustimmen"]
+"#;
+        fs::write(&consent_profiles, body).await?;
+    }
     Ok(())
 }

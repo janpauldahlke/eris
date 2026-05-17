@@ -2,6 +2,7 @@ pub mod allowlist;
 pub mod artifact;
 pub mod budget;
 pub mod cache;
+pub mod consent;
 pub mod context;
 pub mod fetch;
 pub(crate) mod fetch_inner;

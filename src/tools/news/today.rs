@@ -2,7 +2,7 @@
 
 use crate::executive::error::{FcpError, Result};
 use crate::ingest::truncate_char_boundary;
-use crate::tools::context_view_hint::{ARTIFACT_QUERY_SNIPPET_CHARS, ToolContextViewHint};
+use crate::tools::context_view_hint::ToolContextViewHint;
 use crate::tools::traits::Tool;
 use crate::tools::web::allowlist::{enforce_allowlist, load_allowlist};
 use crate::tools::web::artifact::WebOutboundLink;
@@ -12,6 +12,7 @@ use crate::tools::web::fetch_inner::{
     WebFetchArgs, WebFetchRunOutcome, parse_stored_receipt, run_vault_web_fetch,
     run_vault_web_fetch_simple,
 };
+use crate::tools::web::ledger::{host_from_normalized_url, normalize_url};
 use crate::tools::web::links::{filter_headline_candidates, select_deep_fetch_links};
 use async_trait::async_trait;
 use schemars::JsonSchema;
@@ -105,9 +106,14 @@ struct DeepArticleRow {
 
 #[derive(Serialize)]
 struct NewsTodayResponse {
+    receipt_summary: String,
     homepage_url: String,
     homepage_artifact_id: String,
     mission_id: String,
+    headline_count: usize,
+    deep_fetch_count: usize,
+    /// Article URLs selected for deep fetch (from ranked headlines).
+    deep_fetch_urls: Vec<String>,
     headlines: Vec<HeadlineRow>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     deep_articles: Vec<DeepArticleRow>,
@@ -206,9 +212,7 @@ impl Tool for NewsTodayTool {
     }
 
     fn context_view_hint(&self) -> ToolContextViewHint {
-        ToolContextViewHint::Snippet {
-            max_chars: ARTIFACT_QUERY_SNIPPET_CHARS,
-        }
+        ToolContextViewHint::Full
     }
 
     async fn execute(&self, args: Value) -> Result<String> {
@@ -299,15 +303,37 @@ impl Tool for NewsTodayTool {
             }
         }
 
+        if let Ok(normalized) = normalize_url(&homepage_str) {
+            if let Some(host) = host_from_normalized_url(&normalized) {
+                let mut ledger = self.ctx.ledger.lock().await;
+                ledger.clear_host_pending_find(&host);
+                let _ = ledger.save_to_vault(&self.ctx.vault_root, &self.ctx.web);
+            }
+        }
+
+        let deep_fetch_urls: Vec<String> = deep_articles.iter().map(|d| d.url.clone()).collect();
+        let headline_count = headlines.len();
+        let deep_fetch_count = deep_articles.len();
+        let receipt_summary = format!(
+            "headline_count={headline_count} deep_fetch_count={deep_fetch_count} homepage_artifact_id={homepage_artifact_id} mission_id={mission_id}"
+        );
         let hint = if headlines.is_empty() {
             "Homepage was fetched but no headline links were extracted (often relative links on the page). Try web:find on homepage_artifact_id, or web:fetch a section URL.".into()
         } else {
-            "Use web:find with artifact_ids for page text. Optional deep_fetch_top_n pulls allowlisted article bodies.".into()
+            format!(
+                "Use web:find with homepage_artifact_id `{homepage_artifact_id}` for homepage text. \
+                 Deep article bodies are in deep_articles[] (artifact_id per row). \
+                 After news:today you may web:fetch the same homepage host again without web:find first."
+            )
         };
         let response = NewsTodayResponse {
+            receipt_summary,
             homepage_url: homepage_str,
             homepage_artifact_id,
             mission_id,
+            headline_count,
+            deep_fetch_count,
+            deep_fetch_urls,
             headlines,
             deep_articles,
             hint,

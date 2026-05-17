@@ -47,21 +47,40 @@ impl WebToolContext {
         }
     }
 
+    pub fn use_host_browser39_session(&self) -> bool {
+        !self.web.use_legacy_batch
+            && (self.web.consent_helper_enabled || self.web.persist_browser39_sessions)
+    }
+
+    pub fn effective_persist_browser39(&self) -> bool {
+        self.web.persist_browser39_sessions || self.web.consent_helper_enabled
+    }
+
+    pub fn browser39_session_dir(&self, host: &str, artifact_id: &str) -> PathBuf {
+        if self.use_host_browser39_session() {
+            crate::tools::web::consent::host_session_dir(&self.vault_root, host)
+        } else {
+            self.vault_root
+                .join(".fcp/browser39/sessions")
+                .join(artifact_id)
+        }
+    }
+
     pub fn fetcher_for_artifact(&self, artifact_id: &str) -> Arc<dyn WebFetcher> {
+        self.fetcher_for_host("", artifact_id)
+    }
+
+    pub fn fetcher_for_host(&self, host: &str, artifact_id: &str) -> Arc<dyn WebFetcher> {
         match &self.fetcher {
             WebFetcherKind::Mock(m) => m.clone(),
             WebFetcherKind::Browser39 { binary } => {
-                let config_path = self
-                    .vault_root
-                    .join(".fcp/browser39/config.toml");
-                let session_dir = self
-                    .vault_root
-                    .join(".fcp/browser39/sessions")
-                    .join(artifact_id);
+                let config_path = self.vault_root.join(".fcp/browser39/config.toml");
+                let session_dir = self.browser39_session_dir(host, artifact_id);
                 Arc::new(crate::tools::web::fetcher::Browser39Fetcher {
                     binary: binary.clone(),
                     config_path,
                     session_dir,
+                    no_persist: !self.effective_persist_browser39(),
                 })
             }
         }

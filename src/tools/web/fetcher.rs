@@ -84,6 +84,8 @@ pub struct Browser39Fetcher {
     pub binary: String,
     pub config_path: std::path::PathBuf,
     pub session_dir: std::path::PathBuf,
+    /// When true, pass `--no-persist` (isolated batch). Host consent flows need `false`.
+    pub no_persist: bool,
 }
 
 #[async_trait]
@@ -100,11 +102,13 @@ impl WebFetcher for Browser39Fetcher {
         let config_path = self.config_path.clone();
         let url = url.to_string();
         let selector = selector.map(str::to_string);
+        let no_persist = self.no_persist;
         tokio::task::spawn_blocking(move || {
             browser39_fetch_blocking(
                 &binary,
                 &config_path,
                 &session_dir,
+                no_persist,
                 &url,
                 selector.as_deref(),
                 max_tokens,
@@ -124,7 +128,7 @@ fn browser39_line_preview(line: &str, max_chars: usize) -> String {
 }
 
 /// Parse one `results.jsonl` line from browser39 1.7.x (`batch` flattens payload; older lines may nest `result`).
-fn parse_browser39_fetch_line(line: &str) -> Result<FetchedPage> {
+pub(crate) fn parse_browser39_fetch_line(line: &str) -> Result<FetchedPage> {
     let value: serde_json::Value = serde_json::from_str(line).map_err(FcpError::ParseFault)?;
     if value.get("ok").and_then(|v| v.as_bool()) == Some(false) {
         let reason = value
@@ -184,37 +188,90 @@ fn parse_browser39_fetch_line(line: &str) -> Result<FetchedPage> {
     })
 }
 
+/// Run one or more JSONL commands in a shared browser39 batch session.
+pub(crate) fn browser39_run_batch_blocking(
+    binary: &str,
+    config_path: &std::path::Path,
+    session_dir: &std::path::Path,
+    no_persist: bool,
+    commands: &[serde_json::Value],
+) -> Result<Vec<String>> {
+    std::fs::create_dir_all(session_dir).map_err(FcpError::Io)?;
+    let input = session_dir.join("commands.jsonl");
+    let output = session_dir.join("results.jsonl");
+
+    let body = commands
+        .iter()
+        .map(|cmd| serde_json::to_string(cmd).map_err(FcpError::ParseFault))
+        .collect::<Result<Vec<_>>>()?
+        .join("\n");
+    let body = if body.is_empty() {
+        String::new()
+    } else {
+        format!("{body}\n")
+    };
+
+    info!(
+        event = "web.browser39.batch_start",
+        command_count = commands.len(),
+        binary = %binary,
+        config = %config_path.display(),
+        session_dir = %session_dir.display(),
+        no_persist,
+        "spawning browser39 batch"
+    );
+
+    std::fs::write(&input, body).map_err(FcpError::Io)?;
+    let _ = std::fs::remove_file(&output);
+
+    let mut cmd = std::process::Command::new(binary);
+    cmd.arg("batch")
+        .arg(&input)
+        .arg("--output")
+        .arg(&output)
+        .arg("--config")
+        .arg(config_path);
+    if no_persist {
+        cmd.arg("--no-persist");
+    }
+    let output_proc = cmd.output().map_err(FcpError::Io)?;
+    if !output_proc.status.success() {
+        let stderr = String::from_utf8_lossy(&output_proc.stderr);
+        warn!(
+            event = "web.browser39.exit_error",
+            exit = ?output_proc.status,
+            stderr = %stderr.chars().take(800).collect::<String>(),
+            "browser39 batch process failed"
+        );
+        return Err(FcpError::ToolFault {
+            tool_name: "web:fetch".into(),
+            reason: format!("browser39 exited with {}", output_proc.status),
+        });
+    }
+
+    let raw = std::fs::read_to_string(&output).map_err(FcpError::Io)?;
+    Ok(raw
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
 fn browser39_fetch_blocking(
     binary: &str,
     config_path: &std::path::Path,
     session_dir: &std::path::Path,
+    no_persist: bool,
     url: &str,
     selector: Option<&str>,
     max_tokens: u32,
     offset: u32,
 ) -> Result<FetchedPage> {
-    std::fs::create_dir_all(session_dir).map_err(FcpError::Io)?;
-    let input = session_dir.join("commands.jsonl");
-    let output = session_dir.join("results.jsonl");
-
-    info!(
-        event = "web.browser39.batch_start",
-        url = %url,
-        binary = %binary,
-        config = %config_path.display(),
-        session_dir = %session_dir.display(),
-        max_tokens,
-        offset,
-        selector = selector.unwrap_or(""),
-        "spawning browser39 batch"
-    );
-
     let mut options = serde_json::json!({
         "max_tokens": max_tokens,
         "offset": offset,
         "include_links": true,
         "strip_nav": true,
-        // browser39 defaults to selector discovery (129-char stub + link list). Match CLI fetch.
         "show_selectors_first": false,
     });
     if let Some(sel) = selector.filter(|s| !s.trim().is_empty()) {
@@ -228,48 +285,31 @@ fn browser39_fetch_blocking(
         "url": url,
         "options": options,
     });
-    std::fs::write(&input, format!("{cmd}\n")).map_err(FcpError::Io)?;
-    let _ = std::fs::remove_file(&output);
+    let lines = browser39_run_batch_blocking(
+        binary,
+        config_path,
+        session_dir,
+        no_persist,
+        &[cmd],
+    )?;
+    parse_first_batch_fetch_line(&lines, url)
+}
 
-    let output_proc = std::process::Command::new(binary)
-        .arg("batch")
-        .arg(&input)
-        .arg("--output")
-        .arg(&output)
-        .arg("--no-persist")
-        .arg("--config")
-        .arg(config_path)
-        .output()
-        .map_err(FcpError::Io)?;
-    if !output_proc.status.success() {
-        let stderr = String::from_utf8_lossy(&output_proc.stderr);
-        warn!(
-            event = "web.browser39.exit_error",
-            url = %url,
-            exit = ?output_proc.status,
-            stderr = %stderr.chars().take(800).collect::<String>(),
-            "browser39 batch process failed"
-        );
-        return Err(FcpError::ToolFault {
-            tool_name: "web:fetch".into(),
-            reason: format!("browser39 exited with {}", output_proc.status),
-        });
-    }
-
-    let raw = std::fs::read_to_string(&output).map_err(FcpError::Io)?;
-    let line = raw.lines().find(|l| !l.trim().is_empty()).ok_or_else(|| {
-        warn!(
-            event = "web.browser39.empty_output",
-            url = %url,
-            results_path = %output.display(),
-            "browser39 produced no results lines"
-        );
-        FcpError::ToolFault {
-            tool_name: "web:fetch".into(),
-            reason: "browser39 produced no results".into(),
-        }
-    })?;
-    parse_browser39_fetch_line(line)
+fn parse_first_batch_fetch_line(lines: &[String], url: &str) -> Result<FetchedPage> {
+    lines
+        .iter()
+        .find_map(|line| parse_browser39_fetch_line(line).ok())
+        .ok_or_else(|| {
+            warn!(
+                event = "web.browser39.empty_output",
+                url = %url,
+                "browser39 produced no results lines"
+            );
+            FcpError::ToolFault {
+                tool_name: "web:fetch".into(),
+                reason: "browser39 produced no results".into(),
+            }
+        })
 }
 
 #[cfg(test)]

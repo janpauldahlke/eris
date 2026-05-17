@@ -1,57 +1,93 @@
-# browser39 integration (MVP)
+# browser39 integration (MVP + consent)
 
 ## Decision
 
 **Use subprocess + JSONL (`browser39 batch`), not an in-process Rust dependency.**
 
-| Approach | Verdict |
-|----------|---------|
-| **A. Subprocess** (JSONL per fetch) | **Chosen** — process isolation; no V8/deno_core in the eris link graph |
-| **B. In-process crate** | **Not viable on crates.io today** — `autolib = false`; only the `browser39` binary is published |
+Implementation: `WebFetcher` / `Browser39Fetcher` under `src/tools/web/fetcher.rs`. Mission pages live under `20_Discourse/web/missions/{mission_id}/pages/{artifact_id}/`.
 
-Implementation: `WebFetcher` / `Browser39Fetcher` under `src/tools/web/fetcher.rs`. Each fetch uses a **dedicated session directory** `.fcp/browser39/sessions/{artifact_id}/`, runs `browser39 batch` with `--no-persist`, and reads `results.jsonl`. Vault pages are cached under `20_Discourse/web/missions/{mission_id}/pages/{artifact_id}/`.
+## Tool receipts (LLM-facing)
 
-Phase 2 (planned): per-host `browser39 watch` sessions, optional disk persistence, consent profiles — see the web post-MVP hardening plan.
+`web:fetch` returns compact JSON. Read these fields first:
+
+| Field | Meaning |
+|-------|---------|
+| `receipt_summary` | One-line status (`page_quality`, `consent_*`, `chunk_count`, `artifact_id`) |
+| `page_quality` | `ok`, `thin`, `likely_consent_or_js`, or `likely_paywall` |
+| `consent_attempted` / `consent_improved` | Always present (booleans) |
+| `next_step_hint` | What to do next (authoritative) |
+| `artifact_id` / `mission_id` | For `web:find` and vault paths |
+| `preview_head` | Short preview only (full text in vault chunks) |
+| `internal_link_count` + `internal_links_sample` | Up to 5 sample links; full list in `links.json` |
+
+`news:today` returns `receipt_summary`, `headline_count`, `deep_fetch_urls[]`, plus `headlines` / `deep_articles`.
+
+**Skill:** `10_Topology/skills/web-fetch-workflow.md` (seeded on ignition) is injected when web tools are routed.
+
+## Consent helper (Phase 2)
+
+When `[web].consent_helper_enabled = true` (default), thin fetches trigger deterministic CMP handling:
+
+1. `fetch` URL in a **host session** (`.fcp/browser39/sessions/hosts/{host}/`).
+2. If markdown chars &lt; `thin_page_char_threshold`, try each `accept_link_text` from `.fcp/browser39/consent_profiles.toml` via browser39 **`click` by link text**.
+3. Re-fetch the same URL in the same session (cookies kept when `persist_browser39_sessions` or consent is on).
+
+Telemetry: `web.consent.thin_page`, `web.consent.accept_attempt`, `web.consent.click_failed`, `web.consent.refetch_ok` / `refetch_no_improvement`.
+
+**Limits:** No JS execution — SPAs and iframe CMPs often need manual cookies. Set `use_legacy_batch = true` to disable host sessions and consent.
+
+### Cookie preload (kicker and similar)
+
+browser39 cannot click JS-rendered consent buttons. Workaround:
+
+1. In Firefox/Chrome, open the site and accept cookies manually.
+2. Export cookies for the domain (browser extension or devtools).
+3. Add to `{vault}/.fcp/browser39/config.toml`:
+
+```toml
+[[cookies]]
+domain = ".kicker.de"
+name = "example_consent"
+value = "..."
+path = "/"
+```
+
+4. Re-run `web:fetch` — host session picks up preloaded cookies.
+
+### Config (`[web]`)
+
+| Key | Default | Notes |
+|-----|---------|--------|
+| `consent_helper_enabled` | `true` | Thin-page accept attempts |
+| `persist_browser39_sessions` | `false` | Disk cookies under `sessions/hosts/` (auto-on when consent enabled) |
+| `thin_page_char_threshold` | `300` | Below this → try consent |
+| `consent_max_attempts` | `2` | Max accept labels per fetch |
+| `use_legacy_batch` | `false` | Per-artifact batch, no consent |
+| `require_find_before_refetch` | `true` | Run `web:find` before second fetch on same host |
+| `allowlist_enabled` | `true` | Set `false` only for local experiments |
+| `persist_ledger` | `false` | `true` keeps `.fcp/web_session.json` across restarts |
+| `explore_site_enabled` | `false` | Keep off unless you need cross-host BFS |
+
+### Operator files
+
+- `{vault}/.fcp/browser39/consent_profiles.toml` — seeded on ignition
+- `{vault}/.fcp/browser39/config.toml` — optional `[[cookies]]` preload
+- `{vault}/.fcp/web_allowlist.toml` — host patterns when allowlist enabled
+
+### Ledger notes
+
+- After **`news:today`** succeeds, the homepage host is cleared from `hosts_pending_find` so a follow-up `web:fetch` on that host is allowed.
+- Continuing a mission: pass `mission_id` from the receipt on further fetches to skip the refetch gate.
+- Duplicate URL: second `web:fetch` of the same normalized URL returns a cached receipt without a new browser hit.
 
 ## Operator install
 
 ```bash
 cargo install browser39 --locked
-# or a release binary from https://github.com/alejandroqh/browser39/releases
 browser39 --version
 ```
 
-Vault template (ignition): `{vault}/.fcp/browser39/config.toml` — `[search].engine`, timeouts; eris merges **`user_agent`** from `AppConfig` on chat bootstrap.
-
-Allowlist: `{vault}/.fcp/web_allowlist.toml` (toggle with `[web].allowlist_enabled`).
-
-## MVP protocol (per fetch)
-
-1. Create `.fcp/browser39/sessions/{artifact_id}/`.
-2. Write one `fetch` line to `commands.jsonl` (`show_selectors_first: false`, `include_links: true`, pagination via `offset`).
-3. Run `browser39 batch --no-persist --config <vault-config>`.
-4. Parse the first `results.jsonl` line; paginate until `WebBudget` cap.
-
-Full schema: [jsonl-protocol.md](https://github.com/alejandroqh/browser39/blob/main/docs/jsonl-protocol.md).
-
-## Config (`[web]` in vault `.fcp/config.toml`)
-
-| Key | Default | Notes |
-|-----|---------|--------|
-| `allowlist_enabled` | `true` | Enforce `.fcp/web_allowlist.toml` |
-| `search_enabled` | `true` | Register `web:search` |
-| `require_find_before_refetch` | `true` | Same-host ad-hoc refetch needs `web:find` first; **continuing an existing `mission_id` is exempt** (e.g. `news:today` deep fetches) |
-| `max_web_tool_calls_per_turn` | `2` | Turn cap for web tools (orchestrator); consider `4` for heavy news sessions |
-| `max_fetches_per_user_turn` | `2` | Ledger fetch cap per user turn |
-| `persist_ledger` | `false` | Optional `.fcp/web_session.json` across restarts |
-
-## Limits (honest expectations)
-
-- **No JS execution** in browser39 — SPAs and heavy client-rendered sites may return thin markdown; receipts include `page_quality` (`thin`, `likely_consent_or_js`) and hints.
-- Cookie-banner lines are stripped in `sanitize_markdown_noise`; consent walls may still need Phase 2 host profiles or manual `[[cookies]]` in browser39 config.
-- Not a Playwright/CDP replacement.
-
 ## Testing
 
-- Unit tests use `MockWebFetcher` (default CI).
-- Optional live smoke: `BROWSER39_INTEGRATION=1` with `#[ignore]` tests when wired.
+- Unit tests: mock only (default CI).
+- Live: `BROWSER39_INTEGRATION=1` with `#[ignore]`.

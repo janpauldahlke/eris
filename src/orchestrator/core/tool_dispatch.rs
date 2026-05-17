@@ -80,6 +80,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         let mut executed_success_count = 0usize;
         let mut suppressed_duplicate_count = 0usize;
         let mut recoverable_fail_count = 0usize;
+        let mut recoverable_failed_tools: Vec<String> = Vec::new();
         let mut fatal_fail_count = 0usize;
         let mut suppressed_repeat_failure_streak = 0usize;
 
@@ -276,6 +277,27 @@ impl<E: LlmEngine> Orchestrator<E> {
                         role: "system".to_string(),
                         content: msg.clone(),
                     });
+                    if tool_name == "web:find" {
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&result) {
+                            if let Some(summary) =
+                                v.get("receipt_summary").and_then(|x| x.as_str())
+                            {
+                                let mut anchor =
+                                    format!("[fcp:web:find_anchor] {summary}");
+                                if let Some(url) =
+                                    v.get("best_match_url").and_then(|x| x.as_str())
+                                {
+                                    anchor.push_str(&format!(
+                                        " Pass this URL to web:fetch when deepening: {url}"
+                                    ));
+                                }
+                                self.chat_stack.push(crate::engine::Message {
+                                    role: "system".to_string(),
+                                    content: anchor,
+                                });
+                            }
+                        }
+                    }
                     if let Some(tx) = &self.presentation_tx {
                         let telemetry = format!("[tool] {} · success", tool_name);
                         let _ = tx.send(SessionEvent::SystemError(telemetry)).await;
@@ -325,6 +347,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                         }
                         ToolFailureAction::Recoverable => {
                             recoverable_fail_count += 1;
+                            recoverable_failed_tools.push(tool_name.clone());
                             if let Some(ticket) = execution_ledger.get_mut(&intent_id) {
                                 ticket.status = ToolIntentStatus::FailedRecoverable;
                             }
@@ -462,6 +485,16 @@ impl<E: LlmEngine> Orchestrator<E> {
         }
 
         if let Some(reason) = recoverable_msg {
+            for tool_name in recoverable_failed_tools {
+                targeted_tools.insert(tool_name);
+            }
+            if !targeted_tools.is_empty() {
+                self.force_full_tool_schemas_in_llm_view = true;
+                tracing::info!(
+                    targeted_tools = ?targeted_tools,
+                    "Recoverable tool failure: targeted full schemas for retry"
+                );
+            }
             let msg = recover_override_message_for_tool_failure(&reason);
             return Ok(ToolBatchDecision::Recover { message: msg });
         }
