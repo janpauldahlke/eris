@@ -117,10 +117,46 @@ impl ToolRouter {
             "read the website",
             "news from",
             "check website",
-            "look up online",
-            "search the web",
         ];
         phrases.iter().any(|p| lower.contains(p))
+    }
+
+    fn has_web_search_lexical_intent(text: &str) -> bool {
+        let lower = text.to_lowercase();
+        [
+            "search the web",
+            "search web for",
+            "search online",
+            "search on the web",
+            "search on the internet",
+            "look up online",
+            "google ",
+            "duckduckgo",
+            "find on the internet",
+            "web search for",
+        ]
+        .iter()
+        .any(|p| lower.contains(p))
+    }
+
+    fn has_news_lexical_intent(text: &str) -> bool {
+        let lower = text.to_lowercase();
+        if lower.contains("bbc")
+            || lower.contains("taz.de")
+            || lower.contains("taz ")
+            || lower.contains("headlines")
+            || lower.contains("top stories")
+            || lower.contains("lead story")
+            || lower.contains("breaking news")
+            || lower.contains("morning news")
+            || lower.contains("news today")
+            || lower.contains("news right now")
+            || lower.contains("what's on bbc")
+            || lower.contains("whats on bbc")
+        {
+            return true;
+        }
+        lower.contains("news") && (lower.contains("today") || lower.contains("headline"))
     }
 
     pub async fn new(
@@ -223,12 +259,34 @@ impl ToolRouter {
                 "Semantic tool matches"
             );
         }
+        if Self::has_web_search_lexical_intent(thought)
+            && !Self::has_web_lexical_intent(thought)
+            && !hits.iter().any(|(t, _)| t == "web:search")
+        {
+            tracing::info!(
+                event = "LEXICAL_TOOL_GUARD",
+                forced_tool = "web:search",
+                thought_preview = %thought.chars().take(120).collect::<String>(),
+                "Forcing web:search due to lexical search intent"
+            );
+            hits.push(("web:search".to_string(), 1.0));
+        }
+        if Self::has_news_lexical_intent(thought) && !hits.iter().any(|(t, _)| t == "news:today")
+        {
+            tracing::info!(
+                event = "LEXICAL_TOOL_GUARD",
+                forced_tool = "news:today",
+                thought_preview = %thought.chars().take(120).collect::<String>(),
+                "Forcing news:today due to lexical news intent"
+            );
+            hits.push(("news:today".to_string(), 1.0));
+        }
         if Self::has_web_lexical_intent(thought) && !hits.iter().any(|(t, _)| t == "web:fetch") {
             tracing::info!(
                 event = "LEXICAL_TOOL_GUARD",
                 forced_tool = "web:fetch",
                 thought_preview = %thought.chars().take(120).collect::<String>(),
-                "Forcing web:fetch due to lexical web intent"
+                "Forcing web:fetch due to lexical URL/page intent"
             );
             hits.push(("web:fetch".to_string(), 1.0));
         }
@@ -301,6 +359,23 @@ mod tests {
     fn test_web_lexical_intent_figurative_open_not_matched() {
         assert!(!ToolRouter::has_web_lexical_intent(
             "you will open the way for future AIs"
+        ));
+    }
+
+    #[test]
+    fn test_web_search_lexical_not_fetch() {
+        assert!(ToolRouter::has_web_search_lexical_intent(
+            "search the web for bundesliga letzter spieltag"
+        ));
+        assert!(!ToolRouter::has_web_lexical_intent(
+            "search the web for bundesliga letzter spieltag"
+        ));
+    }
+
+    #[test]
+    fn test_news_lexical_intent_bbc() {
+        assert!(ToolRouter::has_news_lexical_intent(
+            "What's on BBC News right now?"
         ));
     }
 

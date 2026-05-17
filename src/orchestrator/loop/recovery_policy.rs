@@ -25,6 +25,7 @@ pub fn classify_tool_failure(err: &FcpError, schema_already_attempted: bool) -> 
     if matches!(
         err,
         FcpError::ToolFault { .. }
+            | FcpError::PolicyViolation { .. }
             | FcpError::SchemaViolation(_)
             | FcpError::Io(_)
             | FcpError::ParseFault(_)

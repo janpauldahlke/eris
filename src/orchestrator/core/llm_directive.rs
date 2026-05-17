@@ -215,6 +215,7 @@ mod phase5_recovery_tests {
             id_rx,
             Arc::new(AtomicBool::new(false)),
             None,
+            None,
         )
     }
 

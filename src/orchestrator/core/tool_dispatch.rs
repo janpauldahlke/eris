@@ -150,6 +150,38 @@ impl<E: LlmEngine> Orchestrator<E> {
                 }
                 continue;
             }
+            if matches!(
+                tool_name.as_str(),
+                "web:fetch" | "web:search" | "news:today"
+            ) {
+                let cap = self.config.web.max_web_tool_calls_per_turn;
+                if self.web_tool_calls_this_turn >= cap {
+                    suppressed_duplicate_count += 1;
+                    let msg = format!(
+                        "[SYSTEM] Web tool cap reached ({cap}/turn). Answer from existing artifacts via web:find or ask the user to continue."
+                    );
+                    self.chat_stack.push(crate::engine::Message {
+                        role: "system".to_string(),
+                        content: msg.clone(),
+                    });
+                    if let Some(tx) = &self.presentation_tx {
+                        let _ = tx
+                            .send(SessionEvent::SystemError(format!(
+                                "[tool] {tool_name} · WEB_TOOL_TURN_CAP"
+                            )))
+                            .await;
+                    }
+                    tracing::info!(
+                        tool = %tool_name,
+                        intent_id = %intent_id,
+                        cap,
+                        web_tool_calls_this_turn = self.web_tool_calls_this_turn,
+                        event = "orchestrator.tools.web_turn_cap_suppressed",
+                        "Web tool call suppressed (per-turn cap); not leaving a pending intent"
+                    );
+                    continue;
+                }
+            }
             let prev_attempts = execution_ledger
                 .get(&intent_id)
                 .map(|t| t.attempt_count)
@@ -170,16 +202,29 @@ impl<E: LlmEngine> Orchestrator<E> {
                 intent_id = %intent_id,
                 "Intent ticket set to Pending"
             );
+            if matches!(
+                tool_name.as_str(),
+                "web:fetch" | "web:search" | "news:today"
+            ) {
+                self.web_tool_calls_this_turn = self.web_tool_calls_this_turn.saturating_add(1);
+            }
+            let gatekeeper_state = crate::tools::gatekeeper::Gatekeeper::dispatch_authorization_state(
+                &current_state,
+                &tool_name,
+                self.force_full_tool_schemas_in_llm_view,
+            );
             tracing::info!(
                 tool = %tool_name,
                 args = %args,
                 state = ?current_state,
+                gatekeeper_state = ?gatekeeper_state,
+                schema_retry = self.force_full_tool_schemas_in_llm_view,
                 "Dispatching tool"
             );
             let tool_started = Instant::now();
             let result = self
                 .gatekeeper
-                .execute_tool(&current_state, &tool_name, args.clone())
+                .execute_tool(&gatekeeper_state, &tool_name, args.clone())
                 .await;
             *tool_ms_acc = (*tool_ms_acc).saturating_add(tool_started.elapsed().as_millis() as u64);
             match result {
@@ -510,14 +555,14 @@ mod repeat_failure_streak_tests {
     use crate::memory::ephemeral::EphemeralMemory;
     use crate::orchestrator::context::ContextViewSettings;
     use crate::orchestrator::r#loop::tool_batch::ToolBatchDecision;
-    use crate::orchestrator::state::{AgentState, ToolCall};
+    use crate::orchestrator::state::{AgentState, ToolCall, ToolIntentStatus};
     use crate::tools::Gatekeeper;
     use crate::tools::traits::Tool;
     use async_trait::async_trait;
     use schemars::JsonSchema;
     use serde::Deserialize;
     use serde_json::json;
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
     use std::path::Path;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -611,7 +656,100 @@ mod repeat_failure_streak_tests {
             id_rx,
             Arc::new(AtomicBool::new(false)),
             None,
+            None,
         )
+    }
+
+    struct OkWebFetchTool;
+
+    #[async_trait]
+    impl Tool for OkWebFetchTool {
+        fn name(&self) -> &'static str {
+            "web:fetch"
+        }
+
+        fn description(&self) -> &'static str {
+            "test web fetch"
+        }
+
+        fn parameters_schema(&self) -> schemars::schema::RootSchema {
+            schemars::schema_for!(EmptyArgs)
+        }
+
+        async fn execute(&self, _args: serde_json::Value) -> Result<String> {
+            Ok(r#"{"artifact_id":"a","mission_id":"m"}"#.into())
+        }
+    }
+
+    #[tokio::test]
+    async fn web_turn_cap_suppressed_does_not_leave_pending_intent() {
+        let mut gatekeeper = Gatekeeper::new();
+        gatekeeper.register(Arc::new(OkWebFetchTool));
+        let ephemeral = Arc::new(EphemeralMemory::new("ws".into()));
+        let vault_root = Path::new("/tmp/vault");
+        let (tx, rx) = tokio::sync::watch::channel(());
+        Box::leak(Box::new(tx));
+        let (id_tx, id_rx) = tokio::sync::watch::channel(Arc::from("id"));
+        Box::leak(Box::new(id_tx));
+        let mut config = AppConfig::default();
+        config.web.max_web_tool_calls_per_turn = 2;
+        let mut orch = Orchestrator::new(
+            StubEngine,
+            gatekeeper,
+            ephemeral,
+            vault_root,
+            "ws",
+            3,
+            5,
+            0.8,
+            4096,
+            3,
+            6000,
+            false,
+            0,
+            rx,
+            None,
+            None,
+            None,
+            ContextViewSettings::default(),
+            Arc::new(config),
+            id_rx,
+            Arc::new(AtomicBool::new(false)),
+            None,
+            None,
+        );
+        orch.state = AgentState::Chat;
+        orch.web_tool_calls_this_turn = 2;
+        let mut ledger = HashMap::new();
+        let mut schema = HashSet::new();
+        let mut targeted = HashSet::new();
+        let mut web = false;
+        let mut tool_ms = 0u64;
+        let decision = orch
+            .execute_tool_batch(
+                vec![ToolCall {
+                    name: "web:fetch".into(),
+                    args: json!({"url": "https://example.com/"}),
+                    id: None,
+                }],
+                true,
+                &mut ledger,
+                &mut schema,
+                &mut targeted,
+                &mut web,
+                &mut tool_ms,
+                1u64,
+                false,
+            )
+            .await
+            .expect("batch must not fatal on cap");
+        assert!(matches!(decision, ToolBatchDecision::Recover { .. }));
+        assert!(
+            !ledger
+                .values()
+                .any(|t| matches!(t.status, ToolIntentStatus::Pending)),
+            "cap suppression must not leave Pending tickets"
+        );
     }
 
     #[tokio::test]
@@ -752,6 +890,7 @@ mod targeted_schema_retry_phase5_tests {
             Arc::new(cfg),
             id_rx,
             Arc::new(AtomicBool::new(false)),
+            None,
             None,
         )
     }

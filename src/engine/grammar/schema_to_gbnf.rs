@@ -523,7 +523,7 @@ mod tests {
     fn test_tool_name_to_rule_name() {
         assert_eq!(tool_name_to_rule_name("vault:read"), "vault-read-args");
         assert_eq!(tool_name_to_rule_name("memory:stage"), "memory-stage-args");
-        assert_eq!(tool_name_to_rule_name("web:artifact_query"), "web-artifact-query-args");
+        assert_eq!(tool_name_to_rule_name("web:find"), "web-find-args");
     }
 
     #[derive(JsonSchema, Deserialize)]

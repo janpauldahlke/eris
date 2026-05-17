@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::llama_gbnf_subset::GbnfSubsetCache;
 use super::moltbook_browse_ledger::MoltbookBrowseLedger;
+use crate::tools::web::WebSessionLedger;
 
 /// Marker string in `thought` / `message_to_user` when the last user line was empty (debuggable in logs and TUI).
 pub const EMPTY_USER_MESSAGE_TAG: &str = "SY FNORD";
@@ -116,6 +117,10 @@ pub struct Orchestrator<E: LlmEngine> {
     pub(super) step_failed_tools: HashSet<String>,
     /// llama.cpp only: memoized GBNF strings keyed by sorted tool names for per-turn subset grammar.
     pub(super) gbnf_subset_cache: GbnfSubsetCache,
+    /// Anti-crawl ledger shared with web tools (reset at chat bootstrap).
+    pub web_ledger: Option<Arc<tokio::sync::Mutex<WebSessionLedger>>>,
+    /// `web:fetch` + `news:today` invocations this user turn (orchestrator cap).
+    pub web_tool_calls_this_turn: u32,
 }
 
 impl<E: LlmEngine> Orchestrator<E> {
@@ -175,6 +180,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         identity: tokio::sync::watch::Receiver<Arc<str>>,
         promotion_suppressed_during_step: Arc<AtomicBool>,
         token_metrics_rx: Option<tokio::sync::watch::Receiver<crate::engine::token_metrics::LlmTokenSnapshot>>,
+        web_ledger: Option<Arc<tokio::sync::Mutex<WebSessionLedger>>>,
     ) -> Self {
         Self {
             state: AgentState::Idle,
@@ -224,6 +230,8 @@ impl<E: LlmEngine> Orchestrator<E> {
             step_failed_tools: HashSet::new(),
             token_metrics_rx,
             gbnf_subset_cache: GbnfSubsetCache::new(),
+            web_ledger,
+            web_tool_calls_this_turn: 0,
         }
     }
 

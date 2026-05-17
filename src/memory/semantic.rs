@@ -513,6 +513,13 @@ impl SemanticBrain {
             if path.extension().is_none_or(|e| e != "md") {
                 continue;
             }
+            if path
+                .to_string_lossy()
+                .replace('\\', "/")
+                .contains("/web/missions/")
+            {
+                continue;
+            }
             match tokio::fs::read_to_string(&path).await {
                 Ok(raw) => {
                     let parsed = parse_vault_md(&raw);

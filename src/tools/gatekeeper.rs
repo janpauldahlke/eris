@@ -54,7 +54,7 @@ impl Gatekeeper {
                     | "agenda:remove"
                     | "agenda:remind_at"
                     | "agenda:remind_self"
-                    | "web:artifact_query"
+                    | "web:find"
                     | "system:health"
                     | "clock:now"
                     | "clock:timer"
@@ -97,8 +97,9 @@ impl Gatekeeper {
                     | "agenda:remind_at"
                     | "agenda:remind_self"
                     | "web:fetch"
+                    | "web:search"
                     | "news:today"
-                    | "web:artifact_query"
+                    | "web:find"
                     | "system:health"
                     | "clock:now"
                     | "clock:timer"
@@ -131,7 +132,24 @@ impl Gatekeeper {
                     | "moltbook:notifications_read"
                     | "moltbook:dm"
             ),
-            AgentState::Recover => true,
+            AgentState::Recover => matches!(
+                tool_name,
+                "memory:stage"
+                    | "memory:staged_list"
+                    | "memory:commit"
+                    | "memory:commit_all"
+                    | "memory:query"
+                    | "vault:read"
+                    | "vault:list"
+                    | "vault:search"
+                    | "vault:taglist"
+                    | "skills:list"
+                    | "skills:read"
+                    | "news:today"
+                    | "web:find"
+                    | "system:health"
+                    | "clock:now"
+            ),
         }
     }
 
@@ -140,6 +158,28 @@ impl Gatekeeper {
             || Self::state_allows_tool(&AgentState::Reflect, tool_name)
             || Self::state_allows_tool(&AgentState::Idle, tool_name)
             || Self::state_allows_tool(&AgentState::Recover, tool_name)
+    }
+
+    /// Authorization state for tool dispatch while the orchestrator may be in `Recover`.
+    ///
+    /// Protocol-parse recovery and schema-retry recovery both run tool rounds in `Recover`.
+    /// Chat-only tools (e.g. `web:fetch`) must still execute so a recovery hop can finish the
+    /// user's request instead of failing with "not authorized in state Recover".
+    pub fn dispatch_authorization_state(
+        orchestrator_state: &AgentState,
+        tool_name: &str,
+        force_full_tool_schemas_in_llm_view: bool,
+    ) -> AgentState {
+        if force_full_tool_schemas_in_llm_view {
+            return AgentState::Chat;
+        }
+        if *orchestrator_state == AgentState::Recover
+            && Self::state_allows_tool(&AgentState::Chat, tool_name)
+            && !Self::state_allows_tool(&AgentState::Recover, tool_name)
+        {
+            return AgentState::Chat;
+        }
+        *orchestrator_state
     }
 
     pub fn all_tool_descriptions(&self) -> Vec<(String, String)> {
@@ -221,15 +261,17 @@ impl Gatekeeper {
 
         if !Self::state_allows_tool(state, name) {
             tracing::warn!(tool = name, state = ?state, "Gatekeeper: tool not authorized in current state");
-            return Err(FcpError::SchemaViolation(format!(
-                "Tool '{}' not authorized in state {:?}",
-                name, state
-            )));
+            return Err(FcpError::ToolFault {
+                tool_name: name.to_string(),
+                reason: format!("Tool not authorized in state {:?}", state),
+            });
         }
         let tool = self.registry.get(name).ok_or_else(|| {
             tracing::warn!(tool = name, registered_tools = ?self.registry.keys().collect::<Vec<_>>(), "Gatekeeper: tool not found in registry");
             FcpError::ToolFault { tool_name: name.to_string(), reason: "Tool not found".to_string() }
         })?;
+
+        let args = normalize_tool_args(name, args);
 
         let schema_value = serde_json::to_value(tool.parameters_schema())
             .map_err(|e| FcpError::Config(e.to_string()))?;
@@ -267,6 +309,35 @@ impl Gatekeeper {
         }
         Ok(result)
     }
+}
+
+/// Coerce common LLM mistakes before JSON Schema validation (e.g. `""` for omitted optionals).
+fn normalize_tool_args(tool_name: &str, mut args: Value) -> Value {
+    let Some(obj) = args.as_object_mut() else {
+        return args;
+    };
+    if tool_name == "news:today" {
+        for key in ["category", "homepage_url"] {
+            if obj.get(key).and_then(|v| v.as_str()).is_some_and(|s| s.trim().is_empty()) {
+                obj.remove(key);
+            }
+        }
+    }
+    if tool_name == "web:search" {
+        for alias in ["q", "search_query", "search"] {
+            if let Some(val) = obj.remove(alias) {
+                if !obj.contains_key("query") {
+                    obj.insert("query".to_string(), val);
+                }
+            }
+        }
+        if let Some(q) = obj.get("query").and_then(|v| v.as_str()) {
+            if q.trim().is_empty() {
+                obj.remove("query");
+            }
+        }
+    }
+    args
 }
 
 #[cfg(test)]
@@ -383,11 +454,39 @@ mod tests {
             .await;
         assert!(res.is_err());
         match res {
-            Err(FcpError::SchemaViolation(msg)) => {
-                assert!(msg.contains("not authorized"));
+            Err(FcpError::ToolFault { reason, .. }) => {
+                assert!(reason.contains("not authorized"));
             }
-            _ => panic!("Expected SchemaViolation"),
+            _ => panic!("Expected ToolFault"),
         }
+    }
+
+    #[test]
+    fn dispatch_authorization_state_elevates_chat_only_web_tools_in_recover() {
+        assert_eq!(
+            Gatekeeper::dispatch_authorization_state(
+                &AgentState::Recover,
+                "web:fetch",
+                false,
+            ),
+            AgentState::Chat
+        );
+        assert_eq!(
+            Gatekeeper::dispatch_authorization_state(
+                &AgentState::Recover,
+                "web:find",
+                false,
+            ),
+            AgentState::Recover
+        );
+        assert_eq!(
+            Gatekeeper::dispatch_authorization_state(
+                &AgentState::Recover,
+                "web:fetch",
+                true,
+            ),
+            AgentState::Chat
+        );
     }
 
     #[derive(JsonSchema, Deserialize)]
@@ -399,7 +498,7 @@ mod tests {
         #[async_trait]
         impl Tool for EmptyTool {
             fn name(&self) -> &'static str {
-                "empty"
+                "web:find"
             }
             fn description(&self) -> &'static str {
                 "empty"
@@ -416,7 +515,7 @@ mod tests {
         gatekeeper.register(Arc::new(EmptyTool));
 
         let res = gatekeeper
-            .execute_tool(&AgentState::Recover, "empty", json!({}))
+            .execute_tool(&AgentState::Recover, "web:find", json!({}))
             .await;
         assert!(res.is_err());
         match res {
@@ -455,11 +554,37 @@ mod tests {
             .await;
         assert!(res.is_err());
         match res {
-            Err(FcpError::SchemaViolation(msg)) => {
-                assert!(msg.contains("not authorized"));
+            Err(FcpError::ToolFault { reason, .. }) => {
+                assert!(reason.contains("not authorized"));
             }
-            _ => panic!("Expected SchemaViolation"),
+            _ => panic!("Expected ToolFault"),
         }
+    }
+
+    #[test]
+    fn normalize_web_search_aliases_q_to_query() {
+        let args = normalize_tool_args(
+            "web:search",
+            json!({"q": "bundesliga letzter spieltag"}),
+        );
+        assert_eq!(
+            args.get("query").and_then(|v| v.as_str()),
+            Some("bundesliga letzter spieltag")
+        );
+        assert!(args.get("q").is_none());
+    }
+
+    #[test]
+    fn normalize_news_today_strips_empty_category() {
+        let args = normalize_tool_args(
+            "news:today",
+            json!({"homepage_url": "https://www.bbc.com/news", "category": ""}),
+        );
+        assert!(args.get("category").is_none());
+        assert_eq!(
+            args.get("homepage_url").and_then(|v| v.as_str()),
+            Some("https://www.bbc.com/news")
+        );
     }
 
     #[test]
@@ -480,8 +605,9 @@ mod tests {
             "agenda:remind_at",
             "agenda:remind_self",
             "web:fetch",
+            "web:search",
             "news:today",
-            "web:artifact_query",
+            "web:find",
             "memory:stage",
             "memory:staged_list",
             "memory:commit",

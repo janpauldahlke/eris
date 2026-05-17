@@ -326,6 +326,7 @@ pub async fn run_ignition_sequence(
         workspace_root.join("00_Invariants"),
         workspace_root.join("10_Topology"),
         workspace_root.join("20_Discourse"),
+        workspace_root.join("20_Discourse/web/missions"),
         workspace_root.join("30_Synthesis"),
     ];
 
@@ -334,6 +335,8 @@ pub async fn run_ignition_sequence(
             fs::create_dir_all(dir).await?;
         }
     }
+
+    seed_web_operator_files(workspace_root).await?;
 
     // Seed default runtime skills into the workspace vault (seed-only; never overwrite).
     let seed_report = crate::skills::seed_runtime_skills(workspace_root).await?;
@@ -401,4 +404,31 @@ pub async fn run_ignition_sequence(
     fs::write(&seal_path, seal_content).await?;
 
     Ok(config)
+}
+
+async fn seed_web_operator_files(workspace_root: &Path) -> Result<()> {
+    let allowlist = crate::vault_layout::fcp_dir(workspace_root).join("web_allowlist.toml");
+    if !allowlist.exists() {
+        let body = r#"# Glob patterns — enable origins you fetch (article paths need wildcards).
+patterns = [
+  # "https://www.bbc.com/",
+  # "https://www.bbc.com/news/**",
+  # "https://en.wikipedia.org/wiki/**",
+]
+"#;
+        fs::write(&allowlist, body).await?;
+    }
+    let b39_dir = crate::vault_layout::fcp_dir(workspace_root).join("browser39");
+    if !b39_dir.exists() {
+        fs::create_dir_all(&b39_dir).await?;
+    }
+    let b39_cfg = b39_dir.join("config.toml");
+    if !b39_cfg.exists() {
+        let body = r#"# browser39 template — eris merges user_agent from .fcp/config.toml at chat bootstrap.
+# [session]
+# timeout_secs = 30
+"#;
+        fs::write(&b39_cfg, body).await?;
+    }
+    Ok(())
 }

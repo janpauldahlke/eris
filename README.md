@@ -101,7 +101,7 @@ Registration is explicit: ask Eris to register on Moltbook with a name and descr
 | Discord     | `[discord]` table                               | Optional; needs `bot_token` + app id + channel when `enabled = true`      |
 | Google WS   | `[google]` (`enabled`, `service_account_key`, `impersonate_user`) | Optional `mail:*` + `calendar:*`; Cloud APIs + Admin domain-wide delegation |
 | Moltbook    | `[moltbook]` (`enabled`, `api_key_file`)        | Optional `moltbook:*`; prefer `MOLTBOOK_API_KEY` or an operator-owned credentials file |
-| Web fetch / headlines | `web_fetch_deprecated`, `news_today_enabled`, optional `news_today_site_base` / `news_today_default_homepage` | `web:fetch` (generic URL) vs **`news:today`** (homepage headlines + optional deep articles); toggles are independent—see `AppConfig` in `src/config.rs` |
+| Web fetch / headlines | `news_today_enabled`, `[web]` + `.fcp/web_allowlist.toml` (MVP) | **`web:fetch`** / **`web:find`** (vault mission cache, anti-crawl ledger); **`news:today`** (headlines + deep articles, same allowlist). Requires **[browser39](https://crates.io/crates/browser39) CLI on PATH** — see [docs/WEB_BROWSER39.md](docs/WEB_BROWSER39.md) (subprocess + JSONL; no in-process crate). Legacy `web_fetch_*` fields are being replaced by `[web]` during the web MVP rollout. |
 
 Figment also merges `FCP_` environment variables over TOML (e.g. `FCP_WORKSPACE`, `FCP_LOG_LEVEL`, `FCP_USER_NAME`). For other fields, match `AppConfig` in `[src/config.rs](src/config.rs)` to the env key shape your Figment build expects.
 
@@ -345,7 +345,7 @@ Representative **`routing_hints`** (say things _like_ this—the model still dec
 | **agenda:complete**        | task done, complete task, mark done, finished the …                                                              |
 | **web:fetch**              | open website, read web page, fetch a URL, look up this link — plus pasted URLs and lexical web wording (when not deprecated) |
 | **news:today**             | today’s headlines, top stories, morning briefing, news digest, breaking news, front page, politics/science/business/world/UK sections; homepage listing + optional top-article fetch (not for arbitrary one-off URLs—use **web:fetch** when enabled) |
-| **web:artifact_query**     | search fetched page, query artifact, find in web artifact                                                        |
+| **web:find**               | search fetched page chunks in vault mission cache (after **web:fetch**)                                          |
 | **system:health**          | health check, system status, CPU/memory usage, Ollama status, diagnostics                                        |
 | **clock:now**              | what time is it, current time, timezone, date and time                                                           |
 | **clock:timer**            | in 30 minutes, countdown, generic timer, label-only reminder (not agenda)                                        |

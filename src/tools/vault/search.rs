@@ -276,6 +276,10 @@ fn collect_search_files(dir: &Path, workspace_root: &Path, out: &mut Vec<PathBuf
             if !path.starts_with(workspace_root) {
                 continue;
             }
+            let rel = rel_path_string(workspace_root, &path);
+            if rel.starts_with("20_Discourse/web/") {
+                continue;
+            }
             collect_search_files(&path, workspace_root, out)?;
         } else if ft.is_file() {
             let ext = path
@@ -286,6 +290,10 @@ fn collect_search_files(dir: &Path, workspace_root: &Path, out: &mut Vec<PathBuf
                 continue;
             }
             if !path.starts_with(workspace_root) {
+                continue;
+            }
+            let rel = rel_path_string(workspace_root, &path);
+            if rel.starts_with("20_Discourse/web/") {
                 continue;
             }
             out.push(path);

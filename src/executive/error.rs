@@ -45,6 +45,10 @@ pub enum FcpError {
 
     #[error("Execution Interrupted")]
     Interrupted,
+
+    /// Runtime policy caps (web anti-crawl, allowlist, etc.). `code` is stable for operators (`WEB_TURN_CAP`, …).
+    #[error("Policy violation [{code}]: {message}")]
+    PolicyViolation { code: String, message: String },
 }
 
 pub type Result<T> = std::result::Result<T, FcpError>;

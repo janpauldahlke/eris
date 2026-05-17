@@ -313,7 +313,6 @@ pub async fn start_chat_session(
     let (alarm_reschedule_tx, alarm_reschedule_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
     let read_limit = (config.num_ctx as f32 * config.vault_read_ratio) as usize;
     let web_chunk_chars = read_limit.max(512);
-    let web_preview_chars = (web_chunk_chars / 2).max(256);
     let effective_web_fetch_max_bytes = config
         .web_fetch_max_bytes
         .min(web_chunk_chars.saturating_mul(6))
@@ -461,49 +460,55 @@ pub async fn start_chat_session(
         workspace_root: workspace_root.clone(),
         reschedule_tx: alarm_reschedule_tx.clone(),
     }));
-    if config.web_fetch_deprecated {
-        tracing::info!("web:fetch deprecated by config — not registered");
-    } else {
-        gatekeeper.register(Arc::new(crate::tools::web::WebFetchTool::new(
-            config.web_fetch_timeout_secs,
-            effective_web_fetch_max_bytes,
-            web_chunk_chars,
-            web_preview_chars,
-            config.ephemeral_ttl_session_secs,
-            config.web_fetch_user_agent.clone(),
-            config.web_fetch_default_referer.clone(),
-            ephemeral.clone(),
-            semantic_arc.clone(),
-        )));
+    let web_ledger = Arc::new(tokio::sync::Mutex::new(
+        crate::tools::web::WebSessionLedger::load_from_vault(&workspace_root, &config.web)
+            .unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "web session ledger load failed; starting empty");
+                crate::tools::web::WebSessionLedger::new()
+            }),
+    ));
+    {
+        let mut ledger = web_ledger.lock().await;
+        ledger.reset_session();
     }
+    let web_fetcher = crate::tools::web::WebFetcherKind::Browser39 {
+        binary: std::env::var("BROWSER39_BIN").unwrap_or_else(|_| "browser39".into()),
+    };
+    let web_ctx = crate::tools::web::WebToolContext::from_config(
+        &config,
+        &workspace_root,
+        web_ledger.clone(),
+        web_fetcher,
+        effective_web_fetch_max_bytes,
+    );
+    gatekeeper.register(Arc::new(crate::tools::web::WebFetchTool {
+        ctx: web_ctx.clone(),
+    }));
+    if config.web.search_enabled {
+        gatekeeper.register(Arc::new(crate::tools::web::WebSearchTool {
+            ctx: web_ctx.clone(),
+        }));
+    } else {
+        tracing::info!("web:search disabled by config — not registered");
+    }
+    gatekeeper.register(Arc::new(crate::tools::web::WebFindTool {
+        ctx: web_ctx.clone(),
+        max_snippet_chars: (web_chunk_chars / 3).clamp(300, 900),
+        max_total_chars: (web_chunk_chars / 2).clamp(1000, 2500),
+    }));
     if config.news_today_enabled {
         gatekeeper.register(Arc::new(crate::tools::news::NewsTodayTool::new(
-            config.web_fetch_timeout_secs,
-            effective_web_fetch_max_bytes,
-            web_chunk_chars,
-            web_preview_chars,
-            config.ephemeral_ttl_session_secs,
-            config.web_fetch_user_agent.clone(),
-            config.web_fetch_default_referer.clone(),
-            ephemeral.clone(),
-            semantic_arc.clone(),
+            web_ctx,
             crate::tools::news::NewsTodayConfigSnapshot {
                 site_base: config.news_today_site_base.clone(),
                 default_homepage: config.news_today_default_homepage.clone(),
                 max_headlines_default: config.news_today_max_headlines_default,
                 deep_fetch_max_default: config.news_today_deep_fetch_max_default,
-                allowed_hosts: config.news_today_allowed_hosts.clone(),
             },
         )));
     } else {
         tracing::info!("news:today disabled by config — not registered");
     }
-    gatekeeper.register(Arc::new(crate::tools::web::WebArtifactQueryTool {
-        ephemeral: ephemeral.clone(),
-        semantic: semantic_arc.clone(),
-        max_snippet_chars: (web_chunk_chars / 3).clamp(300, 900),
-        max_total_chars: (web_chunk_chars / 2).clamp(1000, 2500),
-    }));
     gatekeeper.register(Arc::new(crate::tools::system::SystemHealthTool {
         config: config.clone(),
     }));
@@ -765,6 +770,7 @@ pub async fn start_chat_session(
         identity_rx,
         promotion_suppressed_during_step,
         Some(token_metrics_rx.clone()),
+        Some(web_ledger),
     );
 
     tracing::info!(

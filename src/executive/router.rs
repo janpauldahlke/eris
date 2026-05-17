@@ -634,6 +634,7 @@ mod tests {
             id_rx,
             Arc::new(std::sync::atomic::AtomicBool::new(false)),
             None,
+            None,
         );
 
         let (action_tx, mut action_rx) = mpsc::channel::<UserAction>(100);

@@ -376,6 +376,7 @@ mod tests {
             id_rx,
             Arc::new(AtomicBool::new(false)),
             None,
+            None,
         );
         (orch, root)
     }

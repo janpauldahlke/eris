@@ -56,6 +56,10 @@ impl<E: LlmEngine> Orchestrator<E> {
         self.activity_line = None;
         self.last_deck_message_body = None;
         let mut web_tool_activity = false;
+        self.web_tool_calls_this_turn = 0;
+        if let Some(ledger) = &self.web_ledger {
+            ledger.lock().await.begin_user_turn();
+        }
         tracing::info!(
             turn_seq,
             state = ?self.state,

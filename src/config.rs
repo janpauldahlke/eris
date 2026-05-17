@@ -204,6 +204,90 @@ fn default_news_today_default_homepage() -> Option<String> {
     Some("https://www.bbc.com/".to_string())
 }
 
+/// Anti-crawl and fetch budgets for `web:fetch`, `web:find`, and internal `news:today` fetches.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct WebConfig {
+    #[serde(default = "default_web_default_fetch_budget")]
+    pub default_fetch_budget: u32,
+    #[serde(default = "default_web_max_fetch_budget_override")]
+    pub max_fetch_budget_override: u32,
+    #[serde(default = "default_web_max_fetches_per_user_turn")]
+    pub max_fetches_per_user_turn: u32,
+    #[serde(default = "default_web_max_fetches_per_chat_session")]
+    pub max_fetches_per_chat_session: u32,
+    #[serde(default = "default_web_max_fetches_per_mission")]
+    pub max_fetches_per_mission: u32,
+    #[serde(default = "default_web_max_web_tool_calls_per_turn")]
+    pub max_web_tool_calls_per_turn: u32,
+    #[serde(default = "default_web_require_find_before_refetch")]
+    pub require_find_before_refetch: bool,
+    #[serde(default)]
+    pub explore_site_enabled: bool,
+    /// When true, register `web:search` (browser39 `[search].engine` → allowlisted fetch).
+    #[serde(default = "default_web_search_enabled")]
+    pub search_enabled: bool,
+    /// When true, load/save `{vault}/.fcp/web_session.json` across process restarts. Chat bootstrap still resets by default.
+    #[serde(default)]
+    pub persist_ledger: bool,
+    /// When false, skip `.fcp/web_allowlist.toml` checks (useful for local dev; default on for safety).
+    #[serde(default = "default_web_allowlist_enabled")]
+    pub allowlist_enabled: bool,
+}
+
+fn default_web_allowlist_enabled() -> bool {
+    true
+}
+
+fn default_web_search_enabled() -> bool {
+    true
+}
+
+fn default_web_default_fetch_budget() -> u32 {
+    2
+}
+
+fn default_web_max_fetch_budget_override() -> u32 {
+    5
+}
+
+fn default_web_max_fetches_per_user_turn() -> u32 {
+    2
+}
+
+fn default_web_max_fetches_per_chat_session() -> u32 {
+    12
+}
+
+fn default_web_max_fetches_per_mission() -> u32 {
+    4
+}
+
+fn default_web_max_web_tool_calls_per_turn() -> u32 {
+    2
+}
+
+fn default_web_require_find_before_refetch() -> bool {
+    true
+}
+
+impl Default for WebConfig {
+    fn default() -> Self {
+        Self {
+            default_fetch_budget: default_web_default_fetch_budget(),
+            max_fetch_budget_override: default_web_max_fetch_budget_override(),
+            max_fetches_per_user_turn: default_web_max_fetches_per_user_turn(),
+            max_fetches_per_chat_session: default_web_max_fetches_per_chat_session(),
+            max_fetches_per_mission: default_web_max_fetches_per_mission(),
+            max_web_tool_calls_per_turn: default_web_max_web_tool_calls_per_turn(),
+            require_find_before_refetch: default_web_require_find_before_refetch(),
+            explore_site_enabled: false,
+            search_enabled: default_web_search_enabled(),
+            persist_ledger: false,
+            allowlist_enabled: default_web_allowlist_enabled(),
+        }
+    }
+}
+
 impl Default for VaultWatchConfig {
     fn default() -> Self {
         Self {
@@ -377,10 +461,7 @@ pub struct AppConfig {
     /// Max characters for the `[ACTIVE_STAGED_MEMORY]` block injected into system prompts; `0` disables.
     #[serde(default = "default_staged_memory_prompt_max_chars")]
     pub staged_memory_prompt_max_chars: usize,
-    /// When true, `web:fetch` is not registered. Independent of [`Self::news_today_enabled`].
-    #[serde(default)]
-    pub web_fetch_deprecated: bool,
-    /// When false, `news:today` is not registered. Independent of [`Self::web_fetch_deprecated`].
+    /// When false, `news:today` is not registered.
     #[serde(default = "default_news_today_enabled")]
     pub news_today_enabled: bool,
     /// Qdrant gRPC endpoint URL (semantic memory / `memory:query`).
@@ -419,9 +500,6 @@ pub struct AppConfig {
     /// Default number of top-ranked article URLs to fetch after the homepage (0 = headlines only).
     #[serde(default = "default_news_today_deep_fetch_max")]
     pub news_today_deep_fetch_max_default: u8,
-    /// Allow outbound/deep-fetch targets on these hosts in addition to the homepage host. Empty = same-host only.
-    #[serde(default)]
-    pub news_today_allowed_hosts: Vec<String>,
     /// Fraction of [`Self::num_ctx`] used to cap vault read and web chunk sizes in tools (not the condensation trigger).
     pub vault_read_ratio: f32,
     /// Cosine similarity floor for ToolRouter pre-LLM semantic matches (0.0–1.0).
@@ -483,6 +561,12 @@ pub struct AppConfig {
     /// Optional Moltbook social-network tools.
     #[serde(default)]
     pub moltbook: MoltbookConfig,
+    /// Web fetch anti-crawl ledger, budgets, and find-before-refetch policy.
+    #[serde(default)]
+    pub web: WebConfig,
+    /// Optional override path for `.fcp/web_allowlist.toml`.
+    #[serde(default)]
+    pub web_allowlist_path: Option<std::path::PathBuf>,
     /// When true, keep full JSON parameter schemas in the LLM view for tool definitions (larger prompt). When false and [`Self::optimize_context`] is true, [`crate::orchestrator::context::build_llm_view`] strips `parameters` in that block only; [`crate::orchestrator::core::Orchestrator::chat_stack`] stays full. Independently, the orchestrator forces full schemas for one recovery LLM pass after a Gatekeeper schema fault ([`crate::orchestrator::core::Orchestrator::force_full_tool_schemas_in_llm_view`]).
     #[serde(default = "default_optimize_context_full_tool_schemas")]
     pub optimize_context_full_tool_schemas: bool,
@@ -1009,7 +1093,6 @@ impl Default for AppConfig {
             promotion_stage_boost: default_promotion_stage_boost(),
             turn_end_mention_enabled: default_turn_end_mention_enabled(),
             staged_memory_prompt_max_chars: default_staged_memory_prompt_max_chars(),
-            web_fetch_deprecated: false,
             news_today_enabled: default_news_today_enabled(),
             qdrant_url: "http://localhost:6334".into(),
             qdrant_collection_v2: "fcp_vault_v2_default".into(),
@@ -1025,7 +1108,6 @@ impl Default for AppConfig {
             news_today_default_homepage: default_news_today_default_homepage(),
             news_today_max_headlines_default: default_news_today_max_headlines(),
             news_today_deep_fetch_max_default: default_news_today_deep_fetch_max(),
-            news_today_allowed_hosts: Vec::new(),
             vault_read_ratio: 0.5,
             tool_match_threshold: 0.50,
             tool_descriptor_jit_top_k: default_tool_descriptor_jit_top_k(),
@@ -1048,6 +1130,8 @@ impl Default for AppConfig {
             google: GoogleConfig::default(),
             discord: DiscordConfig::default(),
             moltbook: MoltbookConfig::default(),
+            web: WebConfig::default(),
+            web_allowlist_path: None,
 
             optimize_context_full_tool_schemas: default_optimize_context_full_tool_schemas(),
             optimize_context_omit_resolved_tool_recovery:
@@ -1675,6 +1759,34 @@ mod tests {
 
         let err = config.validate_llamacpp_config().unwrap_err();
         assert!(err.to_string().contains("Chat GGUF not found"));
+    }
+
+    #[test]
+    fn web_config_defaults_and_toml_table() {
+        let defaults = WebConfig::default();
+        assert_eq!(defaults.default_fetch_budget, 2);
+        assert_eq!(defaults.max_fetch_budget_override, 5);
+        assert_eq!(defaults.max_fetches_per_user_turn, 2);
+        assert_eq!(defaults.max_fetches_per_chat_session, 12);
+        assert_eq!(defaults.max_fetches_per_mission, 4);
+        assert_eq!(defaults.max_web_tool_calls_per_turn, 2);
+        assert!(defaults.require_find_before_refetch);
+        assert!(!defaults.explore_site_enabled);
+        assert!(!defaults.persist_ledger);
+
+        let parsed: WebConfig = toml::from_str(
+            r#"
+            default_fetch_budget = 3
+            max_fetches_per_chat_session = 20
+            persist_ledger = true
+            require_find_before_refetch = false
+            "#,
+        )
+        .expect("web table");
+        assert_eq!(parsed.default_fetch_budget, 3);
+        assert_eq!(parsed.max_fetches_per_chat_session, 20);
+        assert!(parsed.persist_ledger);
+        assert!(!parsed.require_find_before_refetch);
     }
 
     #[test]
