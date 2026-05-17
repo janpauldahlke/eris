@@ -385,7 +385,7 @@ rationale = "mode is required."
 tool_name = "web:find"
 short_description = "Lexical search within a vault-cached web page (by artifact_id from web:fetch)."
 when_to_use = "Use after web:fetch on the same host before another fetch; searches mission page chunks on disk."
-when_not_to_use = "Do not use without artifact_id from web:fetch. Not for vault notes (use vault:search)."
+when_not_to_use = "Do not use without artifact_id from web:fetch (UUID from receipt, not browser39 session paths). Not for vault notes (use vault:search)."
 routing_hints = ["search fetched page", "query artifact", "find in web artifact", "web find"]
 
 [[examples_good]]
@@ -402,7 +402,7 @@ rationale = "artifact_id is required."
 tool_name = "web:fetch"
 short_description = "Fetch one URL into vault web mission cache (browser39); anti-crawl budgets apply."
 when_to_use = "Dedicated fetch for a URL with mission_note and fetch_budget. Then web:find before re-fetching same host. No site-wide BFS unless explore_site enabled."
-when_not_to_use = "Do not use for headlines digest (news:today). URLs must match .fcp/web_allowlist.toml patterns."
+when_not_to_use = "Do not use for headlines digest (news:today). URLs must match .fcp/web_allowlist.toml patterns. Page bodies live under 20_Discourse/web/missions/ — use web:find with artifact_id, not vault:read on web_artifacts paths."
 routing_hints = ["open website", "read web page", "fetch url", "look up this url", "browse a link"]
 
 [[examples_good]]
@@ -419,7 +419,7 @@ rationale = "URL must start with http:// or https://."
 tool_name = "web:search"
 short_description = "Search the web via browser39 [search].engine (default DuckDuckGo HTML); caches the results page like web:fetch."
 when_to_use = "Use when the user asks to search the web in natural language (no URL). Query must be plain text. Search provider URL must be on web_allowlist (e.g. html.duckduckgo.com)."
-when_not_to_use = "Do not use when the user gave a full URL (use web:fetch). Not for BBC headline digest (news:today). Disabled when [web].search_enabled is false."
+when_not_to_use = "Do not use when the user gave a full URL (use web:fetch). After search, use web:find on artifact_id — do not web:fetch the SERP URL again. Not for BBC headline digest (news:today). Disabled when [web].search_enabled is false."
 routing_hints = ["search the web", "google", "look up online", "find on the internet", "duckduckgo"]
 
 [[examples_good]]

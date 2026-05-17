@@ -135,7 +135,14 @@ impl WebSessionLedger {
             FcpError::SchemaViolation(format!("web: URL has no host: {raw_url}"))
         })?;
 
-        if config.require_find_before_refetch && self.hosts_pending_find.contains(&host) {
+        let continuing_mission = mission_id
+            .filter(|s| !s.trim().is_empty())
+            .is_some_and(|mid| self.missions.contains_key(mid.trim()));
+
+        if config.require_find_before_refetch
+            && !continuing_mission
+            && self.hosts_pending_find.contains(&host)
+        {
             let hint = self
                 .hosts_pending_find_hint(&host)
                 .unwrap_or_else(|| "run web:find on a page from this host first".to_string());
@@ -547,6 +554,40 @@ mod tests {
             }
             other => panic!("expected PolicyViolation, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn continuing_mission_skips_find_before_refetch() {
+        let mut ledger = WebSessionLedger::new();
+        let config = test_config();
+        let mid = Uuid::new_v4().to_string();
+        ledger.missions.insert(
+            mid.clone(),
+            WebMissionState {
+                budget_max: 4,
+                pages_used: 1,
+                urls: vec!["https://www.bbc.com/".into()],
+            },
+        );
+        ledger.commit_fetch(
+            "https://www.bbc.com/".into(),
+            "art-home".into(),
+            mid.clone(),
+            "bbc.com".into(),
+        );
+        let res = ledger
+            .reserve_fetch(
+                &config,
+                "https://www.bbc.com/news/world-123",
+                Some(&mid),
+                None,
+                "art-deep",
+                "mis-unused",
+            )
+            .expect("ok")
+            .expect("reserved");
+        assert_eq!(res.artifact_id, "art-deep");
+        assert_eq!(res.mission_id, mid);
     }
 
     #[test]

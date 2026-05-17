@@ -12,6 +12,7 @@ use crate::tools::web::fetch_inner::{
     WebFetchArgs, WebFetchRunOutcome, parse_stored_receipt, run_vault_web_fetch,
     run_vault_web_fetch_simple,
 };
+use crate::tools::web::links::{filter_headline_candidates, select_deep_fetch_links};
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use schemars::schema::RootSchema;
@@ -169,8 +170,10 @@ fn clamp_deep_fetch_top_n(ctx: &WebToolContext, requested: u8) -> u8 {
 }
 
 fn curated_headlines(links: &[WebOutboundLink], homepage: &Url, max: usize) -> Vec<WebOutboundLink> {
+    let homepage_str = homepage.as_str();
+    let filtered = filter_headline_candidates(links.to_vec(), homepage_str);
     let mut out = Vec::new();
-    for link in links {
+    for link in filtered {
         let Ok(u) = Url::parse(&link.url) else {
             continue;
         };
@@ -180,7 +183,7 @@ fn curated_headlines(links: &[WebOutboundLink], homepage: &Url, max: usize) -> V
         if u.path() == homepage.path() && u.host_str() == homepage.host_str() {
             continue;
         }
-        out.push(link.clone());
+        out.push(link);
         if out.len() >= max {
             break;
         }
@@ -263,10 +266,12 @@ impl Tool for NewsTodayTool {
             })
             .collect();
 
+        let deep_candidates =
+            select_deep_fetch_links(&links, &homepage_str, deep_n as usize);
         let mut deep_articles = Vec::new();
         let mut seen = HashSet::new();
         seen.insert(homepage_str.clone());
-        for link in headlines_raw.iter().take(deep_n as usize) {
+        for link in deep_candidates.iter().take(deep_n as usize) {
             if !seen.insert(link.url.clone()) {
                 continue;
             }

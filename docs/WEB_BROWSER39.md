@@ -1,54 +1,57 @@
-# browser39 integration (Phase 0 spike)
+# browser39 integration (MVP)
 
-## Decision (MVP)
+## Decision
 
-**Use subprocess + JSONL (`browser39 watch`), not an in-process Rust dependency.**
+**Use subprocess + JSONL (`browser39 batch`), not an in-process Rust dependency.**
 
 | Approach | Verdict |
 |----------|---------|
-| **A. Subprocess** (JSONL per fetch) | **Chosen** — matches upstream agent examples; process isolation; no V8/deno_core in the eris link graph |
-| **B. In-process crate** | **Not viable on crates.io today** — see below |
+| **A. Subprocess** (JSONL per fetch) | **Chosen** — process isolation; no V8/deno_core in the eris link graph |
+| **B. In-process crate** | **Not viable on crates.io today** — `autolib = false`; only the `browser39` binary is published |
 
-Implementation: `WebFetcher` trait with `Browser39Fetcher` spawning an isolated `watch` session per fetch under `{vault}/.fcp/browser39/sessions/{artifact_id}/`, `--no-persist`, vault config via `BROWSER39_CONFIG` / `--config`. See the browser39 web MVP plan for ledger, mission cache, and anti-crawl policy.
+Implementation: `WebFetcher` / `Browser39Fetcher` under `src/tools/web/fetcher.rs`. Each fetch uses a **dedicated session directory** `.fcp/browser39/sessions/{artifact_id}/`, runs `browser39 batch` with `--no-persist`, and reads `results.jsonl`. Vault pages are cached under `20_Discourse/web/missions/{mission_id}/pages/{artifact_id}/`.
 
-## Spike evidence (browser39 1.7.1)
+Phase 2 (planned): per-host `browser39 watch` sessions, optional disk persistence, consent profiles — see the web post-MVP hardening plan.
 
-Surveyed [crates.io/browser39](https://crates.io/crates/browser39) (1.7.1), registry sources, [docs.rs](https://docs.rs/browser39/latest/browser39/), and upstream [jsonl-protocol.md](https://github.com/alejandroqh/browser39/blob/main/docs/jsonl-protocol.md).
-
-1. **No published library crate.** `Cargo.toml` sets `autolib = false` and declares only `[[bin]] name = "browser39"`. Internal modules (`core`, `service::BrowserService`) exist in source but are **not** exposed as `use browser39::…` for downstream crates.
-2. **Documented agent contract is transport-level:** JSONL `watch` / `batch`, or MCP `browser39 mcp`. The canonical Rust example [`examples/browser39_tools.rs`](https://github.com/alejandroqh/browser39/blob/main/examples/browser39_tools.rs) uses `std::process::Command`, `commands.jsonl` / `results.jsonl`, and a long-lived watch child — not a library API.
-3. **Adding `browser39` as an eris dependency would not help integration:** Cargo would still build the binary only; eris could not call `BrowserService` without forking browser39 or upstream enabling `autolib`. It would also pull **deno_core / V8** into the dependency graph with no usable API.
-
-Revisit in-process integration only if a future browser39 release publishes a stable library surface explicitly intended for embedders.
-
-## Operator install (subprocess mode)
-
-Install the CLI on `PATH` (pick one):
+## Operator install
 
 ```bash
 cargo install browser39 --locked
-```
-
-Or download a release binary from [browser39 releases](https://github.com/alejandroqh/browser39/releases).
-
-Verify:
-
-```bash
+# or a release binary from https://github.com/alejandroqh/browser39/releases
 browser39 --version
 ```
 
-Vault-side template (ignition): `{vault}/.fcp/browser39/config.toml` — commented timeouts/viewport; chat bootstrap merges **`user_agent`** from `AppConfig` only.
+Vault template (ignition): `{vault}/.fcp/browser39/config.toml` — `[search].engine`, timeouts; eris merges **`user_agent`** from `AppConfig` on chat bootstrap.
 
-Optional CI / local smoke (post-implementation): `BROWSER39_INTEGRATION=1` with `#[ignore]` integration test; default CI uses `MockWebFetcher` only.
+Allowlist: `{vault}/.fcp/web_allowlist.toml` (toggle with `[web].allowlist_enabled`).
 
-## Protocol sketch (per-fetch isolation)
+## MVP protocol (per fetch)
 
-Per MVP plan, each `web:fetch` uses a **dedicated** watch session (not the example’s singleton long-lived client):
+1. Create `.fcp/browser39/sessions/{artifact_id}/`.
+2. Write one `fetch` line to `commands.jsonl` (`show_selectors_first: false`, `include_links: true`, pagination via `offset`).
+3. Run `browser39 batch --no-persist --config <vault-config>`.
+4. Parse the first `results.jsonl` line; paginate until `WebBudget` cap.
 
-1. Create session dir `.fcp/browser39/sessions/{artifact_id}/`.
-2. `touch` `commands.jsonl` and `results.jsonl`.
-3. Spawn: `browser39 watch --config <vault-config> --no-persist` (exact flags per `browser39 --help` when wiring `client.rs`).
-4. Append one `fetch` action (URL, `options.max_tokens`, `selector`, pagination `offset`) to `commands.jsonl`; read results from `results.jsonl`.
-5. Paginate until `WebBudget` byte/chunk cap; terminate child.
+Full schema: [jsonl-protocol.md](https://github.com/alejandroqh/browser39/blob/main/docs/jsonl-protocol.md).
 
-Full action schema: upstream [jsonl-protocol.md](https://github.com/alejandroqh/browser39/blob/main/docs/jsonl-protocol.md).
+## Config (`[web]` in vault `.fcp/config.toml`)
+
+| Key | Default | Notes |
+|-----|---------|--------|
+| `allowlist_enabled` | `true` | Enforce `.fcp/web_allowlist.toml` |
+| `search_enabled` | `true` | Register `web:search` |
+| `require_find_before_refetch` | `true` | Same-host ad-hoc refetch needs `web:find` first; **continuing an existing `mission_id` is exempt** (e.g. `news:today` deep fetches) |
+| `max_web_tool_calls_per_turn` | `2` | Turn cap for web tools (orchestrator); consider `4` for heavy news sessions |
+| `max_fetches_per_user_turn` | `2` | Ledger fetch cap per user turn |
+| `persist_ledger` | `false` | Optional `.fcp/web_session.json` across restarts |
+
+## Limits (honest expectations)
+
+- **No JS execution** in browser39 — SPAs and heavy client-rendered sites may return thin markdown; receipts include `page_quality` (`thin`, `likely_consent_or_js`) and hints.
+- Cookie-banner lines are stripped in `sanitize_markdown_noise`; consent walls may still need Phase 2 host profiles or manual `[[cookies]]` in browser39 config.
+- Not a Playwright/CDP replacement.
+
+## Testing
+
+- Unit tests use `MockWebFetcher` (default CI).
+- Optional live smoke: `BROWSER39_INTEGRATION=1` with `#[ignore]` tests when wired.

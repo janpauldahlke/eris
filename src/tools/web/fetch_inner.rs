@@ -9,7 +9,8 @@ use crate::tools::web::context::WebToolContext;
 use crate::tools::web::fetcher::{FetchedPage, WebFetcher};
 use crate::tools::web::ledger::{host_from_normalized_url, WebCacheHit};
 use crate::tools::web::links::{
-    absolutize_outbound_links, filter_same_host_links, rank_internal_links,
+    absolutize_outbound_links, filter_same_host_links, is_news_today_homepage_mission,
+    rank_headline_links, rank_internal_links_with_cap, HEADLINE_LINK_CAP, INTERNAL_LINK_CAP,
 };
 use crate::tools::web::artifact::WebOutboundLink;
 use crate::vault_layout;
@@ -19,6 +20,27 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 pub(crate) const FALLBACK_WEB_FETCH_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+const THIN_PAGE_CHAR_THRESHOLD: usize = 300;
+
+/// Heuristic page body quality after noise stripping (additive receipt field).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PageQuality {
+    Ok,
+    Thin,
+    LikelyConsentOrJs,
+}
+
+impl PageQuality {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Thin => "thin",
+            Self::LikelyConsentOrJs => "likely_consent_or_js",
+        }
+    }
+}
 
 #[derive(Deserialize, Serialize, schemars::JsonSchema)]
 pub struct WebFetchArgs {
@@ -50,6 +72,8 @@ pub struct WebFetchReceiptJson {
     pub fetch_budget_remaining: u32,
     #[serde(default)]
     pub cached: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_quality: Option<String>,
     pub next_step_hint: String,
 }
 
@@ -180,6 +204,7 @@ pub async fn run_vault_web_fetch(
     .await?;
 
     let sanitized = sanitize_markdown_noise(&page.markdown);
+    let outbound_link_count = page.links.len();
     let (chunks, preview_head) = bound_chunks_and_preview(
         &sanitized,
         budget.max_bytes,
@@ -206,7 +231,21 @@ pub async fn run_vault_web_fetch(
     if !args.explore_site {
         outbound = filter_same_host_links(outbound, &args.url);
     }
-    let internal_links = rank_internal_links(outbound, args.mission_note.as_deref());
+    let internal_links = if is_news_today_homepage_mission(args.mission_note.as_deref()) {
+        rank_headline_links(
+            outbound,
+            &args.url,
+            args.mission_note.as_deref(),
+            HEADLINE_LINK_CAP,
+        )
+    } else {
+        rank_internal_links_with_cap(outbound, args.mission_note.as_deref(), INTERNAL_LINK_CAP)
+    };
+    let page_quality = classify_page_quality(&sanitized, outbound_link_count);
+    let is_serp = args
+        .mission_note
+        .as_deref()
+        .is_some_and(|n| n.trim().starts_with("web:search:"));
 
     store.write_page(
         &reservation.mission_id,
@@ -249,7 +288,13 @@ pub async fn run_vault_web_fetch(
         },
         fetch_budget_remaining: reservation.budget_remaining_after,
         cached: false,
-        next_step_hint: find_first_hint(&artifact_id, reservation.budget_remaining_after),
+        page_quality: Some(page_quality.as_str().to_string()),
+        next_step_hint: build_next_step_hint(
+            &artifact_id,
+            reservation.budget_remaining_after,
+            page_quality,
+            is_serp,
+        ),
     };
     Ok(WebFetchRunOutcome::Stored(WebFetchStored {
         receipt_json: serde_json::to_string(&receipt).map_err(FcpError::ParseFault)?,
@@ -306,6 +351,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn classify_thin_page_after_sanitize() {
+        let body = "x".repeat(150);
+        let q = classify_page_quality(&body, 2);
+        assert_eq!(q, PageQuality::Thin);
+    }
+
+    #[test]
+    fn classify_likely_consent_when_nearly_empty() {
+        let q = classify_page_quality("ok", 0);
+        assert_eq!(q, PageQuality::LikelyConsentOrJs);
+    }
+
+    #[test]
+    fn serp_hint_mentions_web_find_not_refetch() {
+        let hint = build_next_step_hint("art-serp", 1, PageQuality::Ok, true);
+        assert!(hint.contains("web:find"));
+        assert!(hint.contains("Do not web:fetch"));
+    }
+
+    #[test]
     fn parse_stored_receipt_reads_ids() {
         let json = serde_json::json!({
             "artifact_id": "art-1",
@@ -336,16 +401,66 @@ fn cached_receipt(hit: &WebCacheHit, args: &WebFetchArgs) -> WebFetchReceiptJson
         sitemap_hint: None,
         fetch_budget_remaining: 0,
         cached: true,
+        page_quality: None,
         next_step_hint: format!(
-            "Cached URL — use web:find on artifact_id `{}` before fetching again.",
-            hit.artifact_id
+            "Cached URL — use web:find on artifact_id `{}` before fetching again. {}",
+            hit.artifact_id,
+            vault_mission_hint()
+        ),
+    }
+}
+
+pub(crate) fn classify_page_quality(markdown: &str, link_count: usize) -> PageQuality {
+    let chars = markdown.trim().chars().count();
+    if chars >= THIN_PAGE_CHAR_THRESHOLD {
+        return PageQuality::Ok;
+    }
+    if chars < 80 && link_count == 0 {
+        return PageQuality::LikelyConsentOrJs;
+    }
+    if chars < THIN_PAGE_CHAR_THRESHOLD {
+        return PageQuality::Thin;
+    }
+    PageQuality::Ok
+}
+
+fn vault_mission_hint() -> &'static str {
+    "Full page text is under `20_Discourse/web/missions/<mission_id>/pages/<artifact_id>/` — use web:find with artifact_id, not vault:read on web_artifacts paths."
+}
+
+fn build_next_step_hint(
+    artifact_id: &str,
+    budget_remaining: u32,
+    page_quality: PageQuality,
+    is_serp: bool,
+) -> String {
+    if is_serp {
+        return format!(
+            "SERP cached — use web:find on artifact_id `{artifact_id}` with your search terms. \
+             Do not web:fetch this search-results URL again. {}",
+            vault_mission_hint()
+        );
+    }
+    match page_quality {
+        PageQuality::Ok => find_first_hint(artifact_id, budget_remaining),
+        PageQuality::Thin => format!(
+            "Page body is thin after fetch (cookie banners stripped or little HTML). \
+             Try web:find on artifact_id `{artifact_id}` first; if still empty, the site may need consent/JS (Phase 2). {}",
+            vault_mission_hint()
+        ),
+        PageQuality::LikelyConsentOrJs => format!(
+            "Very little text extracted — likely consent wall or JS-only content. \
+             Use web:find on artifact_id `{artifact_id}`; Phase 2 consent helper may be needed. {}",
+            vault_mission_hint()
         ),
     }
 }
 
 fn find_first_hint(artifact_id: &str, budget_remaining: u32) -> String {
     format!(
-        "Use web:find on artifact_id `{artifact_id}` with mission terms before another web:fetch. fetch_budget_remaining={budget_remaining}. No site-wide BFS unless explore_site is enabled."
+        "Use web:find on artifact_id `{artifact_id}` with mission terms before another web:fetch. \
+         fetch_budget_remaining={budget_remaining}. No site-wide BFS unless explore_site is enabled. {}",
+        vault_mission_hint()
     )
 }
 

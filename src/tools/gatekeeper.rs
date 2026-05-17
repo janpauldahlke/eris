@@ -322,6 +322,18 @@ fn normalize_tool_args(tool_name: &str, mut args: Value) -> Value {
                 obj.remove(key);
             }
         }
+        for alias in ["top_n", "headlines", "limit"] {
+            if let Some(val) = obj.remove(alias) {
+                if !obj.contains_key("max_headlines") {
+                    obj.insert("max_headlines".to_string(), val);
+                }
+            }
+        }
+        if let Some(n) = obj.get("max_headlines").and_then(|v| v.as_u64()) {
+            let clamped = n.clamp(1, 20);
+            obj.insert("max_headlines".to_string(), Value::from(clamped));
+        }
+        obj.retain(|k, _| NEWS_TODAY_KEYS.contains(&k.as_str()));
     }
     if tool_name == "web:search" {
         for alias in ["q", "search_query", "search"] {
@@ -336,8 +348,78 @@ fn normalize_tool_args(tool_name: &str, mut args: Value) -> Value {
                 obj.remove("query");
             }
         }
+        obj.retain(|k, _| WEB_SEARCH_KEYS.contains(&k.as_str()));
+    }
+    if tool_name == "web:fetch" {
+        obj.retain(|k, _| WEB_FETCH_KEYS.contains(&k.as_str()));
+    }
+    if tool_name == "web:find" {
+        for alias in ["url", "page_id", "artifact"] {
+            if let Some(val) = obj.remove(alias) {
+                if !obj.contains_key("artifact_id") {
+                    if val
+                        .as_str()
+                        .is_some_and(|s| looks_like_artifact_uuid(s) && !looks_like_session_path(s))
+                    {
+                        obj.insert("artifact_id".to_string(), val);
+                    }
+                }
+            }
+        }
+        if let Some(val) = obj.remove("max_matches") {
+            if !obj.contains_key("top_k") {
+                obj.insert("top_k".to_string(), val);
+            }
+        }
+        let has_query = obj
+            .get("query")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| !s.trim().is_empty());
+        if !has_query {
+            obj.insert(
+                "query".to_string(),
+                Value::String(DEFAULT_WEB_FIND_QUERY.into()),
+            );
+        }
+        if let Some(k) = obj.get("top_k").and_then(|v| v.as_u64()) {
+            let clamped = k.clamp(1, 12);
+            obj.insert("top_k".to_string(), Value::from(clamped));
+        }
+        obj.retain(|k, _| WEB_FIND_KEYS.contains(&k.as_str()));
     }
     args
+}
+
+const WEB_FETCH_KEYS: &[&str] = &[
+    "url",
+    "mission_note",
+    "mission_id",
+    "fetch_budget",
+    "selector",
+    "explore_site",
+];
+
+const WEB_SEARCH_KEYS: &[&str] = &["query", "mission_note", "mission_id", "fetch_budget"];
+
+const WEB_FIND_KEYS: &[&str] = &["artifact_id", "query", "top_k", "mission_id", "mission_note"];
+
+const NEWS_TODAY_KEYS: &[&str] = &[
+    "category",
+    "homepage_url",
+    "max_headlines",
+    "deep_fetch_top_n",
+];
+
+/// Broad lexical fallback when the model omits `query` (matches most page bodies).
+const DEFAULT_WEB_FIND_QUERY: &str = "article";
+
+fn looks_like_artifact_uuid(s: &str) -> bool {
+    uuid::Uuid::parse_str(s.trim()).is_ok()
+}
+
+fn looks_like_session_path(s: &str) -> bool {
+    let t = s.trim();
+    t.contains("browser39/sessions") || t.contains(".fcp/browser39")
 }
 
 #[cfg(test)]
@@ -572,6 +654,78 @@ mod tests {
             Some("bundesliga letzter spieltag")
         );
         assert!(args.get("q").is_none());
+    }
+
+    #[test]
+    fn normalize_web_fetch_strips_only_text() {
+        let args = normalize_tool_args(
+            "web:fetch",
+            json!({
+                "url": "https://example.com",
+                "mission_note": "x",
+                "only_text": true
+            }),
+        );
+        assert!(args.get("only_text").is_none());
+        assert_eq!(
+            args.get("url").and_then(|v| v.as_str()),
+            Some("https://example.com")
+        );
+    }
+
+    #[test]
+    fn normalize_web_find_maps_url_uuid_to_artifact_id() {
+        let id = "f6534031-61a2-46bd-a7e9-36deaed3bc5c";
+        let args = normalize_tool_args("web:find", json!({"url": id, "query": "goals"}));
+        assert_eq!(
+            args.get("artifact_id").and_then(|v| v.as_str()),
+            Some(id)
+        );
+        assert!(args.get("url").is_none());
+    }
+
+    #[test]
+    fn normalize_web_find_does_not_map_session_path() {
+        let args = normalize_tool_args(
+            "web:find",
+            json!({
+                "url": ".fcp/browser39/sessions/f9beaafe-69f3-4f44-9629-3ad555a52bb3",
+                "query": "x"
+            }),
+        );
+        assert!(args.get("artifact_id").is_none());
+    }
+
+    #[test]
+    fn normalize_news_today_maps_top_n_to_max_headlines() {
+        let args = normalize_tool_args(
+            "news:today",
+            json!({"homepage_url": "https://www.bbc.com/news", "top_n": 10}),
+        );
+        assert_eq!(args.get("max_headlines").and_then(|v| v.as_u64()), Some(10));
+        assert!(args.get("top_n").is_none());
+    }
+
+    #[test]
+    fn normalize_web_find_default_query_and_max_matches() {
+        let args = normalize_tool_args(
+            "web:find",
+            json!({"artifact_id": "f6534031-61a2-46bd-a7e9-36deaed3bc5c", "max_matches": 10}),
+        );
+        assert_eq!(
+            args.get("query").and_then(|v| v.as_str()),
+            Some(DEFAULT_WEB_FIND_QUERY)
+        );
+        assert_eq!(args.get("top_k").and_then(|v| v.as_u64()), Some(10));
+    }
+
+    #[test]
+    fn normalize_web_search_strips_unknown_limit() {
+        let args = normalize_tool_args(
+            "web:search",
+            json!({"query": "test", "limit": 99}),
+        );
+        assert!(args.get("limit").is_none());
     }
 
     #[test]
