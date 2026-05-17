@@ -146,6 +146,8 @@ impl Gatekeeper {
                     | "skills:list"
                     | "skills:read"
                     | "news:today"
+                    | "web:fetch"
+                    | "web:search"
                     | "web:find"
                     | "system:health"
                     | "clock:now"
@@ -273,6 +275,17 @@ impl Gatekeeper {
 
         let args = normalize_tool_args(name, args);
 
+        if name == "web:find" {
+            if let Some(aid) = args.get("artifact_id").and_then(|v| v.as_str()) {
+                if !looks_like_artifact_uuid(aid) {
+                    return Err(FcpError::SchemaViolation(format!(
+                        "artifact_id must be the UUID from a web:fetch or web:search receipt (got {aid:?}); \
+                         run that tool first and copy artifact_id from receipt_summary"
+                    )));
+                }
+            }
+        }
+
         let schema_value = serde_json::to_value(tool.parameters_schema())
             .map_err(|e| FcpError::Config(e.to_string()))?;
         let compiled_schema = JSONSchema::options()
@@ -322,6 +335,14 @@ fn normalize_tool_args(tool_name: &str, mut args: Value) -> Value {
                 obj.remove(key);
             }
         }
+        if obj.get("category").and_then(|v| v.as_str()).is_some_and(|s| {
+            matches!(
+                s.trim().to_ascii_lowercase().as_str(),
+                "none" | "null" | "n/a" | "na"
+            )
+        }) {
+            obj.remove("category");
+        }
         for alias in ["top_n", "headlines", "limit"] {
             if let Some(val) = obj.remove(alias) {
                 if !obj.contains_key("max_headlines") {
@@ -341,6 +362,11 @@ fn normalize_tool_args(tool_name: &str, mut args: Value) -> Value {
                 if !obj.contains_key("query") {
                     obj.insert("query".to_string(), val);
                 }
+            }
+        }
+        if let Some(title) = obj.remove("mission_title") {
+            if !obj.contains_key("mission_note") {
+                obj.insert("mission_note".to_string(), title);
             }
         }
         if let Some(q) = obj.get("query").and_then(|v| v.as_str()) {
@@ -544,28 +570,26 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_authorization_state_elevates_chat_only_web_tools_in_recover() {
+    fn dispatch_authorization_state_web_tools_allowed_in_recover() {
+        for tool in ["web:fetch", "web:search", "web:find"] {
+            assert_eq!(
+                Gatekeeper::dispatch_authorization_state(
+                    &AgentState::Recover,
+                    tool,
+                    false,
+                ),
+                AgentState::Recover
+            );
+        }
+    }
+
+    #[test]
+    fn dispatch_authorization_state_elevates_chat_only_tools_in_recover() {
         assert_eq!(
             Gatekeeper::dispatch_authorization_state(
                 &AgentState::Recover,
-                "web:fetch",
+                "mail:write",
                 false,
-            ),
-            AgentState::Chat
-        );
-        assert_eq!(
-            Gatekeeper::dispatch_authorization_state(
-                &AgentState::Recover,
-                "web:find",
-                false,
-            ),
-            AgentState::Recover
-        );
-        assert_eq!(
-            Gatekeeper::dispatch_authorization_state(
-                &AgentState::Recover,
-                "web:fetch",
-                true,
             ),
             AgentState::Chat
         );
@@ -657,6 +681,22 @@ mod tests {
     }
 
     #[test]
+    fn normalize_web_search_maps_mission_title_to_mission_note() {
+        let args = normalize_tool_args(
+            "web:search",
+            json!({
+                "query": "bundesliga winner",
+                "mission_title": "Bundesliga Winner Check"
+            }),
+        );
+        assert_eq!(
+            args.get("mission_note").and_then(|v| v.as_str()),
+            Some("Bundesliga Winner Check")
+        );
+        assert!(args.get("mission_title").is_none());
+    }
+
+    #[test]
     fn normalize_web_fetch_strips_only_text() {
         let args = normalize_tool_args(
             "web:fetch",
@@ -717,6 +757,52 @@ mod tests {
         );
         assert_eq!(args.get("max_headlines").and_then(|v| v.as_u64()), Some(10));
         assert!(args.get("top_n").is_none());
+    }
+
+    #[test]
+    fn normalize_news_today_strips_category_none() {
+        let args = normalize_tool_args(
+            "news:today",
+            json!({"homepage_url": "https://www.taz.de/", "category": "none"}),
+        );
+        assert!(args.get("category").is_none());
+    }
+
+    #[tokio::test]
+    async fn gatekeeper_rejects_web_find_non_uuid_artifact_id() {
+        #[derive(JsonSchema, Deserialize)]
+        struct FindArgs {
+            artifact_id: String,
+            query: String,
+        }
+        let mut gatekeeper = Gatekeeper::new();
+        struct StubFind;
+        #[async_trait]
+        impl Tool for StubFind {
+            fn name(&self) -> &'static str {
+                "web:find"
+            }
+            fn description(&self) -> &'static str {
+                "stub"
+            }
+            fn parameters_schema(&self) -> RootSchema {
+                schemars::schema_for!(FindArgs)
+            }
+            async fn execute(&self, _args: Value) -> Result<String> {
+                Ok("{}".into())
+            }
+        }
+        gatekeeper.register(Arc::new(StubFind));
+        let res = gatekeeper
+            .execute_tool(
+                &AgentState::Chat,
+                "web:find",
+                json!({"artifact_id": "taz_homepage", "query": "headlines"}),
+            )
+            .await;
+        assert!(res.is_err());
+        let msg = format!("{:?}", res.unwrap_err());
+        assert!(msg.contains("UUID"));
     }
 
     #[test]

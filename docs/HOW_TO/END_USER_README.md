@@ -2,7 +2,7 @@
 
 Eris is a **local**, vault-centric assistant: you keep your notes in a folder (the **vault**), run `eris chat` from that folder, and chat in the terminal or in a small browser window on your machine. Two LLM backends are available: **Ollama** (default, easiest setup) or **llama.cpp** (direct GGUF inference with grammar-enforced structured output). Optional Qdrant holds semantic memory over your notes.
 
-This page is for **people installing a pre-built binary**. Developers building from source should use the [project README](../README.md).
+This page is for **people installing a pre-built binary**. Developers building from source should use the [project README](../../README.md).
 
 ---
 
@@ -58,18 +58,19 @@ Eris itself may suggest a similar layout if it detects the binary still living u
 
 ## 2. What you need running before the first real chat
 
-Eris needs an LLM backend for chat and embeddings. For full semantic memory (and the default strict startup), it also expects **Qdrant** reachable at the address in your config (defaults are described in the [main README](../README.md#prerequisites)).
+Eris needs an LLM backend for chat and embeddings. For full semantic memory (and the default strict startup), it also expects **Qdrant** reachable at the address in your config (defaults are described in the [main README](../../README.md#prerequisites)).
 
 Minimal checklist:
 
 1. **Choose a backend:**
    - **Ollama** (default): Install [Ollama](https://ollama.com), start it, pull a chat model and an embedding model.
-   - **llama.cpp**: Build llama.cpp from source, download GGUF model files. See **[LLAMA_CPP_SETUP.md](LLAMA_CPP_SETUP.md)** for the full guide.
+   - **llama.cpp**: Build llama.cpp from source, download GGUF model files. See **[LLAMA_CPP_SETUP.md](../LLAMA_CPP_SETUP.md)** for the full guide.
 2. If you use Qdrant: run it (for example via Docker) or let Eris try to start it when possible; otherwise adjust `require_semantic_brain` in `.fcp/config.toml` once that file exists.
+3. **Web pages / headlines (optional):** install **[browser39](https://crates.io/crates/browser39)** on PATH (`cargo install browser39 --locked`; `browser39 --version` must work). Eris checks this at chat startup for `web:fetch`, `web:find`, `web:search`, and `news:today`. Details: [WEB_BROWSER39.md](../WEB_BROWSER39.md).
 
 The first-run wizard (ignition) will ask which backend to use and guide you through model selection.
 
-Details and environment variables live in the [Prerequisites](../README.md#prerequisites) section of the main README.
+Details and environment variables live in the [Prerequisites](../../README.md#prerequisites) section of the main README.
 
 ---
 
@@ -108,7 +109,7 @@ If you decline the suggested vault directory, create a folder, `cd` into it, and
 
 Eris then creates the vault layout (including `00_Invariants/` and related folders), writes **`.fcp/config.toml`**, and places a **seal** file so the next launch skips this wizard.
 
-**Main interface** — after ignition, the **terminal UI** takes over the screen. You may briefly see startup lines about **peripheral readiness** (Ollama and Qdrant). Then you use the chat area as documented in the main README.
+**Main interface** — after ignition, the **terminal UI** takes over the screen. You may briefly see startup lines about **peripheral readiness** (Ollama and Qdrant) and **browser39** when web tools are enabled. Then you use the chat area as documented in the main README.
 
 Same vault in a **browser** (still local):
 
@@ -162,7 +163,15 @@ Two useful additions for day-to-day operation:
 
 ## 5. Where to read more
 
-- Full prerequisites, architecture, tool behavior: [README.md](../README.md)
+- Full prerequisites, architecture, tool behavior: [README.md](../../README.md)
 - Optional: skip the interactive welder in automation with environment variables (see code and tracing for `ERIS_SKIP_SETUP` and `CI` behavior in the developer docs if you need non-interactive runs).
 
-If something fails on first launch, read the message in the terminal carefully: it often names the missing piece (Ollama API, Qdrant, or vault directory).
+If something fails on first launch, read the message in the terminal carefully: it often names the missing piece (Ollama API, Qdrant, **browser39**, or vault directory).
+
+---
+
+### 6. important note on shutdown `/exit`
+
+* **always** close eris by using `/exit`in the web ui or cli and bring patience for this. 
+It will ensure, **all** running processes that are spawned by eris, will be properly cleaned up.
+Skipping this can *pollute and block* large parts of your VRAM/RAM

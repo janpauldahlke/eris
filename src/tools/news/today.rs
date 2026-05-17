@@ -247,6 +247,7 @@ impl Tool for NewsTodayTool {
                 fetch_budget: Some(1 + deep_n as u32),
                 selector: None,
                 explore_site: false,
+                ledger_dedup_preserves_query: false,
             },
         )
         .await?;

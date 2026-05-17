@@ -572,6 +572,21 @@ impl<E: LlmEngine> Orchestrator<E> {
                             .await?;
                             continue;
                         }
+                        ToolBatchDecision::SuppressOnlyIdlePass { message } => {
+                            tracing::info!(
+                                event = "orchestrator.tools.duplicate_suppress_idle_pass",
+                                "Duplicate-only tool batch; forcing conversational pass without Recover"
+                            );
+                            self.state = AgentState::Chat;
+                            self.chat_stack.push(crate::engine::Message {
+                                role: "system".to_string(),
+                                content: message,
+                            });
+                            tools_needed = false;
+                            targeted_tools.clear();
+                            self.force_full_tool_schemas_in_llm_view = false;
+                            continue;
+                        }
                         ToolBatchDecision::Fatal(e) => {
                             tracing::error!(error = %e, "System fatality - aborting orchestrator");
                             self.apply_transition(StateTransition::Fatal(FcpError::EngineFault(

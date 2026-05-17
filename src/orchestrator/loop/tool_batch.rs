@@ -14,6 +14,8 @@ pub enum ToolBatchDecision {
     RetryWithTargetedSchema { message: String },
     /// Enter recover state with a recoverable failure message.
     Recover { message: String },
+    /// Duplicate-only batch: stay in Chat, disable tools for one reply (no Recover budget).
+    SuppressOnlyIdlePass { message: String },
     /// Abort turn on non-recoverable failure.
     Fatal(FcpError),
 }

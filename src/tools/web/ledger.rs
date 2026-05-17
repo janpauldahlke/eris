@@ -118,6 +118,9 @@ impl WebSessionLedger {
     }
 
     /// Pre-flight before browser39: caps, duplicate cache, find-before-refetch.
+    ///
+    /// When `dedup_preserves_query` is true (e.g. `web:search` SERP URLs), the ledger key
+    /// includes the query string so different searches do not collide on path-only keys.
     pub fn reserve_fetch(
         &mut self,
         config: &WebConfig,
@@ -126,8 +129,13 @@ impl WebSessionLedger {
         fetch_budget: Option<u32>,
         new_artifact_id: &str,
         new_mission_id: &str,
+        dedup_preserves_query: bool,
     ) -> Result<std::result::Result<WebFetchReservation, WebCacheHit>> {
-        let normalized_url = normalize_url(raw_url)?;
+        let normalized_url = if dedup_preserves_query {
+            normalize_url_with_query(raw_url)?
+        } else {
+            normalize_url(raw_url)?
+        };
 
         if let Some(entry) = self.urls.get(&normalized_url) {
             return Ok(Err(WebCacheHit {
@@ -347,6 +355,23 @@ fn policy_error(code: &str, message: String) -> FcpError {
 
 /// Dedup key: `scheme + host + path` only (no query, no fragment).
 pub fn normalize_url(raw: &str) -> Result<String> {
+    normalize_url_base(raw)
+}
+
+/// Ledger dedup key for search-engine result URLs: path plus query (fragment stripped).
+pub fn normalize_url_with_query(raw: &str) -> Result<String> {
+    let base = normalize_url_base(raw)?;
+    let trimmed = raw.trim();
+    let parsed = Url::parse(trimmed).map_err(|e| {
+        FcpError::SchemaViolation(format!("web: invalid URL ({trimmed}): {e}"))
+    })?;
+    match parsed.query().filter(|q| !q.is_empty()) {
+        Some(q) => Ok(format!("{base}?{q}")),
+        None => Ok(base),
+    }
+}
+
+fn normalize_url_base(raw: &str) -> Result<String> {
     let trimmed = raw.trim();
     let parsed = Url::parse(trimmed).map_err(|e| {
         FcpError::SchemaViolation(format!("web: invalid URL ({trimmed}): {e}"))
@@ -394,6 +419,49 @@ mod tests {
     }
 
     #[test]
+    fn normalize_url_with_query_keeps_query_for_search_dedup() {
+        let a = normalize_url_with_query("https://html.duckduckgo.com/html/?q=iran+news")
+            .expect("ok");
+        let b = normalize_url_with_query("https://html.duckduckgo.com/html/?q=bundesliga")
+            .expect("ok");
+        assert_ne!(a, b);
+        assert!(a.contains("iran"));
+        assert!(b.contains("bundesliga"));
+    }
+
+    #[test]
+    fn search_queries_do_not_share_ledger_slot() {
+        let mut ledger = WebSessionLedger::new();
+        let config = test_config();
+        let url_iran = "https://html.duckduckgo.com/html/?q=iran";
+        let url_buli = "https://html.duckduckgo.com/html/?q=bundesliga";
+        ledger
+            .reserve_fetch(
+                &config,
+                url_iran,
+                None,
+                None,
+                "art-iran",
+                "mis-iran",
+                true,
+            )
+            .expect("ok")
+            .expect("reserve");
+        let second = ledger
+            .reserve_fetch(
+                &config,
+                url_buli,
+                None,
+                None,
+                "art-buli",
+                "mis-buli",
+                true,
+            )
+            .expect("ok");
+        assert!(second.is_ok(), "different search queries must not cache-collide");
+    }
+
+    #[test]
     fn normalize_host_strips_www() {
         assert_eq!(normalize_host("WWW.BBC.com"), "bbc.com");
         assert_eq!(normalize_host("bbc.com"), "bbc.com");
@@ -411,6 +479,7 @@ mod tests {
                 Some(3),
                 "art-new",
                 "mis-new",
+                false,
             )
             .expect("ok")
             .expect("reserve");
@@ -429,6 +498,7 @@ mod tests {
                 None,
                 "art",
                 "mis-fallback",
+                false,
             )
             .expect_err("unknown mission");
         match err {
@@ -467,6 +537,7 @@ mod tests {
                 Some(2),
                 "art-2",
                 "mis-2",
+                false,
             )
             .expect("ok")
             .expect_err("cached");
@@ -489,6 +560,7 @@ mod tests {
                 None,
                 "a",
                 "m",
+                false,
             )
             .expect_err("cap");
         match err {
@@ -511,6 +583,7 @@ mod tests {
                 None,
                 "a",
                 "m",
+                false,
             )
             .expect_err("cap");
         match err {
@@ -540,6 +613,7 @@ mod tests {
                 None,
                 "a",
                 "m",
+                false,
             )
             .expect_err("budget");
         match err {
@@ -566,6 +640,7 @@ mod tests {
                 None,
                 "art-2",
                 "mis-2",
+                false,
             )
             .expect_err("find first");
         match err {
@@ -604,6 +679,7 @@ mod tests {
                 None,
                 "art-deep",
                 "mis-unused",
+                false,
             )
             .expect("ok")
             .expect("reserved");
@@ -630,6 +706,7 @@ mod tests {
                 None,
                 "art-news",
                 "mis-2",
+                false,
             )
             .expect("ok")
             .expect("reserved");
@@ -655,6 +732,7 @@ mod tests {
                 None,
                 "art-2",
                 &Uuid::new_v4().to_string(),
+                false,
             )
             .expect("ok")
             .expect("reserved");

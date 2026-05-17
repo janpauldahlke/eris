@@ -394,6 +394,7 @@ mod tests {
                 fetch_budget: Some(2),
                 selector: None,
                 explore_site: false,
+                ledger_dedup_preserves_query: false,
             },
         )
         .await

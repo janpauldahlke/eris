@@ -3,8 +3,10 @@ use crate::executive::error::{FcpError, Result};
 use crate::orchestrator::context::resolved_tool_recovery::SYSTEM_RECOVERY_PREFIX;
 use crate::orchestrator::llm_support::json_envelope::natural_language_schema_description;
 use crate::orchestrator::llm_support::post_tool_guidance::{
-    POST_TOOL_USER_REPLY_GUIDANCE, recover_override_message_for_tool_failure,
+    POST_TOOL_USER_REPLY_GUIDANCE, ensure_web_find_paired_with_fetch_tools,
+    recover_override_message_for_tool_failure,
 };
+use crate::tools::web::ledger::policy::WEB_FIND_BEFORE_REFETCH;
 use crate::orchestrator::r#loop::recovery_policy::{ToolFailureAction, classify_tool_failure};
 use crate::orchestrator::r#loop::tool_batch::ToolBatchDecision;
 use crate::orchestrator::state::{AgentState, ToolCall, ToolIntentStatus, ToolIntentTicket};
@@ -298,6 +300,41 @@ impl<E: LlmEngine> Orchestrator<E> {
                             }
                         }
                     }
+                    if tool_name == "web:fetch" || tool_name == "web:search" {
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&result) {
+                            if let Some(artifact_id) =
+                                v.get("artifact_id").and_then(|x| x.as_str())
+                            {
+                                let cached = v
+                                    .get("cached")
+                                    .and_then(|x| x.as_bool())
+                                    .unwrap_or(false);
+                                let hint = v
+                                    .get("next_step_hint")
+                                    .and_then(|x| x.as_str())
+                                    .unwrap_or("");
+                                let mut anchor = format!(
+                                    "[fcp:web:fetch_anchor] artifact_id={artifact_id}"
+                                );
+                                if !hint.is_empty() {
+                                    anchor.push_str(&format!(" {hint}"));
+                                }
+                                if cached {
+                                    anchor.push_str(
+                                        " Cache hit — use web:find on this artifact_id; do not assume a new query was fetched.",
+                                    );
+                                } else {
+                                    anchor.push_str(
+                                        " Use web:find with artifact_id and query to read the vault body before refetching this host.",
+                                    );
+                                }
+                                self.chat_stack.push(crate::engine::Message {
+                                    role: "system".to_string(),
+                                    content: anchor,
+                                });
+                            }
+                        }
+                    }
                     if let Some(tx) = &self.presentation_tx {
                         let telemetry = format!("[tool] {} · success", tool_name);
                         let _ = tx.send(SessionEvent::SystemError(telemetry)).await;
@@ -348,6 +385,11 @@ impl<E: LlmEngine> Orchestrator<E> {
                         ToolFailureAction::Recoverable => {
                             recoverable_fail_count += 1;
                             recoverable_failed_tools.push(tool_name.clone());
+                            if let FcpError::PolicyViolation { code, .. } = &err {
+                                if code == WEB_FIND_BEFORE_REFETCH {
+                                    targeted_tools.insert("web:find".to_string());
+                                }
+                            }
                             if let Some(ticket) = execution_ledger.get_mut(&intent_id) {
                                 ticket.status = ToolIntentStatus::FailedRecoverable;
                             }
@@ -442,9 +484,10 @@ impl<E: LlmEngine> Orchestrator<E> {
                 suppressed_repeat_failure_streak,
                 "All tool intents in batch were suppressed (duplicates or repeat-failure streak); forcing user-facing reply via recover"
             );
-            let msg = "[SYSTEM] Tool batch suppressed — all calls in this batch were skipped (duplicates or repeated failures). Do not repeat those tool_calls. Reply with status Idle, a non-empty message_to_user, and tool_calls [].".to_string();
-            // IMPORTANT: route through Recover so retry is bounded by `max_recovery_attempts`.
-            return Ok(ToolBatchDecision::Recover { message: msg });
+            return Ok(ToolBatchDecision::SuppressOnlyIdlePass {
+                message: crate::orchestrator::llm_support::post_tool_guidance::DUPLICATE_SUPPRESS_IDLE_GUIDANCE
+                    .to_string(),
+            });
         }
 
         if targeted_recovery_requested {
@@ -488,6 +531,18 @@ impl<E: LlmEngine> Orchestrator<E> {
             for tool_name in recoverable_failed_tools {
                 targeted_tools.insert(tool_name);
             }
+            let allowed: HashSet<String> = self
+                .gatekeeper
+                .get_allowed_tools(&AgentState::Chat)
+                .into_iter()
+                .filter_map(|t| {
+                    t.get("function")
+                        .and_then(|f| f.get("name"))
+                        .and_then(|n| n.as_str())
+                        .map(|s| s.to_string())
+                })
+                .collect();
+            ensure_web_find_paired_with_fetch_tools(targeted_tools, &allowed);
             if !targeted_tools.is_empty() {
                 self.force_full_tool_schemas_in_llm_view = true;
                 tracing::info!(
@@ -776,7 +831,7 @@ mod repeat_failure_streak_tests {
             )
             .await
             .expect("batch must not fatal on cap");
-        assert!(matches!(decision, ToolBatchDecision::Recover { .. }));
+        assert!(matches!(decision, ToolBatchDecision::SuppressOnlyIdlePass { .. }));
         assert!(
             !ledger
                 .values()

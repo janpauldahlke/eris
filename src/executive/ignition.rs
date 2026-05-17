@@ -336,7 +336,7 @@ pub async fn run_ignition_sequence(
         }
     }
 
-    seed_web_operator_files(workspace_root).await?;
+    crate::tools::web::bootstrap::seed_web_operator_files(workspace_root).await?;
 
     // Seed default runtime skills into the workspace vault (seed-only; never overwrite).
     let seed_report = crate::skills::seed_runtime_skills(workspace_root).await?;
@@ -406,56 +406,3 @@ pub async fn run_ignition_sequence(
     Ok(config)
 }
 
-async fn seed_web_operator_files(workspace_root: &Path) -> Result<()> {
-    let allowlist = crate::vault_layout::fcp_dir(workspace_root).join("web_allowlist.toml");
-    if !allowlist.exists() {
-        let body = r#"# Glob patterns — enable origins you fetch (article paths need wildcards).
-patterns = [
-  # "https://www.bbc.com/",
-  # "https://www.bbc.com/news/**",
-  # "https://en.wikipedia.org/wiki/**",
-]
-"#;
-        fs::write(&allowlist, body).await?;
-    }
-    let b39_dir = crate::vault_layout::fcp_dir(workspace_root).join("browser39");
-    if !b39_dir.exists() {
-        fs::create_dir_all(&b39_dir).await?;
-    }
-    let b39_cfg = b39_dir.join("config.toml");
-    if !b39_cfg.exists() {
-        let body = r#"# browser39 template — eris merges user_agent from .fcp/config.toml at chat bootstrap.
-# [session]
-# timeout_secs = 30
-"#;
-        fs::write(&b39_cfg, body).await?;
-    }
-    let consent_profiles = b39_dir.join("consent_profiles.toml");
-    if !consent_profiles.exists() {
-        let body = r#"# Host-specific consent button labels for browser39 `fetch` by link text.
-# eris tries these when page markdown is below [web].thin_page_char_threshold.
-
-[[host]]
-host = "kicker.de"
-accept_link_text = ["Alle akzeptieren", "Accept all", "Zustimmen", "Akzeptieren"]
-
-[[host]]
-host = "gamestar.de"
-accept_link_text = ["Alle akzeptieren", "Accept all", "Zustimmen", "I agree"]
-
-[[host]]
-host = "bbc.com"
-accept_link_text = ["Yes, I agree", "Allow all", "Accept"]
-
-[[host]]
-host = "spiegel.de"
-accept_link_text = ["Alle akzeptieren", "Akzeptieren", "Zustimmen"]
-
-[[host]]
-host = "taz.de"
-accept_link_text = ["Alle akzeptieren", "Akzeptieren", "Zustimmen"]
-"#;
-        fs::write(&consent_profiles, body).await?;
-    }
-    Ok(())
-}

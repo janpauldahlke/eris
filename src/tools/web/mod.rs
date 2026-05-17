@@ -1,4 +1,5 @@
 pub mod allowlist;
+pub mod bootstrap;
 pub mod artifact;
 pub mod budget;
 pub mod cache;

@@ -460,6 +460,33 @@ pub async fn start_chat_session(
         workspace_root: workspace_root.clone(),
         reschedule_tx: alarm_reschedule_tx.clone(),
     }));
+    let _ = presentation_tx
+        .send(SessionEvent::SystemError(
+            "[startup] Preparing web stack (browser39, vault operator files)...".into(),
+        ))
+        .await;
+    let browser39_probe = crate::tools::web::bootstrap::ensure_web_stack_ready(
+        &workspace_root,
+        &config.web_fetch_user_agent,
+        config.web.require_browser39,
+    )
+    .await?;
+    if let Some(probe) = &browser39_probe {
+        let _ = presentation_tx
+            .send(SessionEvent::SystemError(format!(
+                "[startup] browser39 ready: {} ({})",
+                probe.binary, probe.version_line
+            )))
+            .await;
+        tracing::info!(
+            binary = %probe.binary,
+            version = %probe.version_line,
+            "browser39 verified at chat startup"
+        );
+    } else {
+        tracing::info!("browser39 binary probe skipped (web.require_browser39 = false)");
+    }
+
     let web_ledger = Arc::new(tokio::sync::Mutex::new(
         crate::tools::web::WebSessionLedger::load_from_vault(&workspace_root, &config.web)
             .unwrap_or_else(|e| {
@@ -472,7 +499,7 @@ pub async fn start_chat_session(
         ledger.reset_session();
     }
     let web_fetcher = crate::tools::web::WebFetcherKind::Browser39 {
-        binary: std::env::var("BROWSER39_BIN").unwrap_or_else(|_| "browser39".into()),
+        binary: crate::tools::web::bootstrap::resolve_browser39_binary(),
     };
     let web_ctx = crate::tools::web::WebToolContext::from_config(
         &config,

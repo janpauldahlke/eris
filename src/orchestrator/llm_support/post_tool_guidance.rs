@@ -14,10 +14,84 @@ A tool in the last batch failed. Your next JSON with status Idle must use `messa
 /// System line for [`crate::orchestrator::r#loop::tool_batch::ToolBatchDecision::Recover`] after a recoverable tool execution failure.
 pub fn recover_override_message_for_tool_failure(reason: &str) -> String {
     use crate::orchestrator::context::resolved_tool_recovery::PROTOCOL_FAULT_PREFIX;
-    format!(
+    let mut out = format!(
         "{PROTOCOL_FAULT_PREFIX}\n\nTool execution failed: {reason}\n\n{}",
         POST_TOOL_FAILURE_TRUST_GUIDANCE
-    )
+    );
+    if let Some(extra) = web_find_before_refetch_recover_addon(reason) {
+        out.push_str("\n\n");
+        out.push_str(&extra);
+    }
+    out
+}
+
+/// Parse `artifact_id` from a `WEB_FIND_BEFORE_REFETCH` policy message.
+pub fn parse_artifact_id_from_find_before_refetch_message(reason: &str) -> Option<String> {
+    let needle = "artifact_id `";
+    let start = reason.find(needle)? + needle.len();
+    let rest = &reason[start..];
+    let end = rest.find('`')?;
+    let id = rest[..end].trim();
+    if uuid::Uuid::parse_str(id).is_ok() {
+        Some(id.to_string())
+    } else {
+        None
+    }
+}
+
+/// Extra recover guidance when refetch was blocked pending `web:find`.
+pub fn web_find_before_refetch_recover_addon(reason: &str) -> Option<String> {
+    if !reason.contains(crate::tools::web::ledger::policy::WEB_FIND_BEFORE_REFETCH) {
+        return None;
+    }
+    let mut block = String::from(
+        "[FCP WEB — USE web:find]\n\
+         web:find is available in this recovery pass (alongside web:fetch). \
+         Do not claim web:find is missing from your toolset.\n",
+    );
+    if let Some(aid) = parse_artifact_id_from_find_before_refetch_message(reason) {
+        block.push_str(&format!(
+            "Call web:find with artifact_id \"{aid}\" and a query matching what you need \
+             (e.g. transmission routes) before any web:fetch on the same host.\n"
+        ));
+    } else {
+        block.push_str(
+            "Call web:find on the artifact_id from the error above before any web:fetch on that host.\n",
+        );
+    }
+    block.push_str("[/FCP WEB — USE web:find]");
+    Some(block)
+}
+
+/// When `web:fetch` or `web:search` is targeted for Recover/GBNF, always include `web:find` if allowed.
+pub fn ensure_web_find_paired_with_fetch_tools(
+    targeted_tools: &mut std::collections::HashSet<String>,
+    allowed: &std::collections::HashSet<String>,
+) {
+    let needs_find = targeted_tools.contains("web:fetch") || targeted_tools.contains("web:search");
+    if needs_find && allowed.contains("web:find") {
+        targeted_tools.insert("web:find".to_string());
+    }
+}
+
+/// System line when every tool intent in a batch was duplicate-suppressed (no Recover hop).
+pub const DUPLICATE_SUPPRESS_IDLE_GUIDANCE: &str = r#"[FCP DUPLICATE TOOL — USER REPLY]
+All tool_calls in your last batch were skipped as duplicates of calls already made this turn. Do not repeat them. Reply with status Idle, a non-empty message_to_user summarizing prior tool results, and tool_calls [].
+[/FCP DUPLICATE TOOL — USER REPLY]"#;
+
+/// After any `web:*` tool is armed for protocol Recover, offer the full browser stack when allowed.
+pub fn expand_web_tools_for_protocol_recover(
+    targeted_tools: &mut std::collections::HashSet<String>,
+    allowed: &std::collections::HashSet<String>,
+) {
+    if !targeted_tools.iter().any(|n| n.starts_with("web:")) {
+        return;
+    }
+    for name in ["web:fetch", "web:find", "web:search"] {
+        if allowed.contains(name) {
+            targeted_tools.insert(name.to_string());
+        }
+    }
 }
 
 #[cfg(test)]
@@ -35,5 +109,39 @@ mod tests {
         assert!(msg.contains(
             crate::orchestrator::context::resolved_tool_recovery::PROTOCOL_FAULT_PREFIX
         ));
+    }
+
+    #[test]
+    fn recover_web_find_before_refetch_includes_find_guidance() {
+        let reason = "Policy violation [WEB_FIND_BEFORE_REFETCH]: web:fetch blocked for host `bbc.com`: try web:find on artifact_id `8ff6f8c6-422d-49ec-b1c8-1fb260dc9bc9` before fetching again";
+        let msg = recover_override_message_for_tool_failure(reason);
+        assert!(msg.contains("[FCP WEB — USE web:find]"));
+        assert!(msg.contains("8ff6f8c6-422d-49ec-b1c8-1fb260dc9bc9"));
+        assert!(msg.contains("web:find is available"));
+    }
+
+    #[test]
+    fn expand_web_tools_adds_fetch_find_search() {
+        let allowed: std::collections::HashSet<String> = [
+            "web:fetch".to_string(),
+            "web:find".to_string(),
+            "web:search".to_string(),
+        ]
+        .into_iter()
+        .collect();
+        let mut targeted = std::collections::HashSet::from(["web:find".to_string()]);
+        expand_web_tools_for_protocol_recover(&mut targeted, &allowed);
+        assert!(targeted.contains("web:fetch"));
+        assert!(targeted.contains("web:search"));
+    }
+
+    #[test]
+    fn ensure_web_find_paired_when_fetch_targeted() {
+        use std::collections::HashSet;
+        let allowed: HashSet<String> =
+            ["web:fetch", "web:find"].iter().map(|s| (*s).to_string()).collect();
+        let mut targeted: HashSet<String> = ["web:fetch"].iter().map(|s| (*s).to_string()).collect();
+        super::ensure_web_find_paired_with_fetch_tools(&mut targeted, &allowed);
+        assert!(targeted.contains("web:find"));
     }
 }

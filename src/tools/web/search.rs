@@ -121,6 +121,7 @@ impl Tool for WebSearchTool {
                 fetch_budget: args.fetch_budget,
                 selector: None,
                 explore_site: false,
+                ledger_dedup_preserves_query: true,
             },
         )
         .await?

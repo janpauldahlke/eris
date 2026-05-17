@@ -87,6 +87,8 @@ cargo install browser39 --locked
 browser39 --version
 ```
 
+Chat startup runs `browser39 --version` when `[web] require_browser39 = true` (default) and seeds `.fcp/browser39/` plus `web_allowlist.toml` if missing. Override the binary with `BROWSER39_BIN`. Set `require_browser39 = false` only for local dev without the CLI.
+
 ## Testing
 
 - Unit tests: mock only (default CI).

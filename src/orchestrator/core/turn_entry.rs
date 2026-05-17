@@ -264,6 +264,14 @@ impl<E: LlmEngine> Orchestrator<E> {
         for name in candidates {
             targeted_tools.insert(name);
         }
+        crate::orchestrator::llm_support::post_tool_guidance::ensure_web_find_paired_with_fetch_tools(
+            targeted_tools,
+            &allowed,
+        );
+        crate::orchestrator::llm_support::post_tool_guidance::expand_web_tools_for_protocol_recover(
+            targeted_tools,
+            &allowed,
+        );
         self.force_full_tool_schemas_in_llm_view = true;
         tracing::info!(
             targeted_tools = ?targeted_tools,

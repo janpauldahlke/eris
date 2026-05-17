@@ -290,6 +290,11 @@ impl ToolRouter {
             );
             hits.push(("web:fetch".to_string(), 1.0));
         }
+        if hits.iter().any(|(t, _)| t == "web:fetch" || t == "web:search")
+            && !hits.iter().any(|(t, _)| t == "web:find")
+        {
+            hits.push(("web:find".to_string(), 0.99));
+        }
         Ok(hits)
     }
 }

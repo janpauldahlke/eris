@@ -248,6 +248,13 @@ pub struct WebConfig {
     /// Remove `20_Discourse/web/missions/*` when a chat session ends (`/exit`, web shutdown, SIGINT).
     #[serde(default = "default_web_cleanup_missions_on_chat_exit")]
     pub cleanup_missions_on_chat_exit: bool,
+    /// When true, chat startup runs `browser39 --version` and aborts if missing (see `docs/WEB_BROWSER39.md`).
+    #[serde(default = "default_web_require_browser39")]
+    pub require_browser39: bool,
+}
+
+fn default_web_require_browser39() -> bool {
+    true
 }
 
 fn default_web_cleanup_missions_on_chat_exit() -> bool {
@@ -322,6 +329,7 @@ impl Default for WebConfig {
             consent_max_attempts: default_web_consent_max_attempts(),
             use_legacy_batch: false,
             cleanup_missions_on_chat_exit: default_web_cleanup_missions_on_chat_exit(),
+            require_browser39: default_web_require_browser39(),
         }
     }
 }
@@ -1815,6 +1823,7 @@ mod tests {
         assert_eq!(defaults.thin_page_char_threshold, 300);
         assert_eq!(defaults.consent_max_attempts, 2);
         assert!(defaults.cleanup_missions_on_chat_exit);
+        assert!(defaults.require_browser39);
 
         let parsed: WebConfig = toml::from_str(
             r#"

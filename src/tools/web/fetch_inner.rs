@@ -16,10 +16,9 @@ use crate::tools::web::links::{
     rank_headline_links, rank_internal_links_with_cap, HEADLINE_LINK_CAP, INTERNAL_LINK_CAP,
 };
 use crate::tools::web::artifact::WebOutboundLink;
-use crate::vault_layout;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use uuid::Uuid;
 
 pub(crate) const FALLBACK_WEB_FETCH_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
@@ -65,6 +64,9 @@ pub struct WebFetchArgs {
     pub selector: Option<String>,
     #[serde(default)]
     pub explore_site: bool,
+    /// When true, ledger dedup keys include URL query (used by `web:search`).
+    #[serde(default)]
+    pub ledger_dedup_preserves_query: bool,
 }
 
 /// LLM-facing fetch receipt — field order is intentional (diagnostics before large blobs).
@@ -139,6 +141,7 @@ pub async fn run_vault_web_fetch_simple(
             fetch_budget: None,
             selector: None,
             explore_site: false,
+            ledger_dedup_preserves_query: false,
         },
     )
     .await
@@ -184,6 +187,7 @@ pub async fn run_vault_web_fetch(
             args.fetch_budget,
             &artifact_id,
             &new_mission_id,
+            args.ledger_dedup_preserves_query,
         )? {
             Ok(res) => res,
             Err(hit) => {
@@ -209,7 +213,10 @@ pub async fn run_vault_web_fetch(
         )?;
     }
 
-    ensure_browser39_config(&ctx.vault_root, &ctx.web_fetch_user_agent)?;
+    crate::tools::web::bootstrap::ensure_browser39_vault_config(
+        &ctx.vault_root,
+        &ctx.web_fetch_user_agent,
+    )?;
 
     let url = args.url.clone();
     let selector = args.selector.clone();
@@ -558,10 +565,16 @@ fn cached_receipt(
         fetch_budget_remaining = manifest.budget_remaining();
     }
 
+    let search_query_note = args
+        .mission_note
+        .as_deref()
+        .filter(|n| n.trim().starts_with("web:search:"))
+        .map(|n| format!(" Cached SERP for: {n}."));
     let next_step_hint = format!(
         "Duplicate URL (cache hit) — do not treat as a new fetch. Use web:find on artifact_id `{}` \
-         (chunk_count={chunk_count}, fetch_budget_remaining={fetch_budget_remaining}). {}",
+         (chunk_count={chunk_count}, fetch_budget_remaining={fetch_budget_remaining}).{}{}",
         hit.artifact_id,
+        search_query_note.as_deref().unwrap_or(""),
         vault_mission_hint()
     );
     build_web_fetch_receipt(WebFetchReceiptParts {
@@ -798,59 +811,3 @@ pub(crate) fn sanitize_markdown_noise(markdown: &str) -> String {
     out.join("\n")
 }
 
-fn ensure_browser39_config(vault_root: &Path, user_agent: &str) -> Result<PathBuf> {
-    let path = vault_layout::fcp_dir(vault_root).join("browser39/config.toml");
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(FcpError::Io)?;
-    }
-    let ua = user_agent.trim();
-    let ua = if ua.is_empty() {
-        FALLBACK_WEB_FETCH_UA
-    } else {
-        ua
-    };
-    let body = if path.is_file() {
-        let existing = std::fs::read_to_string(&path).map_err(FcpError::Io)?;
-        merge_user_agent_toml(&existing, ua)
-    } else {
-        format!(
-            "# browser39 config (eris-managed user_agent)\n[user_agent]\nvalue = \"{ua}\"\n"
-        )
-    };
-    std::fs::write(&path, body).map_err(FcpError::Io)?;
-    Ok(path)
-}
-
-fn merge_user_agent_toml(existing: &str, user_agent: &str) -> String {
-    let escaped = user_agent.replace('\\', "\\\\").replace('\"', "\\\"");
-    if existing.contains("[user_agent]") {
-        let mut out = String::new();
-        let mut in_ua = false;
-        let mut replaced = false;
-        for line in existing.lines() {
-            if line.trim() == "[user_agent]" {
-                in_ua = true;
-                out.push_str(line);
-                out.push('\n');
-                continue;
-            }
-            if in_ua && line.trim_start().starts_with("value") {
-                out.push_str(&format!("value = \"{escaped}\"\n"));
-                replaced = true;
-                in_ua = false;
-                continue;
-            }
-            if in_ua && line.starts_with('[') {
-                in_ua = false;
-            }
-            out.push_str(line);
-            out.push('\n');
-        }
-        if !replaced {
-            out.push_str(&format!("\n[user_agent]\nvalue = \"{escaped}\"\n"));
-        }
-        out
-    } else {
-        format!("{existing}\n[user_agent]\nvalue = \"{escaped}\"\n")
-    }
-}
