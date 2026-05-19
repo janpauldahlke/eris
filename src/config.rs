@@ -179,6 +179,10 @@ fn default_vault_watch_paths() -> Vec<String> {
     ]
 }
 
+fn default_web_fetch_chunk_num_ctx_ratio() -> f32 {
+    0.9
+}
+
 fn default_web_fetch_user_agent() -> String {
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
         .to_string()
@@ -528,6 +532,14 @@ pub struct AppConfig {
     pub web_fetch_timeout_secs: u64,
     /// Default max response body size for web fetch and API profiles without their own cap.
     pub web_fetch_max_bytes: usize,
+    /// Optional override for persisted mission vault chunk size (`20_Discourse/web/missions/.../chunks/`).
+    /// When unset, uses [`Self::num_ctx`] × [`Self::web_fetch_chunk_num_ctx_ratio`]. Always capped by that product.
+    /// Does not affect `web:find` snippet caps (those still use [`Self::vault_read_ratio`]).
+    #[serde(default)]
+    pub web_fetch_chunk_chars: Option<usize>,
+    /// Fraction of [`Self::num_ctx`] used as the default and ceiling for [`Self::web_fetch_chunk_chars`] (default `0.9`).
+    #[serde(default = "default_web_fetch_chunk_num_ctx_ratio")]
+    pub web_fetch_chunk_num_ctx_ratio: f32,
     /// `User-Agent` for `web:fetch`; combined with browser-like `Accept` / `Sec-Fetch-*` headers on the HTTP client.
     #[serde(default = "default_web_fetch_user_agent")]
     pub web_fetch_user_agent: String,
@@ -546,7 +558,7 @@ pub struct AppConfig {
     /// Default number of top-ranked article URLs to fetch after the homepage (0 = headlines only).
     #[serde(default = "default_news_today_deep_fetch_max")]
     pub news_today_deep_fetch_max_default: u8,
-    /// Fraction of [`Self::num_ctx`] used to cap vault read and web chunk sizes in tools (not the condensation trigger).
+    /// Fraction of [`Self::num_ctx`] used to cap vault read and `web:find` snippet budgets (not persisted web chunk size).
     pub vault_read_ratio: f32,
     /// Cosine similarity floor for ToolRouter pre-LLM semantic matches (0.0–1.0).
     pub tool_match_threshold: f32,
@@ -1148,6 +1160,8 @@ impl Default for AppConfig {
             idle_heartbeat_enabled: false,
             web_fetch_timeout_secs: 10,
             web_fetch_max_bytes: 20480,
+            web_fetch_chunk_chars: None,
+            web_fetch_chunk_num_ctx_ratio: default_web_fetch_chunk_num_ctx_ratio(),
             web_fetch_user_agent: default_web_fetch_user_agent(),
             web_fetch_default_referer: None,
             news_today_site_base: default_news_today_site_base(),
@@ -1209,6 +1223,18 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
+    /// Persisted `web:fetch` mission chunk size in characters (UTF-8), for vault `chunks/NNN.md` files.
+    ///
+    /// Ceiling is [`Self::num_ctx`] × [`Self::web_fetch_chunk_num_ctx_ratio`] (default 90%). An explicit
+    /// [`Self::web_fetch_chunk_chars`] is clamped to that ceiling. Minimum 512.
+    pub fn resolved_web_fetch_chunk_chars(&self) -> usize {
+        let ratio = self.web_fetch_chunk_num_ctx_ratio.clamp(0.1_f32, 1.0_f32);
+        let cap = ((self.num_ctx.max(1) as f64) * f64::from(ratio)).floor() as usize;
+        let cap = cap.max(512);
+        let requested = self.web_fetch_chunk_chars.unwrap_or(cap);
+        requested.min(cap).max(512)
+    }
+
     /// Cheap-token ceiling for the full chat stack after condensation / hard trim.
     pub fn condensation_stack_est_ceiling_tokens(&self, num_ctx: usize) -> usize {
         let n = num_ctx.max(1);
@@ -1536,6 +1562,10 @@ mod tests {
             default_web_fetch_user_agent()
         );
         assert_eq!(parsed_config.vault_read_ratio, 0.25);
+        assert_eq!(
+            parsed_config.resolved_web_fetch_chunk_chars(),
+            (32_768_f32 * 0.9_f32).floor() as usize
+        );
         assert_eq!(parsed_config.tool_match_threshold, 0.50);
         assert_eq!(parsed_config.ollama_daemon.command, "ollama");
         assert_eq!(parsed_config.ollama_daemon.args, vec!["serve"]);

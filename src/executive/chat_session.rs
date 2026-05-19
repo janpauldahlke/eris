@@ -312,11 +312,11 @@ pub async fn start_chat_session(
     let mut gatekeeper = Gatekeeper::new();
     let (alarm_reschedule_tx, alarm_reschedule_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
     let read_limit = (config.num_ctx as f32 * config.vault_read_ratio) as usize;
-    let web_chunk_chars = read_limit.max(512);
+    let web_fetch_chunk_chars = config.resolved_web_fetch_chunk_chars();
     let effective_web_fetch_max_bytes = config
         .web_fetch_max_bytes
-        .min(web_chunk_chars.saturating_mul(6))
-        .max(web_chunk_chars);
+        .min(web_fetch_chunk_chars.saturating_mul(6))
+        .max(web_fetch_chunk_chars);
 
     if config.moltbook.enabled {
         match crate::tools::moltbook::MoltbookClient::unauthenticated(
@@ -520,8 +520,8 @@ pub async fn start_chat_session(
     }
     gatekeeper.register(Arc::new(crate::tools::web::WebFindTool {
         ctx: web_ctx.clone(),
-        max_snippet_chars: (web_chunk_chars / 3).clamp(300, 900),
-        max_total_chars: (web_chunk_chars / 2).clamp(1000, 2500),
+        max_snippet_chars: (read_limit.max(512) / 3).clamp(300, 900),
+        max_total_chars: (read_limit.max(512) / 2).clamp(1000, 2500),
     }));
     if config.news_today_enabled {
         gatekeeper.register(Arc::new(crate::tools::news::NewsTodayTool::new(

@@ -54,10 +54,12 @@ path = "/"
 
 4. Re-run `web:fetch` — host session picks up preloaded cookies.
 
-### Config (`[web]`)
+### Config (top-level + `[web]`)
 
 | Key | Default | Notes |
 |-----|---------|--------|
+| `web_fetch_chunk_num_ctx_ratio` | `0.9` | Persisted mission chunk size = `num_ctx` × ratio (ceiling); optional `web_fetch_chunk_chars` override |
+| `web_fetch_max_bytes` | `20480` in code default | Total markdown retained per fetch (before chunk split); raise in vault TOML for long articles |
 | `consent_helper_enabled` | `true` | Thin-page accept attempts |
 | `persist_browser39_sessions` | `false` | Disk cookies under `sessions/hosts/` (auto-on when consent enabled) |
 | `thin_page_char_threshold` | `300` | Below this → try consent |

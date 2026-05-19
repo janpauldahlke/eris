@@ -20,6 +20,8 @@ pub struct WebToolContext {
     pub web_fetch_user_agent: String,
     pub num_ctx: usize,
     pub vault_read_ratio: f32,
+    /// Resolved persisted chunk size (see [`AppConfig::resolved_web_fetch_chunk_chars`]).
+    pub web_fetch_chunk_chars: usize,
     pub web_fetch_max_bytes: usize,
     pub web_allowlist_override: Option<PathBuf>,
     pub ledger: Arc<Mutex<WebSessionLedger>>,
@@ -40,6 +42,7 @@ impl WebToolContext {
             web_fetch_user_agent: config.web_fetch_user_agent.clone(),
             num_ctx: config.num_ctx,
             vault_read_ratio: config.vault_read_ratio,
+            web_fetch_chunk_chars: config.resolved_web_fetch_chunk_chars(),
             web_fetch_max_bytes: effective_web_fetch_max_bytes,
             web_allowlist_override: config.web_allowlist_path.clone(),
             ledger,

@@ -63,6 +63,7 @@ mod tests {
             web_fetch_user_agent: "test".into(),
             num_ctx: 8192,
             vault_read_ratio: 0.5,
+            web_fetch_chunk_chars: 7_372,
             web_fetch_max_bytes: 20480,
             web_allowlist_override: None,
             ledger: Arc::new(Mutex::new(WebSessionLedger::new())),

@@ -172,6 +172,7 @@ pub async fn run_vault_web_fetch(
     let budget = WebBudget::from_parts(
         ctx.num_ctx,
         ctx.vault_read_ratio,
+        ctx.web_fetch_chunk_chars,
         ctx.web_fetch_max_bytes,
     );
 
