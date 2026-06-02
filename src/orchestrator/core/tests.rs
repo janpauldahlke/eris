@@ -111,6 +111,7 @@ fn test_orchestrator_initialization() {
         id_rx,
         Arc::new(AtomicBool::new(false)),
         None,
+        None,
     );
 
     assert_eq!(orchestrator.state, AgentState::Idle);
@@ -156,6 +157,7 @@ fn setup_orchestrator_with_engine(engine: MockEngine) -> Orchestrator<MockEngine
         Arc::new(AppConfig::default()),
         id_rx,
         Arc::new(AtomicBool::new(false)),
+        None,
         None,
     )
 }
@@ -602,6 +604,7 @@ async fn test_async_guillotine_interrupts_generation() {
         id_rx,
         Arc::new(AtomicBool::new(false)),
         None,
+        None,
     );
 
     orchestrator.state = AgentState::Chat;
@@ -736,6 +739,7 @@ async fn test_duplicate_only_batch_halts_without_extra_generation() {
         id_rx,
         Arc::new(AtomicBool::new(false)),
         None,
+        None,
     );
     orchestrator.state = AgentState::Chat;
     orchestrator.chat_stack.push(Message {
@@ -841,6 +845,7 @@ async fn orchestrator_with_presentation(
         Arc::new(AppConfig::default()),
         id_rx,
         Arc::new(AtomicBool::new(false)),
+        None,
         None,
     )
 }

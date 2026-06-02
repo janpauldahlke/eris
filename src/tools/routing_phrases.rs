@@ -44,13 +44,16 @@ pub fn fallback_triggers(tool_name: &str) -> &'static str {
             "finishing tasks, mark done, complete task, check off, task finished, I did it"
         }
         "web:fetch" => {
-            "fetching URLs, web search, look up online, check website, browse internet, search the web, look this up, open this link"
+            "fetching URLs, open this link, check this website, browse this page, read this article, get content from URL"
+        }
+        "web:search" => {
+            "search the web, google this, look up online, find on the internet, web search query, duckduckgo, search for bundesliga, latest news search, who won yesterday"
         }
         "news:today" => {
             "todays headlines, top stories, morning briefing, news digest, breaking news, front page news, what is in the news today, latest headlines from homepage, politics news science business economics technology sport world uk health section"
         }
-        "web:artifact_query" => {
-            "query fetched web artifact by artifact id, search fetched page snippets, retrieve specific sections from buffered webpage"
+        "web:find" => {
+            "query fetched web artifact by artifact id, search fetched page snippets, web find mission chunks"
         }
         "system:health" => {
             "system status, Ollama endpoint, LLM model, CPU usage, RAM memory usage, GPU usage NVIDIA nvidia-smi, disk space, health check, diagnostics, how is the system, performance, resources"

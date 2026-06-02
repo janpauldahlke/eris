@@ -1,4 +1,4 @@
-//! Shared JSON shape for staged `web:fetch` payloads (`web:artifact_query` must deserialize the same).
+//! Shared JSON shapes for web outbound links in mission `links.json`.
 
 use serde::{Deserialize, Serialize};
 

@@ -232,8 +232,15 @@ impl ContextAssembler {
             .await?;
         let identity_block = self.identity_plus_staged_sidebar(identity_content, ephemeral);
 
+        // Schema-fault recovery runs in `Recover`, but targeted tools (e.g. web:search) are
+        // authorized in `Chat`/`Idle` only — use Chat's roster when filtering by name.
+        let filter_state = if *state == AgentState::Recover {
+            &AgentState::Chat
+        } else {
+            state
+        };
         let allowed_tools = gatekeeper
-            .get_allowed_tools(state)
+            .get_allowed_tools(filter_state)
             .into_iter()
             .filter(|tool| {
                 tool.get("function")

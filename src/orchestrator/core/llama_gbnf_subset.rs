@@ -98,6 +98,17 @@ pub(crate) fn slim_offered_tool_names(
         }
     }
 
+    let needs_web_find = offered.iter().any(|n| n == "web:fetch" || n == "web:search");
+    if needs_web_find {
+        let find_allowed = gatekeeper
+            .allowed_tool_names_with_prefix(state, "web:")
+            .into_iter()
+            .any(|n| n == "web:find");
+        if find_allowed && !offered.iter().any(|n| n == "web:find") {
+            offered.push("web:find".to_string());
+        }
+    }
+
     offered
 }
 
@@ -202,5 +213,41 @@ mod tests {
         let pre = vec!["system:health".to_string()];
         let out = slim_offered_tool_names(&pre, 10, true, &gk, &AgentState::Chat);
         assert_eq!(out, vec!["system:health".to_string()]);
+    }
+
+    #[test]
+    fn slim_offered_pairs_web_find_with_fetch() {
+        use crate::tools::web::{WebFetchTool, WebFindTool, WebSearchTool};
+        use crate::tools::web::context::{WebFetcherKind, WebToolContext};
+        use crate::tools::web::WebSessionLedger;
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        let mut gk = Gatekeeper::new();
+        let ctx = WebToolContext {
+            vault_root: std::env::temp_dir(),
+            web: crate::config::WebConfig::default(),
+            web_fetch_user_agent: "test".into(),
+            num_ctx: 8192,
+            vault_read_ratio: 0.5,
+            web_fetch_chunk_chars: 7_372,
+            web_fetch_max_bytes: 20480,
+            web_allowlist_override: None,
+            ledger: Arc::new(Mutex::new(WebSessionLedger::new())),
+            fetcher: WebFetcherKind::Browser39 {
+                binary: "browser39".into(),
+            },
+        };
+        gk.register(Arc::new(WebFetchTool { ctx: ctx.clone() }));
+        gk.register(Arc::new(WebFindTool {
+            ctx: ctx.clone(),
+            max_snippet_chars: 600,
+            max_total_chars: 2000,
+        }));
+        gk.register(Arc::new(WebSearchTool { ctx }));
+        let pre = vec!["web:fetch".to_string()];
+        let out = slim_offered_tool_names(&pre, 10, false, &gk, &AgentState::Chat);
+        assert!(out.contains(&"web:fetch".to_string()));
+        assert!(out.contains(&"web:find".to_string()));
     }
 }

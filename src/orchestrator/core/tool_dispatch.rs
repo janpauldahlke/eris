@@ -3,8 +3,10 @@ use crate::executive::error::{FcpError, Result};
 use crate::orchestrator::context::resolved_tool_recovery::SYSTEM_RECOVERY_PREFIX;
 use crate::orchestrator::llm_support::json_envelope::natural_language_schema_description;
 use crate::orchestrator::llm_support::post_tool_guidance::{
-    POST_TOOL_USER_REPLY_GUIDANCE, recover_override_message_for_tool_failure,
+    POST_TOOL_USER_REPLY_GUIDANCE, ensure_web_find_paired_with_fetch_tools,
+    recover_override_message_for_tool_failure,
 };
+use crate::tools::web::ledger::policy::WEB_FIND_BEFORE_REFETCH;
 use crate::orchestrator::r#loop::recovery_policy::{ToolFailureAction, classify_tool_failure};
 use crate::orchestrator::r#loop::tool_batch::ToolBatchDecision;
 use crate::orchestrator::state::{AgentState, ToolCall, ToolIntentStatus, ToolIntentTicket};
@@ -80,6 +82,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         let mut executed_success_count = 0usize;
         let mut suppressed_duplicate_count = 0usize;
         let mut recoverable_fail_count = 0usize;
+        let mut recoverable_failed_tools: Vec<String> = Vec::new();
         let mut fatal_fail_count = 0usize;
         let mut suppressed_repeat_failure_streak = 0usize;
 
@@ -150,6 +153,38 @@ impl<E: LlmEngine> Orchestrator<E> {
                 }
                 continue;
             }
+            if matches!(
+                tool_name.as_str(),
+                "web:fetch" | "web:search" | "news:today"
+            ) {
+                let cap = self.config.web.max_web_tool_calls_per_turn;
+                if self.web_tool_calls_this_turn >= cap {
+                    suppressed_duplicate_count += 1;
+                    let msg = format!(
+                        "[SYSTEM] Web tool cap reached ({cap}/turn). Answer from existing artifacts via web:find or ask the user to continue."
+                    );
+                    self.chat_stack.push(crate::engine::Message {
+                        role: "system".to_string(),
+                        content: msg.clone(),
+                    });
+                    if let Some(tx) = &self.presentation_tx {
+                        let _ = tx
+                            .send(SessionEvent::SystemError(format!(
+                                "[tool] {tool_name} · WEB_TOOL_TURN_CAP"
+                            )))
+                            .await;
+                    }
+                    tracing::info!(
+                        tool = %tool_name,
+                        intent_id = %intent_id,
+                        cap,
+                        web_tool_calls_this_turn = self.web_tool_calls_this_turn,
+                        event = "orchestrator.tools.web_turn_cap_suppressed",
+                        "Web tool call suppressed (per-turn cap); not leaving a pending intent"
+                    );
+                    continue;
+                }
+            }
             let prev_attempts = execution_ledger
                 .get(&intent_id)
                 .map(|t| t.attempt_count)
@@ -170,16 +205,29 @@ impl<E: LlmEngine> Orchestrator<E> {
                 intent_id = %intent_id,
                 "Intent ticket set to Pending"
             );
+            if matches!(
+                tool_name.as_str(),
+                "web:fetch" | "web:search" | "news:today"
+            ) {
+                self.web_tool_calls_this_turn = self.web_tool_calls_this_turn.saturating_add(1);
+            }
+            let gatekeeper_state = crate::tools::gatekeeper::Gatekeeper::dispatch_authorization_state(
+                &current_state,
+                &tool_name,
+                self.force_full_tool_schemas_in_llm_view,
+            );
             tracing::info!(
                 tool = %tool_name,
                 args = %args,
                 state = ?current_state,
+                gatekeeper_state = ?gatekeeper_state,
+                schema_retry = self.force_full_tool_schemas_in_llm_view,
                 "Dispatching tool"
             );
             let tool_started = Instant::now();
             let result = self
                 .gatekeeper
-                .execute_tool(&current_state, &tool_name, args.clone())
+                .execute_tool(&gatekeeper_state, &tool_name, args.clone())
                 .await;
             *tool_ms_acc = (*tool_ms_acc).saturating_add(tool_started.elapsed().as_millis() as u64);
             match result {
@@ -231,6 +279,62 @@ impl<E: LlmEngine> Orchestrator<E> {
                         role: "system".to_string(),
                         content: msg.clone(),
                     });
+                    if tool_name == "web:find" {
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&result) {
+                            if let Some(summary) =
+                                v.get("receipt_summary").and_then(|x| x.as_str())
+                            {
+                                let mut anchor =
+                                    format!("[fcp:web:find_anchor] {summary}");
+                                if let Some(url) =
+                                    v.get("best_match_url").and_then(|x| x.as_str())
+                                {
+                                    anchor.push_str(&format!(
+                                        " Pass this URL to web:fetch when deepening: {url}"
+                                    ));
+                                }
+                                self.chat_stack.push(crate::engine::Message {
+                                    role: "system".to_string(),
+                                    content: anchor,
+                                });
+                            }
+                        }
+                    }
+                    if tool_name == "web:fetch" || tool_name == "web:search" {
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&result) {
+                            if let Some(artifact_id) =
+                                v.get("artifact_id").and_then(|x| x.as_str())
+                            {
+                                let cached = v
+                                    .get("cached")
+                                    .and_then(|x| x.as_bool())
+                                    .unwrap_or(false);
+                                let hint = v
+                                    .get("next_step_hint")
+                                    .and_then(|x| x.as_str())
+                                    .unwrap_or("");
+                                let mut anchor = format!(
+                                    "[fcp:web:fetch_anchor] artifact_id={artifact_id}"
+                                );
+                                if !hint.is_empty() {
+                                    anchor.push_str(&format!(" {hint}"));
+                                }
+                                if cached {
+                                    anchor.push_str(
+                                        " Cache hit — use web:find on this artifact_id; do not assume a new query was fetched.",
+                                    );
+                                } else {
+                                    anchor.push_str(
+                                        " Use web:find with artifact_id and query to read the vault body before refetching this host.",
+                                    );
+                                }
+                                self.chat_stack.push(crate::engine::Message {
+                                    role: "system".to_string(),
+                                    content: anchor,
+                                });
+                            }
+                        }
+                    }
                     if let Some(tx) = &self.presentation_tx {
                         let telemetry = format!("[tool] {} · success", tool_name);
                         let _ = tx.send(SessionEvent::SystemError(telemetry)).await;
@@ -280,6 +384,12 @@ impl<E: LlmEngine> Orchestrator<E> {
                         }
                         ToolFailureAction::Recoverable => {
                             recoverable_fail_count += 1;
+                            recoverable_failed_tools.push(tool_name.clone());
+                            if let FcpError::PolicyViolation { code, .. } = &err {
+                                if code == WEB_FIND_BEFORE_REFETCH {
+                                    targeted_tools.insert("web:find".to_string());
+                                }
+                            }
                             if let Some(ticket) = execution_ledger.get_mut(&intent_id) {
                                 ticket.status = ToolIntentStatus::FailedRecoverable;
                             }
@@ -374,9 +484,10 @@ impl<E: LlmEngine> Orchestrator<E> {
                 suppressed_repeat_failure_streak,
                 "All tool intents in batch were suppressed (duplicates or repeat-failure streak); forcing user-facing reply via recover"
             );
-            let msg = "[SYSTEM] Tool batch suppressed — all calls in this batch were skipped (duplicates or repeated failures). Do not repeat those tool_calls. Reply with status Idle, a non-empty message_to_user, and tool_calls [].".to_string();
-            // IMPORTANT: route through Recover so retry is bounded by `max_recovery_attempts`.
-            return Ok(ToolBatchDecision::Recover { message: msg });
+            return Ok(ToolBatchDecision::SuppressOnlyIdlePass {
+                message: crate::orchestrator::llm_support::post_tool_guidance::DUPLICATE_SUPPRESS_IDLE_GUIDANCE
+                    .to_string(),
+            });
         }
 
         if targeted_recovery_requested {
@@ -417,6 +528,28 @@ impl<E: LlmEngine> Orchestrator<E> {
         }
 
         if let Some(reason) = recoverable_msg {
+            for tool_name in recoverable_failed_tools {
+                targeted_tools.insert(tool_name);
+            }
+            let allowed: HashSet<String> = self
+                .gatekeeper
+                .get_allowed_tools(&AgentState::Chat)
+                .into_iter()
+                .filter_map(|t| {
+                    t.get("function")
+                        .and_then(|f| f.get("name"))
+                        .and_then(|n| n.as_str())
+                        .map(|s| s.to_string())
+                })
+                .collect();
+            ensure_web_find_paired_with_fetch_tools(targeted_tools, &allowed);
+            if !targeted_tools.is_empty() {
+                self.force_full_tool_schemas_in_llm_view = true;
+                tracing::info!(
+                    targeted_tools = ?targeted_tools,
+                    "Recoverable tool failure: targeted full schemas for retry"
+                );
+            }
             let msg = recover_override_message_for_tool_failure(&reason);
             return Ok(ToolBatchDecision::Recover { message: msg });
         }
@@ -510,14 +643,14 @@ mod repeat_failure_streak_tests {
     use crate::memory::ephemeral::EphemeralMemory;
     use crate::orchestrator::context::ContextViewSettings;
     use crate::orchestrator::r#loop::tool_batch::ToolBatchDecision;
-    use crate::orchestrator::state::{AgentState, ToolCall};
+    use crate::orchestrator::state::{AgentState, ToolCall, ToolIntentStatus};
     use crate::tools::Gatekeeper;
     use crate::tools::traits::Tool;
     use async_trait::async_trait;
     use schemars::JsonSchema;
     use serde::Deserialize;
     use serde_json::json;
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
     use std::path::Path;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -611,7 +744,100 @@ mod repeat_failure_streak_tests {
             id_rx,
             Arc::new(AtomicBool::new(false)),
             None,
+            None,
         )
+    }
+
+    struct OkWebFetchTool;
+
+    #[async_trait]
+    impl Tool for OkWebFetchTool {
+        fn name(&self) -> &'static str {
+            "web:fetch"
+        }
+
+        fn description(&self) -> &'static str {
+            "test web fetch"
+        }
+
+        fn parameters_schema(&self) -> schemars::schema::RootSchema {
+            schemars::schema_for!(EmptyArgs)
+        }
+
+        async fn execute(&self, _args: serde_json::Value) -> Result<String> {
+            Ok(r#"{"artifact_id":"a","mission_id":"m"}"#.into())
+        }
+    }
+
+    #[tokio::test]
+    async fn web_turn_cap_suppressed_does_not_leave_pending_intent() {
+        let mut gatekeeper = Gatekeeper::new();
+        gatekeeper.register(Arc::new(OkWebFetchTool));
+        let ephemeral = Arc::new(EphemeralMemory::new("ws".into()));
+        let vault_root = Path::new("/tmp/vault");
+        let (tx, rx) = tokio::sync::watch::channel(());
+        Box::leak(Box::new(tx));
+        let (id_tx, id_rx) = tokio::sync::watch::channel(Arc::from("id"));
+        Box::leak(Box::new(id_tx));
+        let mut config = AppConfig::default();
+        config.web.max_web_tool_calls_per_turn = 2;
+        let mut orch = Orchestrator::new(
+            StubEngine,
+            gatekeeper,
+            ephemeral,
+            vault_root,
+            "ws",
+            3,
+            5,
+            0.8,
+            4096,
+            3,
+            6000,
+            false,
+            0,
+            rx,
+            None,
+            None,
+            None,
+            ContextViewSettings::default(),
+            Arc::new(config),
+            id_rx,
+            Arc::new(AtomicBool::new(false)),
+            None,
+            None,
+        );
+        orch.state = AgentState::Chat;
+        orch.web_tool_calls_this_turn = 2;
+        let mut ledger = HashMap::new();
+        let mut schema = HashSet::new();
+        let mut targeted = HashSet::new();
+        let mut web = false;
+        let mut tool_ms = 0u64;
+        let decision = orch
+            .execute_tool_batch(
+                vec![ToolCall {
+                    name: "web:fetch".into(),
+                    args: json!({"url": "https://example.com/"}),
+                    id: None,
+                }],
+                true,
+                &mut ledger,
+                &mut schema,
+                &mut targeted,
+                &mut web,
+                &mut tool_ms,
+                1u64,
+                false,
+            )
+            .await
+            .expect("batch must not fatal on cap");
+        assert!(matches!(decision, ToolBatchDecision::SuppressOnlyIdlePass { .. }));
+        assert!(
+            !ledger
+                .values()
+                .any(|t| matches!(t.status, ToolIntentStatus::Pending)),
+            "cap suppression must not leave Pending tickets"
+        );
     }
 
     #[tokio::test]
@@ -752,6 +978,7 @@ mod targeted_schema_retry_phase5_tests {
             Arc::new(cfg),
             id_rx,
             Arc::new(AtomicBool::new(false)),
+            None,
             None,
         )
     }

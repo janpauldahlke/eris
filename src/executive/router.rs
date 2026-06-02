@@ -3,10 +3,56 @@ use crate::executive::chat_session::StartedChatSession;
 use crate::executive::cli::{Cli, Commands};
 use crate::executive::error::{FcpError, Result};
 use crate::executive::setup_welder::IgnitionWorkspaceHint;
+use crate::tools::web::cache::WebMissionStore;
+use crate::vault_layout;
+use std::path::Path;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
+async fn cleanup_web_missions_on_chat_exit(workspace_root: &Path, config: &AppConfig) {
+    if !config.web.cleanup_missions_on_chat_exit {
+        tracing::debug!(
+            event = "web.missions.cleanup_skipped",
+            "Leaving 20_Discourse/web/missions in place (cleanup_missions_on_chat_exit = false)"
+        );
+        return;
+    }
+    let root = workspace_root.to_path_buf();
+    let removed = match tokio::task::spawn_blocking(move || {
+        WebMissionStore::new(&root).purge_all_missions()
+    })
+    .await
+    {
+        Ok(Ok(n)) => n,
+        Ok(Err(e)) => {
+            tracing::warn!(
+                event = "web.missions.cleanup_failed",
+                error = %e,
+                "Failed to purge web mission cache on chat exit"
+            );
+            return;
+        }
+        Err(e) => {
+            tracing::warn!(
+                event = "web.missions.cleanup_join_failed",
+                error = %e,
+                "spawn_blocking join failed while purging web missions"
+            );
+            return;
+        }
+    };
+    if removed > 0 {
+        tracing::info!(
+            event = "web.missions.cleanup_ok",
+            removed_missions = removed,
+            path = %vault_layout::web_missions_dir(workspace_root).display(),
+            "Purged web mission cache on chat exit"
+        );
+    }
+}
+
 async fn log_peripheral_shutdown(session: &mut StartedChatSession, config: &AppConfig) {
+    cleanup_web_missions_on_chat_exit(&config.active_vault(), config).await;
     let eris_owned_ollama = session.peripheral_lifecycle.started_ollama();
     tracing::info!("Tearing down peripheral daemons started by this session…");
     let stopped = session.peripheral_lifecycle.shutdown_async().await;
@@ -133,10 +179,10 @@ pub async fn execute_command(
                         let _ = mux_jh.await;
                         match disc_jh.await {
                             Ok(Ok(())) => {}
-                            Ok(Err(e)) => {
+                            Ok(Err(err)) => {
                                 tracing::error!(
                                     event = "fcp.discord.sidecar_failed",
-                                    error = %e,
+                                    error = %err,
                                     "Discord sidecar exited with error"
                                 );
                             }
@@ -220,10 +266,10 @@ pub async fn execute_command(
                         let _ = mux_jh.await;
                         match disc_jh.await {
                             Ok(Ok(())) => {}
-                            Ok(Err(e)) => {
+                            Ok(Err(err)) => {
                                 tracing::error!(
                                     event = "fcp.discord.sidecar_failed",
-                                    error = %e,
+                                    error = %err,
                                     "Discord sidecar exited with error"
                                 );
                             }
@@ -633,6 +679,7 @@ mod tests {
             Arc::new(crate::config::AppConfig::default()),
             id_rx,
             Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            None,
             None,
         );
 

@@ -179,3 +179,7 @@
 14/05/2026
 
 - [x] testing (LLAMA_CPP): and handling improving codensation and errors, checking on logs
+
+17/05/2026
+
+- [x] feature new web fetch and search flow: using browser39

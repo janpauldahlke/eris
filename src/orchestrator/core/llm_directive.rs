@@ -1,7 +1,7 @@
 use crate::engine::LlmEngine;
 use crate::orchestrator::llm_support::json_envelope::{
     llm_json_parse_recovery_message_with_excerpt, parse_llm_response_protocol,
-    strip_leading_redacted_thinking_block,
+    strip_leading_redacted_thinking_block, try_salvage_idle_message_after_tools,
 };
 use crate::orchestrator::state::{AgentState, LlmResponse, LoopAction, LoopDirective};
 
@@ -50,6 +50,17 @@ impl<E: LlmEngine> Orchestrator<E> {
                             return self.directive_from_parsed(parsed);
                         }
                     }
+                }
+                if let Some(msg) =
+                    try_salvage_idle_message_after_tools(response_json, self.tool_rounds)
+                {
+                    tracing::info!(
+                        event = "protocol_json_salvage_idle",
+                        message_len = msg.len(),
+                        tool_rounds = self.tool_rounds,
+                        "Salvaged Idle message_to_user from malformed protocol JSON after successful tools"
+                    );
+                    return LoopDirective::HaltAndAwaitInput(Some(msg));
                 }
                 self.protocol_parse_failure_directive(&e, response_json)
             }
@@ -214,6 +225,7 @@ mod phase5_recovery_tests {
             Arc::new(config),
             id_rx,
             Arc::new(AtomicBool::new(false)),
+            None,
             None,
         )
     }

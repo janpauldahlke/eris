@@ -59,6 +59,154 @@ pub fn raw_appears_to_start_without_json_object(raw: &str) -> bool {
     !t.starts_with('{')
 }
 
+/// Byte length of a JSON string token starting at `s` (opening `"` included), or `None` if unterminated.
+fn json_string_token_len(s: &str) -> Option<usize> {
+    if !s.starts_with('"') {
+        return None;
+    }
+    let bytes = s.as_bytes();
+    let mut i = 1usize;
+    let mut escape = false;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if escape {
+            escape = false;
+            i += 1;
+            continue;
+        }
+        if b == b'\\' {
+            escape = true;
+            i += 1;
+            continue;
+        }
+        if b == b'"' {
+            return Some(i + 1);
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Best-effort extraction of a JSON string field value after `"key":` in malformed output.
+pub fn extract_json_string_field_best_effort(raw: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{key}\"");
+    let idx = raw.find(&needle)?;
+    let mut after = raw[idx + needle.len()..].trim_start();
+    after = after.strip_prefix(':')?.trim_start();
+    let len = json_string_token_len(after)?;
+    serde_json::from_str(&after[..len]).ok()
+}
+
+/// Best-effort `message_to_user` when serde cannot parse the full protocol object.
+pub fn extract_message_to_user_best_effort(raw: &str) -> Option<String> {
+    extract_json_string_field_best_effort(raw, "message_to_user")
+}
+
+/// After at least one successful tool this turn, accept salvage when Idle was intended.
+#[must_use]
+pub fn raw_looks_like_idle_reply_intent(raw: &str) -> bool {
+    let collapsed: String = raw
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let lower = collapsed.to_ascii_lowercase();
+    lower.contains("\"status\":\"idle\"")
+        || lower.contains("\"status\":\"reflect\"")
+        || lower.contains("\"message_to_user\":\"")
+}
+
+/// Best-effort `message_to_user` salvage after tools ran (LlamaCpp trailing-brace faults).
+#[must_use]
+pub fn try_salvage_idle_message_after_tools(raw: &str, tool_rounds: u8) -> Option<String> {
+    if tool_rounds == 0 {
+        return None;
+    }
+    if !raw_looks_like_idle_reply_intent(raw) {
+        return None;
+    }
+    extract_message_to_user_best_effort(raw).filter(|m| !m.trim().is_empty())
+}
+
+/// Best-effort extraction of `tool_calls[].name` values from malformed model output.
+///
+/// Used on Recover passes so the orchestrator can inject full JSON schemas for the tool(s) the
+/// model was attempting — instead of slim phrase-map mode with a fresh semantic-router subset.
+pub fn extract_tool_call_names_best_effort(raw: &str) -> Vec<String> {
+    let mut names = Vec::<String>::new();
+    let mut rest = raw;
+    while let Some(i) = rest.find("\"name\"") {
+        let mut after = rest[i + 6..].trim_start();
+        if let Some(stripped) = after.strip_prefix(':') {
+            after = stripped.trim_start();
+        }
+        let Some(inner) = after.strip_prefix('"') else {
+            rest = &rest[i + 6..];
+            continue;
+        };
+        let Some(end) = inner.find('"') else {
+            rest = &rest[i + 6..];
+            continue;
+        };
+        let name = &inner[..end];
+        if name.contains(':') && !name.contains(char::is_whitespace) {
+            if !names.iter().any(|n| n == name) {
+                names.push(name.to_string());
+            }
+        }
+        rest = &rest[i + 6..];
+    }
+    names
+}
+
+/// Infer web-related tool names from the latest user turn (Recover fallback when JSON parse fails).
+pub fn infer_tools_from_user_message(user: &str) -> Vec<String> {
+    let lower = user.to_lowercase();
+    let mut out = Vec::<String>::new();
+    let wants_find = lower.contains("web:find")
+        || lower.contains("find on")
+        || lower.contains("search within")
+        || lower.contains("search the fetched")
+        || lower.contains("search for")
+        || lower.contains("match_count")
+        || lower.contains("best_match_url")
+        || lower.contains("bullet points from find");
+    let wants_fetch = lower.contains("http://")
+        || lower.contains("https://")
+        || lower.contains("web:fetch")
+        || lower.contains("fetch http")
+        || lower.contains("fetch https")
+        || lower.contains("fetch www")
+        || lower.contains("fetch that")
+        || lower.contains("fetch the")
+        || lower.contains("receipt_summary");
+    let wants_news =
+        lower.contains("news:today") || lower.contains("headline_count") || lower.contains("deep_fetch");
+    if wants_find {
+        out.push("web:find".into());
+    }
+    if wants_fetch {
+        out.push("web:fetch".into());
+    }
+    if wants_news {
+        out.push("news:today".into());
+    }
+    out
+}
+
+/// Last successful tool from the chat stack (system tool-success lines).
+pub fn last_tool_name_from_chat_stack(stack: &[crate::engine::Message]) -> Option<String> {
+    use crate::orchestrator::context::try_parse_tool_success_line;
+    for msg in stack.iter().rev() {
+        if msg.role == "system"
+            && let Some(ts) = try_parse_tool_success_line(&msg.content)
+            && ts.tool_name.contains(':')
+        {
+            return Some(ts.tool_name.to_string());
+        }
+    }
+    None
+}
+
 /// Parse the leading JSON object as [`LlmResponse`] after tool-call normalization (same contract as the orchestrator directive path).
 pub fn parse_llm_response_protocol(raw: &str) -> Result<LlmResponse, serde_json::Error> {
     let json_str = split_leading_json_object(raw).0;
@@ -402,6 +550,39 @@ mod tests {
     #[test]
     fn no_violation_when_no_json_brace() {
         assert!(!trailing_content_after_valid_llm_json("plain text only"));
+    }
+
+    #[test]
+    fn salvage_idle_message_when_tool_calls_truncated() {
+        let raw = r#"{"thought":"t","status":"Idle","message_to_user":"Answer here.","tool_calls":[{"name":"web:find","args":{"query":"x"}"#;
+        assert!(parse_llm_response_protocol(raw).is_err());
+        assert!(raw_looks_like_idle_reply_intent(raw));
+        assert_eq!(
+            extract_message_to_user_best_effort(raw).as_deref(),
+            Some("Answer here.")
+        );
+        let msg = try_salvage_idle_message_after_tools(raw, 2).expect("salvage");
+        assert_eq!(msg, "Answer here.");
+    }
+
+    #[test]
+    fn salvage_skipped_when_no_tools_ran() {
+        let raw = r#"{"thought":"t","status":"Idle","message_to_user":"hi","tool_calls":[]}"#;
+        assert!(try_salvage_idle_message_after_tools(raw, 0).is_none());
+    }
+
+    #[test]
+    fn extract_tool_call_names_from_broken_tool_calls_array() {
+        let raw = r#"{"thought":"t","status":"Task","tool_calls":[{"name":"web:fetch","args":{"url":"https://x"}]"#;
+        let names = extract_tool_call_names_best_effort(raw);
+        assert_eq!(names, vec!["web:fetch".to_string()]);
+    }
+
+    #[test]
+    fn extract_tool_call_names_dedupes_and_skips_non_tools() {
+        let raw = r#"{"name":"web:search","tool_calls":[{"name":"web:search","args":{}},{"name":"web:search","args":{}}]}"#;
+        let names = extract_tool_call_names_best_effort(raw);
+        assert_eq!(names, vec!["web:search".to_string()]);
     }
 
     #[test]

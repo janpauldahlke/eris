@@ -42,3 +42,26 @@ pub fn telemetry_logs_dir(workspace_root: &Path) -> PathBuf {
 pub fn ephemeral_bin(workspace_root: &Path, workspace: &str) -> PathBuf {
     fcp_dir(workspace_root).join(format!("ephemeral_{}.bin", workspace))
 }
+
+/// Web mission cache root (`20_Discourse/web/missions/{mission_id}/`). Not Qdrant-indexed.
+pub fn web_missions_dir(workspace_root: &Path) -> PathBuf {
+    workspace_root.join("20_Discourse/web/missions")
+}
+
+pub fn web_mission_dir(workspace_root: &Path, mission_id: &str) -> PathBuf {
+    web_missions_dir(workspace_root).join(mission_id)
+}
+
+pub fn web_mission_manifest(workspace_root: &Path, mission_id: &str) -> PathBuf {
+    web_mission_dir(workspace_root, mission_id).join("manifest.json")
+}
+
+pub fn web_mission_prose(workspace_root: &Path, mission_id: &str) -> PathBuf {
+    web_mission_dir(workspace_root, mission_id).join("mission.md")
+}
+
+pub fn web_page_dir(workspace_root: &Path, mission_id: &str, artifact_id: &str) -> PathBuf {
+    web_mission_dir(workspace_root, mission_id)
+        .join("pages")
+        .join(artifact_id)
+}

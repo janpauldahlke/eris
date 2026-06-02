@@ -8,6 +8,8 @@ pub const AGENDA_SELF_LOOP_RAW: &str =
     include_str!("defaults/agenda-self-loop.md");
 pub const VAULT_ORIENTATION_RAW: &str =
     include_str!("defaults/vault-orientation.md");
+pub const WEB_FETCH_WORKFLOW_RAW: &str =
+    include_str!("defaults/web-fetch-workflow.md");
 
 #[derive(Debug, Clone)]
 pub struct EmbeddedSkill {
@@ -15,7 +17,7 @@ pub struct EmbeddedSkill {
     pub raw: &'static str,
 }
 
-pub fn embedded_defaults() -> [EmbeddedSkill; 5] {
+pub fn embedded_defaults() -> [EmbeddedSkill; 6] {
     [
         EmbeddedSkill {
             file_name: "mail-recipient-verify.md",
@@ -36,6 +38,10 @@ pub fn embedded_defaults() -> [EmbeddedSkill; 5] {
         EmbeddedSkill {
             file_name: "vault-orientation.md",
             raw: VAULT_ORIENTATION_RAW,
+        },
+        EmbeddedSkill {
+            file_name: "web-fetch-workflow.md",
+            raw: WEB_FETCH_WORKFLOW_RAW,
         },
     ]
 }
