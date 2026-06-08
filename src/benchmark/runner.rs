@@ -425,7 +425,7 @@ pub async fn run_benchmark(
     // Shutdown peripherals that were started by this benchmark
     let eris_owned_ollama = peripheral_lifecycle.started_ollama();
     let mut lifecycle = peripheral_lifecycle;
-    let stopped = lifecycle.shutdown_async().await;
+    let stopped = lifecycle.shutdown_async(None).await;
     if !stopped.is_empty() {
         tracing::info!(stopped = ?stopped, "Benchmark stopped managed peripherals");
     }

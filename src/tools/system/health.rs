@@ -330,8 +330,8 @@ mod tests {
             embed_server_url: "http://127.0.0.1:9".into(),
             chat_model_path: PathBuf::from("/models/chat.gguf"),
             embed_model_path: PathBuf::from("/models/embed.gguf"),
-            n_gpu_layers: 0,
             ready_timeout_secs: 1,
+            ..Default::default()
         });
         let tool = SystemHealthTool {
             config: Arc::new(cfg),

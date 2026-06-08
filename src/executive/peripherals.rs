@@ -10,7 +10,7 @@ use url::Url;
 
 use qdrant_client::Qdrant;
 
-use crate::config::{AppConfig, DaemonCommand, LlmBackend};
+use crate::config::{AppConfig, DaemonCommand, LlamaCppConfig, LlmBackend};
 
 /// Ollama server default context length; must match [`AppConfig::num_ctx`] when Eris spawns `ollama serve`.
 /// See <https://docs.ollama.com/context-length>.
@@ -30,6 +30,51 @@ const PRE_SPAWN_OLLAMA_WAIT_SECS: u64 = 30;
 const DAEMON_SIGTERM_GRACE_SECS: u64 = 10;
 const DAEMON_TRY_WAIT_POLL_MS: u64 = 150;
 
+/// How [`sync_reap_managed_child`] stops a managed child process.
+#[derive(Debug, Clone, Copy)]
+struct ReapOptions {
+    grace_secs: u64,
+    allow_sigkill: bool,
+}
+
+impl ReapOptions {
+    const DAEMON_DEFAULT: Self = Self {
+        grace_secs: DAEMON_SIGTERM_GRACE_SECS,
+        allow_sigkill: true,
+    };
+}
+
+/// Shutdown policy for Eris-managed llama-server instances (chat + embed).
+#[derive(Debug, Clone, Copy)]
+pub struct LlamaShutdownPolicy {
+    pub detach: bool,
+    pub grace_secs: u64,
+    pub stagger_secs: u64,
+    pub allow_sigkill: bool,
+}
+
+impl LlamaShutdownPolicy {
+    pub fn from_config(config: &AppConfig) -> Option<Self> {
+        config.llama_cpp.as_ref().map(Self::from_llamacpp)
+    }
+
+    fn from_llamacpp(lc: &LlamaCppConfig) -> Self {
+        Self {
+            detach: lc.detach_servers_on_chat_exit,
+            grace_secs: lc.shutdown_grace_secs,
+            stagger_secs: lc.shutdown_stagger_secs,
+            allow_sigkill: lc.shutdown_allow_sigkill,
+        }
+    }
+
+    fn reap_options(self) -> ReapOptions {
+        ReapOptions {
+            grace_secs: self.grace_secs,
+            allow_sigkill: self.allow_sigkill,
+        }
+    }
+}
+
 enum ManagedProcessKind {
     Child(Child),
     DockerContainer { name: String },
@@ -42,9 +87,13 @@ struct ManagedProcess {
 
 impl ManagedProcess {
     fn shutdown(&mut self) {
+        self.shutdown_with_options(ReapOptions::DAEMON_DEFAULT);
+    }
+
+    fn shutdown_with_options(&mut self, options: ReapOptions) {
         match &mut self.kind {
             ManagedProcessKind::Child(child) => {
-                sync_reap_managed_child(child, self.name);
+                sync_reap_managed_child(child, self.name, options);
             }
             ManagedProcessKind::DockerContainer { name } => {
                 let status = Command::new("docker")
@@ -86,7 +135,10 @@ impl PeripheralLifecycle {
     }
 
     /// Best-effort teardown without blocking the async runtime (used from chat shutdown).
-    pub async fn shutdown_async(&mut self) -> Vec<&'static str> {
+    pub async fn shutdown_async(
+        &mut self,
+        llama_policy: Option<LlamaShutdownPolicy>,
+    ) -> Vec<&'static str> {
         let ollama = self.ollama.take();
         let qdrant = self.qdrant.take();
         let llama_embed = self.llama_embed.take();
@@ -105,19 +157,7 @@ impl PeripheralLifecycle {
             stopped.push("llama-chat");
         }
         let join_result = tokio::task::spawn_blocking(move || {
-            if let Some(mut p) = ollama {
-                p.shutdown();
-            }
-            if let Some(mut p) = qdrant {
-                p.shutdown();
-            }
-            // Embed first (less critical), then chat.
-            if let Some(mut p) = llama_embed {
-                p.shutdown();
-            }
-            if let Some(mut p) = llama_chat {
-                p.shutdown();
-            }
+            sync_shutdown_peripherals(ollama, qdrant, llama_embed, llama_chat, llama_policy);
         })
         .await;
         if let Err(e) = join_result {
@@ -131,24 +171,94 @@ impl PeripheralLifecycle {
 
     /// Synchronous teardown (used from [`Drop`]); may block briefly.
     pub fn shutdown_started_peripherals(&mut self) -> Vec<&'static str> {
+        let ollama = self.ollama.take();
+        let qdrant = self.qdrant.take();
+        let llama_embed = self.llama_embed.take();
+        let llama_chat = self.llama_chat.take();
         let mut stopped = Vec::new();
-        if let Some(mut ollama) = self.ollama.take() {
-            ollama.shutdown();
+        if ollama.is_some() {
             stopped.push("ollama");
         }
-        if let Some(mut qdrant) = self.qdrant.take() {
-            qdrant.shutdown();
+        if qdrant.is_some() {
             stopped.push("qdrant");
         }
-        if let Some(mut p) = self.llama_embed.take() {
-            p.shutdown();
+        if llama_embed.is_some() {
             stopped.push("llama-embed");
         }
-        if let Some(mut p) = self.llama_chat.take() {
-            p.shutdown();
+        if llama_chat.is_some() {
             stopped.push("llama-chat");
         }
+        sync_shutdown_peripherals(ollama, qdrant, llama_embed, llama_chat, None);
         stopped
+    }
+}
+
+fn sync_shutdown_peripherals(
+    ollama: Option<ManagedProcess>,
+    qdrant: Option<ManagedProcess>,
+    llama_embed: Option<ManagedProcess>,
+    llama_chat: Option<ManagedProcess>,
+    llama_policy: Option<LlamaShutdownPolicy>,
+) {
+    if let Some(mut p) = ollama {
+        p.shutdown();
+    }
+    if let Some(mut p) = qdrant {
+        p.shutdown();
+    }
+    shutdown_llama_pair(llama_embed, llama_chat, llama_policy);
+}
+
+fn shutdown_llama_pair(
+    llama_embed: Option<ManagedProcess>,
+    llama_chat: Option<ManagedProcess>,
+    llama_policy: Option<LlamaShutdownPolicy>,
+) {
+    let Some(policy) = llama_policy else {
+        if let Some(mut p) = llama_embed {
+            p.shutdown();
+        }
+        if let Some(mut p) = llama_chat {
+            p.shutdown();
+        }
+        return;
+    };
+
+    if policy.detach {
+        if llama_embed.is_some() || llama_chat.is_some() {
+            tracing::info!(
+                detach = true,
+                "Leaving managed llama-server processes running (detach_servers_on_chat_exit)"
+            );
+        }
+        return;
+    }
+
+    let reap = policy.reap_options();
+    if let Some(mut p) = llama_embed {
+        tracing::info!(
+            server = p.name,
+            grace_secs = reap.grace_secs,
+            allow_sigkill = reap.allow_sigkill,
+            "Stopping managed llama-server (embed first)"
+        );
+        p.shutdown_with_options(reap);
+    }
+    if policy.stagger_secs > 0 && llama_chat.is_some() {
+        tracing::debug!(
+            stagger_secs = policy.stagger_secs,
+            "Pausing before stopping chat llama-server"
+        );
+        std::thread::sleep(Duration::from_secs(policy.stagger_secs));
+    }
+    if let Some(mut p) = llama_chat {
+        tracing::info!(
+            server = p.name,
+            grace_secs = reap.grace_secs,
+            allow_sigkill = reap.allow_sigkill,
+            "Stopping managed llama-server (chat)"
+        );
+        p.shutdown_with_options(reap);
     }
 }
 
@@ -159,7 +269,7 @@ impl Drop for PeripheralLifecycle {
 }
 
 /// Stop a [`Child`] we spawned as a dedicated process group (Unix) or the direct child only.
-fn sync_reap_managed_child(child: &mut Child, name: &'static str) {
+fn sync_reap_managed_child(child: &mut Child, name: &'static str, options: ReapOptions) {
     #[cfg(unix)]
     {
         let pid = child.id();
@@ -217,7 +327,7 @@ fn sync_reap_managed_child(child: &mut Child, name: &'static str) {
             Ok(_) => {}
         }
 
-        let deadline = std::time::Instant::now() + Duration::from_secs(DAEMON_SIGTERM_GRACE_SECS);
+        let deadline = std::time::Instant::now() + Duration::from_secs(options.grace_secs);
         loop {
             match child.try_wait() {
                 Ok(Some(status)) => {
@@ -239,9 +349,17 @@ fn sync_reap_managed_child(child: &mut Child, name: &'static str) {
                 }
             }
             if std::time::Instant::now() >= deadline {
+                if !options.allow_sigkill {
+                    tracing::warn!(
+                        daemon = name,
+                        grace_secs = options.grace_secs,
+                        "Managed daemon still running after SIGTERM grace; detaching without SIGKILL"
+                    );
+                    return;
+                }
                 tracing::warn!(
                     daemon = name,
-                    grace_secs = DAEMON_SIGTERM_GRACE_SECS,
+                    grace_secs = options.grace_secs,
                     "Managed daemon still running after SIGTERM grace window; sending SIGKILL to process group"
                 );
                 break;
@@ -545,7 +663,11 @@ pub async fn ensure_peripherals_for_chat(config: &AppConfig) -> Result<Periphera
                     );
                     let mut child = spawn_ollama_daemon(config)?;
                     if !wait_for_ollama(&config.ollama_host, READY_TIMEOUT_SECS).await {
-                        sync_reap_managed_child(&mut child, "ollama-bootstrap");
+                        sync_reap_managed_child(
+                            &mut child,
+                            "ollama-bootstrap",
+                            ReapOptions::DAEMON_DEFAULT,
+                        );
                         return Err(FcpError::NetworkFault(
                             "FATAL: Ollama daemon failed to become ready after launch attempt."
                                 .into(),
@@ -569,7 +691,11 @@ pub async fn ensure_peripherals_for_chat(config: &AppConfig) -> Result<Periphera
         match spawn_daemon("qdrant", &config.qdrant_daemon) {
             Ok(mut child) => {
                 if !wait_for_qdrant(&config.qdrant_url, READY_TIMEOUT_SECS).await {
-                    sync_reap_managed_child(&mut child, "qdrant-bootstrap");
+                    sync_reap_managed_child(
+                        &mut child,
+                        "qdrant-bootstrap",
+                        ReapOptions::DAEMON_DEFAULT,
+                    );
                     return Err(FcpError::NetworkFault(
                         "FATAL: Qdrant sidecar failed to become ready after launch attempt.".into(),
                     ));
@@ -1067,7 +1193,7 @@ mod tests {
             }),
         };
 
-        let stopped = lifecycle.shutdown_async().await;
+        let stopped = lifecycle.shutdown_async(None).await;
         assert!(stopped.contains(&"llama-chat"));
         assert!(stopped.contains(&"llama-embed"));
 

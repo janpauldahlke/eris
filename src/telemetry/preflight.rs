@@ -79,8 +79,8 @@ mod tests {
             embed_server_url: "http://127.0.0.1:9".into(),
             chat_model_path: PathBuf::from("/x.gguf"),
             embed_model_path: PathBuf::from("/y.gguf"),
-            n_gpu_layers: 0,
             ready_timeout_secs: 1,
+            ..Default::default()
         });
         let result = run_preflight_checks(&Commands::Run { prompt: "x".into() }, &config).await;
         assert!(result.is_err());
@@ -106,8 +106,8 @@ mod tests {
             embed_server_url: "http://127.0.0.1:9".into(),
             chat_model_path: PathBuf::from("/x.gguf"),
             embed_model_path: PathBuf::from("/y.gguf"),
-            n_gpu_layers: 0,
             ready_timeout_secs: 1,
+            ..Default::default()
         });
         let result = run_preflight_checks(&Commands::Run { prompt: "x".into() }, &config).await;
         assert!(result.is_err());

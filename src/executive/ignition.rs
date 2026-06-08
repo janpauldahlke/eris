@@ -288,6 +288,10 @@ pub async fn run_ignition_sequence(
                     embed_model_path,
                     n_gpu_layers,
                     ready_timeout_secs: default_llamacpp_ready_timeout(),
+                    detach_servers_on_chat_exit: false,
+                    shutdown_grace_secs: 30,
+                    shutdown_stagger_secs: 3,
+                    shutdown_allow_sigkill: false,
                 };
 
                 Ok(IgnitionAnswers {

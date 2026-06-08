@@ -465,11 +465,9 @@ mod tests {
         config.llama_cpp = Some(LlamaCppConfig {
             home,
             chat_server_url: url.to_string(),
-            embed_server_url: "http://127.0.0.1:8091".into(),
             chat_model_path: PathBuf::from("/fake/chat.gguf"),
             embed_model_path: PathBuf::from("/fake/embed.gguf"),
-            n_gpu_layers: 0,
-            ready_timeout_secs: 30,
+            ..Default::default()
         });
         config.generation_timeout_secs = 5;
         Arc::new(config)

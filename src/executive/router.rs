@@ -55,7 +55,11 @@ async fn log_peripheral_shutdown(session: &mut StartedChatSession, config: &AppC
     cleanup_web_missions_on_chat_exit(&config.active_vault(), config).await;
     let eris_owned_ollama = session.peripheral_lifecycle.started_ollama();
     tracing::info!("Tearing down peripheral daemons started by this session…");
-    let stopped = session.peripheral_lifecycle.shutdown_async().await;
+    let llama_policy = crate::executive::peripherals::LlamaShutdownPolicy::from_config(config);
+    let stopped = session
+        .peripheral_lifecycle
+        .shutdown_async(llama_policy)
+        .await;
     if stopped.is_empty() {
         tracing::info!(
             "No managed peripheral child processes were stopped (Ollama/Qdrant were already running or not started by Eris)."

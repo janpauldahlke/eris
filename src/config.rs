@@ -384,10 +384,49 @@ pub struct LlamaCppConfig {
     /// Max seconds to wait for each llama-server to become ready after spawn.
     #[serde(default = "default_llamacpp_ready_timeout")]
     pub ready_timeout_secs: u64,
+    /// When true, Eris leaves managed llama-server processes running on chat exit (detach/orphan).
+    /// Use when abrupt GPU teardown drops the desktop session; stop servers manually later.
+    #[serde(default)]
+    pub detach_servers_on_chat_exit: bool,
+    /// Seconds to wait after SIGTERM before optional SIGKILL when stopping managed llama-servers.
+    #[serde(default = "default_llamacpp_shutdown_grace_secs")]
+    pub shutdown_grace_secs: u64,
+    /// Pause between stopping embed and chat llama-server (VRAM release stagger).
+    #[serde(default = "default_llamacpp_shutdown_stagger_secs")]
+    pub shutdown_stagger_secs: u64,
+    /// When false (default), Eris never SIGKILLs managed llama-servers — only SIGTERM then detach.
+    #[serde(default)]
+    pub shutdown_allow_sigkill: bool,
 }
 
 pub(crate) fn default_llamacpp_ready_timeout() -> u64 {
     30
+}
+
+fn default_llamacpp_shutdown_grace_secs() -> u64 {
+    30
+}
+
+fn default_llamacpp_shutdown_stagger_secs() -> u64 {
+    3
+}
+
+impl Default for LlamaCppConfig {
+    fn default() -> Self {
+        Self {
+            home: PathBuf::new(),
+            chat_server_url: default_llamacpp_chat_server_url(),
+            embed_server_url: default_llamacpp_embed_server_url(),
+            chat_model_path: PathBuf::new(),
+            embed_model_path: PathBuf::new(),
+            n_gpu_layers: 0,
+            ready_timeout_secs: default_llamacpp_ready_timeout(),
+            detach_servers_on_chat_exit: false,
+            shutdown_grace_secs: default_llamacpp_shutdown_grace_secs(),
+            shutdown_stagger_secs: default_llamacpp_shutdown_stagger_secs(),
+            shutdown_allow_sigkill: false,
+        }
+    }
 }
 
 fn default_llamacpp_chat_server_url() -> String {
@@ -1691,12 +1730,10 @@ mod tests {
         config.num_ctx = 32768;
         config.llama_cpp = Some(LlamaCppConfig {
             home: PathBuf::from("/opt/llama.cpp/build"),
-            chat_server_url: "http://127.0.0.1:8090".into(),
-            embed_server_url: "http://127.0.0.1:8091".into(),
             chat_model_path: PathBuf::from("/models/chat.gguf"),
             embed_model_path: PathBuf::from("/models/embed.gguf"),
             n_gpu_layers: 99,
-            ready_timeout_secs: 30,
+            ..Default::default()
         });
 
         let toml_str = toml::to_string(&config).expect("serialize");
@@ -1802,12 +1839,9 @@ mod tests {
         config.llm_backend = LlmBackend::LlamaCpp;
         config.llama_cpp = Some(LlamaCppConfig {
             home: tmp.path().to_path_buf(),
-            chat_server_url: "http://127.0.0.1:8090".into(),
-            embed_server_url: "http://127.0.0.1:8091".into(),
             chat_model_path: PathBuf::from("/fake/chat.gguf"),
             embed_model_path: PathBuf::from("/fake/embed.gguf"),
-            n_gpu_layers: 0,
-            ready_timeout_secs: 30,
+            ..Default::default()
         });
 
         let err = config.validate_llamacpp_config().unwrap_err();
@@ -1825,12 +1859,9 @@ mod tests {
         config.llm_backend = LlmBackend::LlamaCpp;
         config.llama_cpp = Some(LlamaCppConfig {
             home: tmp.path().to_path_buf(),
-            chat_server_url: "http://127.0.0.1:8090".into(),
-            embed_server_url: "http://127.0.0.1:8091".into(),
             chat_model_path: PathBuf::from("/nonexistent/chat.gguf"),
             embed_model_path: PathBuf::from("/nonexistent/embed.gguf"),
-            n_gpu_layers: 0,
-            ready_timeout_secs: 30,
+            ..Default::default()
         });
 
         let err = config.validate_llamacpp_config().unwrap_err();
