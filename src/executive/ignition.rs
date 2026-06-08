@@ -291,7 +291,7 @@ pub async fn run_ignition_sequence(
                     detach_servers_on_chat_exit: false,
                     shutdown_grace_secs: 30,
                     shutdown_stagger_secs: 3,
-                    shutdown_allow_sigkill: false,
+                    shutdown_allow_sigkill: true,
                     mmproj_path: None,
                     media_path: None,
                 };

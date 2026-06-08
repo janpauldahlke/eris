@@ -16,11 +16,13 @@ use super::WebAppState;
 #[template(path = "chat.html")]
 pub struct ChatShell {
     pub vision_enabled: bool,
+    pub audio_enabled: bool,
 }
 
 pub async fn chat_shell(State(state): State<WebAppState>) -> ChatShell {
     ChatShell {
         vision_enabled: state.config.vision.enabled,
+        audio_enabled: state.config.audio.enabled,
     }
 }
 

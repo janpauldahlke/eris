@@ -912,7 +912,7 @@ mod tests {
         assert_eq!(normalize_moltbook_verify_answer("  maybe  "), "maybe");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn home_sends_auth_and_returns_rate_limit() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -937,7 +937,7 @@ mod tests {
         assert!(!out.contains("test-key"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn post_surfaces_verification_challenge() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -974,7 +974,7 @@ mod tests {
         assert!(out.contains("moltbook:verify"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn notifications_read_defaults_scope_to_all() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -999,7 +999,7 @@ mod tests {
         assert!(out.contains("marked_read"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn search_sends_query_and_returns_hits() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -1032,7 +1032,7 @@ mod tests {
         assert!(out.contains("moltbook:comments"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn search_clamps_limit_to_fifty() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -1055,7 +1055,7 @@ mod tests {
             .expect("search clamp");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn search_rejects_empty_query() {
         let client = Arc::new(
             MoltbookClient::for_test("http://127.0.0.1:9/api/v1".into(), Some("test-key".into()))
@@ -1069,7 +1069,7 @@ mod tests {
         assert!(matches!(err, FcpError::SchemaViolation(_)));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn search_rejects_query_over_500_chars() {
         let client = Arc::new(
             MoltbookClient::for_test("http://127.0.0.1:9/api/v1".into(), Some("test-key".into()))
@@ -1084,7 +1084,7 @@ mod tests {
         assert!(matches!(err, FcpError::SchemaViolation(_)));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn dm_send_request_requires_one_recipient() {
         let client = Arc::new(
             MoltbookClient::for_test("http://127.0.0.1:9/api/v1".into(), Some("test-key".into()))

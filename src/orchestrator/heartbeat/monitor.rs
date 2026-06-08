@@ -34,7 +34,7 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_heartbeat_triggers_idle_signal() {
         let last_input_time = Arc::new(AtomicU64::new(0)); // 0 represents way in the past
         let (tx, mut rx) = tokio::sync::watch::channel(());

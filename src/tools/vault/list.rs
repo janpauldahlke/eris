@@ -86,7 +86,7 @@ mod tests {
     use tempfile::tempdir;
     use tokio::fs::{self, File};
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_vault_list_directory() -> Result<()> {
         let dir = tempdir().unwrap();
         let target = dir.path().join("90_Drops");

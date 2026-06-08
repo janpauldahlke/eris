@@ -99,7 +99,7 @@ impl Tool for MemoryStagedListTool {
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_staged_list_returns_entries() {
         let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
         let _ = ephemeral
@@ -118,7 +118,7 @@ mod tests {
         assert!(output.contains("\"title\":\"profile\""));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_staged_list_filter_by_tier() {
         let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
         ephemeral
@@ -153,7 +153,7 @@ mod tests {
         assert!(output.contains("\"title\":\"b\""));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_staged_list_only_needs_review() {
         let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
         let entry = ephemeral

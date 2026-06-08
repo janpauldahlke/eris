@@ -81,7 +81,7 @@ mod tests {
     use tempfile::tempdir;
     use tokio::fs;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_vault_read_normal() -> Result<()> {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("normal.md");
@@ -98,7 +98,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_vault_read_exceeds_tokens() -> Result<()> {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("massive.md");

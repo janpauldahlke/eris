@@ -393,7 +393,7 @@ mod tests {
         assert_eq!(summary.temp_files_count, 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn cleanup_deletes_temp_file() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let file_path = temp_dir.path().join("test.txt");
@@ -414,7 +414,7 @@ mod tests {
         assert!(!file_path.exists());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn cleanup_restores_vault_file() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let file_path = temp_dir.path().join("vault_file.md");
@@ -443,7 +443,7 @@ mod tests {
         assert_eq!(restored, original_content);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn cleanup_deletes_new_vault_file() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let file_path = temp_dir.path().join("new_file.md");

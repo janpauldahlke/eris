@@ -218,7 +218,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn seed_creates_operator_files() {
         let dir = tempdir().expect("tempdir");
         let root = dir.path();

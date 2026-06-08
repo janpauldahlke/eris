@@ -199,7 +199,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_remove_by_task_id() -> Result<()> {
         let dir = tempdir().unwrap();
         write_agenda(
@@ -220,7 +220,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_remove_by_description_match() -> Result<()> {
         let dir = tempdir().unwrap();
         write_agenda(
@@ -236,7 +236,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_remove_task_id_not_found() -> Result<()> {
         let dir = tempdir().unwrap();
         write_agenda(
@@ -250,7 +250,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_remove_nl_zero_matches() -> Result<()> {
         let dir = tempdir().unwrap();
         write_agenda(
@@ -266,7 +266,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_remove_nl_ambiguous() -> Result<()> {
         let dir = tempdir().unwrap();
         write_agenda(
@@ -282,7 +282,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_remove_both_selectors_rejected() -> Result<()> {
         let dir = tempdir().unwrap();
         write_agenda(
@@ -298,7 +298,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_remove_neither_selector_rejected() -> Result<()> {
         let dir = tempdir().unwrap();
         write_agenda(

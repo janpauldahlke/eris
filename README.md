@@ -4,7 +4,7 @@
 [![Rust edition](https://img.shields.io/badge/Rust-Edition%202024-dea584?logo=rust&logoColor=white)](https://doc.rust-lang.org/edition-guide/rust-2024/index.html)
 [![codecov](https://codecov.io/gh/janpauldahlke/eris/graph/badge.svg)](https://codecov.io/gh/janpauldahlke/eris)
 
-**Episodic Reasoning & Inference System** — a local, vault-centric assistant: same orchestrator and tools whether you use the **full-screen terminal UI (ratatui)**, **`eris chat --web`** (localhost Axum + SSE), or an **optional Discord sidecar** that shares the live session. Two LLM backends: **Ollama** (default, easiest) or **llama.cpp** (direct GGUF inference with GBNF grammar enforcement). Optional **vision** (`vision:see`) on the llama.cpp path only — web drop zone and Discord image uploads for supported multimodal GGUF models. Optional Qdrant holds semantic memory; notes live in a Markdown vault; tools run only through the JSON-schema gatekeeper.
+**Episodic Reasoning & Inference System** — a local, vault-centric assistant: same orchestrator and tools whether you use the **full-screen terminal UI (ratatui)**, **`eris chat --web`** (localhost Axum + SSE), or an **optional Discord sidecar** that shares the live session. Two LLM backends: **Ollama** (default, easiest) or **llama.cpp** (direct GGUF inference with GBNF grammar enforcement). Optional **vision** (`vision:see`) and **voice ingress** (STT before orchestrator turn) on the llama.cpp path only — web upload/mic for audio, web drop zone and Discord image uploads for vision on supported multimodal GGUF models. Optional Qdrant holds semantic memory; notes live in a Markdown vault; tools run only through the JSON-schema gatekeeper.
 
 Architecture detail: [docs/updated_architecture/README.md](docs/updated_architecture/README.md).
 
@@ -54,6 +54,8 @@ Full instructions: **[docs/HOW_TO/LLAMA_CPP_SETUP.md](docs/HOW_TO/LLAMA_CPP_SETU
 
 **Vision (optional):** Image understanding via **`vision:see`** requires **`llm_backend = "LlamaCpp"`**, `[vision] enabled = true`, a compatible **chat GGUF + mmproj**, and a recent **`llama-server`** (multimodal projector support is model-specific — e.g. Gemma 4 needs llama.cpp **b9493+**). Not available on Ollama. Setup: **[docs/HOW_TO/VISION.md](docs/HOW_TO/VISION.md)**.
 
+**Voice ingress (optional):** Speech-to-text transcribes web mic audio **before** the orchestrator turn. Requires **`[audio] enabled = true`** (same mmproj as vision), **`ffmpeg`**, and llama.cpp `input_audio` support. Recordings are clipped to **`max_duration_secs`** during ffmpeg normalize (default **30**; set e.g. **`max_duration_secs = 120`** in `[audio]` for longer monologues). Setup: **[docs/HOW_TO/AUDIO.md](docs/HOW_TO/AUDIO.md)**.
+
 ### Qdrant (vector DB)
 
 Used for semantic memory (`memory:query`), boot ingest, and web-artifact cleanup. The client uses the URL in `qdrant_url` (default `http://localhost:6334`). gRPC must be reachable after TCP connect.
@@ -86,6 +88,21 @@ browser39 --version   # must succeed on PATH (or set BROWSER39_BIN)
 
 Chat startup runs `browser39 --version` when `[web] require_browser39 = true` (default) and seeds `.fcp/browser39/` plus `web_allowlist.toml` under your vault. Operator guide: [docs/WEB_BROWSER39.md](docs/WEB_BROWSER39.md).
 
+### ffmpeg (voice / mic ingress)
+
+When **`[audio] enabled = true`**, Eris normalizes browser mic recordings via the **`ffmpeg` CLI** on your host PATH (subprocess; not bundled with the `eris` binary). Mic capture (WebM) **always** needs ffmpeg.
+
+```bash
+# Debian / Ubuntu
+sudo apt-get install -y ffmpeg
+ffmpeg -version
+
+# macOS
+brew install ffmpeg
+```
+
+Optional: `FFMPEG=/path/to/ffmpeg` if the binary is not on PATH. Mic clips longer than **`[audio] max_duration_secs`** (default 30) are truncated before STT — raise it in `.fcp/config.toml` if you need longer takes. Operator guide: [docs/HOW_TO/AUDIO.md](docs/HOW_TO/AUDIO.md).
+
 ### Discord (optional)
 
 With **`[discord]`** in `.fcp/config.toml` (`enabled = true`, **`application_id`**, **`channel_id`** or **`channel_name`**, and a non-empty **`bot_token`**), a Serenity **gateway sidecar** runs in parallel with the active view and forwards a guild text channel into the same orchestrator queue. If Discord is enabled in config but the bot token is missing, chat still runs without the sidecar (see tracing). Details: [docs/updated_architecture/01_BOOTSTRAP_AND_EXECUTIVE.md](docs/updated_architecture/01_BOOTSTRAP_AND_EXECUTIVE.md), [06_UI_TELEMETRY_OPERATIONS.md](docs/updated_architecture/06_UI_TELEMETRY_OPERATIONS.md).
@@ -110,6 +127,7 @@ Registration is explicit: ask Eris to register on Moltbook with a name and descr
 | Embed model | `embed_model_name`                              | Default `nomic-embed-text` (768-d vectors → Qdrant)                       |
 | llama.cpp   | `[llama_cpp]` table                             | `home`, model paths, ports, GPU layers — see [LLAMA_CPP_SETUP.md](docs/HOW_TO/LLAMA_CPP_SETUP.md) |
 | Vision      | `[vision]` + `llama_cpp.mmproj_path`            | **LlamaCpp only**; web + Discord image → `vision:see` — see [VISION.md](docs/HOW_TO/VISION.md) |
+| Voice       | `[audio]` + `llama_cpp.mmproj_path` + `ffmpeg`    | **LlamaCpp only**; web file/mic → STT → normal tool routing; optional **`max_duration_secs`** (default 30) — see [AUDIO.md](docs/HOW_TO/AUDIO.md) |
 | Qdrant URL  | `qdrant_url`                                    | Default `http://localhost:6334` (gRPC)                                    |
 | Web UI      | `web_bind_addr`, `web_port`, `web_open_browser` | Loopback + port for `eris chat --web`; optional `FCP_WEB_*` env overrides |
 | Discord     | `[discord]` table                               | Optional; needs `bot_token` + app id + channel when `enabled = true`      |
@@ -120,6 +138,16 @@ Registration is explicit: ask Eris to register on Moltbook with a name and descr
 Figment also merges `FCP_` environment variables over TOML (e.g. `FCP_WORKSPACE`, `FCP_LOG_LEVEL`, `FCP_USER_NAME`). For other fields, match `AppConfig` in `[src/config.rs](src/config.rs)` to the env key shape your Figment build expects.
 
 **Installing a release binary (PATH, first-run wizard, day-to-day use):** [docs/HOW_TO/END_USER_README.md](docs/HOW_TO/END_USER_README.md).
+
+### Building from source (`cargo install`)
+
+From the repo root:
+
+```bash
+cargo install --path .
+```
+
+**Tests:** `cargo test-full` (batched subprocess runner; see `target/test-full.log` if a batch fails).
 
 ## Workspace initialization
 

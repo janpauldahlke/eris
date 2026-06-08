@@ -66,7 +66,7 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_agenda_list_empty() -> Result<()> {
         let dir = tempdir().unwrap();
         let tool = AgendaListTool {

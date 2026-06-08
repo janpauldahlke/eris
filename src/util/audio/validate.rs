@@ -3,7 +3,7 @@ use std::path::{Component, Path, PathBuf};
 use crate::executive::error::{FcpError, Result};
 
 /// Ensure `relative_path` stays under `workspace_root` and within `upload_dir`.
-pub fn validate_vision_relative_path(
+pub fn validate_audio_relative_path(
     workspace_root: &Path,
     upload_dir: &str,
     relative_path: &str,
@@ -12,14 +12,14 @@ pub fn validate_vision_relative_path(
     let rel_norm = relative_path.replace('\\', "/").trim_start_matches('/').to_string();
     if rel_norm.contains("..") {
         return Err(FcpError::ToolFault {
-            tool_name: "vision:see".into(),
+            tool_name: "audio:ingress".into(),
             reason: "path traversal denied".into(),
         });
     }
     let prefix = format!("{upload_norm}/");
     if !rel_norm.starts_with(&prefix) {
         return Err(FcpError::ToolFault {
-            tool_name: "vision:see".into(),
+            tool_name: "audio:ingress".into(),
             reason: format!("path must be under vault upload dir `{upload_dir}`"),
         });
     }
@@ -31,12 +31,12 @@ pub fn validate_vision_relative_path(
     let canonical_target = target
         .canonicalize()
         .map_err(|e| FcpError::ToolFault {
-            tool_name: "vision:see".into(),
-            reason: format!("image not found: {e}"),
+            tool_name: "audio:ingress".into(),
+            reason: format!("audio not found: {e}"),
         })?;
     if !canonical_target.starts_with(&canonical_root) {
         return Err(FcpError::ToolFault {
-            tool_name: "vision:see".into(),
+            tool_name: "audio:ingress".into(),
             reason: "path traversal denied".into(),
         });
     }
@@ -45,20 +45,25 @@ pub fn validate_vision_relative_path(
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("");
-    if !ext.eq_ignore_ascii_case("jpg") && !ext.eq_ignore_ascii_case("jpeg") {
+    if !ext.eq_ignore_ascii_case("wav") {
         return Err(FcpError::ToolFault {
-            tool_name: "vision:see".into(),
-            reason: "vision images must be normalized JPEG under upload_dir".into(),
+            tool_name: "audio:ingress".into(),
+            reason: "voice uploads must be normalized WAV under upload_dir".into(),
         });
     }
 
     Ok(canonical_target)
 }
 
-/// Filename allowlist for preview route (`{uuid}.jpg`).
+/// Filename allowlist for preview route (`{uuid}.wav`).
 pub fn preview_filename_allowed(name: &str) -> bool {
     let path = Path::new(name);
-    if path.components().any(|c| matches!(c, Component::ParentDir | Component::RootDir | Component::Prefix(_))) {
+    if path.components().any(|c| {
+        matches!(
+            c,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
         return false;
     }
     let file_name = match path.file_name().and_then(|s| s.to_str()) {
@@ -66,10 +71,10 @@ pub fn preview_filename_allowed(name: &str) -> bool {
         None => return false,
     };
     let lower = file_name.to_ascii_lowercase();
-    if !lower.ends_with(".jpg") && !lower.ends_with(".jpeg") {
+    if !lower.ends_with(".wav") {
         return false;
     }
-    let stem = &lower[..lower.len().saturating_sub(4)];
+    let stem = lower.trim_end_matches(".wav");
     !stem.is_empty()
         && stem
             .chars()
@@ -83,22 +88,22 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn preview_filename_allows_uuid_jpg() {
+    fn preview_filename_allows_uuid_wav() {
         assert!(preview_filename_allowed(
-            "550e8400-e29b-41d4-a716-446655440000.jpg"
+            "550e8400-e29b-41d4-a716-446655440000.wav"
         ));
-        assert!(!preview_filename_allowed("../secret.jpg"));
-        assert!(!preview_filename_allowed("not-uuid.jpg"));
+        assert!(!preview_filename_allowed("../secret.wav"));
+        assert!(!preview_filename_allowed("not-uuid.wav"));
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn validate_rejects_traversal() {
         let dir = TempDir::new().expect("tempdir");
         let root = dir.path();
-        std::fs::create_dir_all(root.join("99_USER_UPLOADED/images")).expect("mkdir");
-        let err = validate_vision_relative_path(
+        std::fs::create_dir_all(root.join("99_USER_UPLOADED/audio")).expect("mkdir");
+        let err = validate_audio_relative_path(
             root,
-            "99_USER_UPLOADED/images",
+            "99_USER_UPLOADED/audio",
             "../../etc/passwd",
         )
         .unwrap_err();

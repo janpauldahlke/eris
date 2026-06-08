@@ -11,6 +11,7 @@ Eris supports two LLM backends: **Ollama** (default, easiest) and **llama.cpp** 
 - A GGUF chat model
 - A GGUF embedding model
 - Qdrant running (same as the Ollama setup)
+- **`ffmpeg` on PATH** — required when **`[audio] enabled = true`** (voice/mic ingress). Eris invokes it as a local CLI subprocess; it is not bundled. See **[AUDIO.md](AUDIO.md#local-cli-ffmpeg-required)** (`apt install ffmpeg` / `brew install ffmpeg`)
 
 ---
 
@@ -157,6 +158,19 @@ ready_timeout_secs = 120
 5. **Discord:** optional sidecar downloads channel image attachments into the same vault upload folder.
 
 Operator guide: **[VISION.md](VISION.md)**.
+
+---
+
+## 4c. Voice ingress (optional STT)
+
+Speech-to-text runs **before** the orchestrator turn (spoken commands route like typed text). Requires the same mmproj stack as vision plus **`ffmpeg` installed locally** — see **[AUDIO.md](AUDIO.md)**.
+
+```toml
+[audio]
+enabled = true
+```
+
+Web chat: small **Mic** button beside compose — click to record, click again to send.
 
 ---
 

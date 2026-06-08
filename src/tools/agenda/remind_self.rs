@@ -314,7 +314,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn new_description_writes_self_kind_and_plan_blob() -> Result<()> {
         let dir = tempdir().expect("tmp");
         let tool = make_tool(dir.path());
@@ -350,7 +350,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn missing_plan_rejected() {
         let dir = tempdir().expect("tmp");
         let tool = make_tool(dir.path());
@@ -365,7 +365,7 @@ mod tests {
         assert!(matches!(err, FcpError::SchemaViolation(_)));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn checklist_cap_enforced() {
         let dir = tempdir().expect("tmp");
         let tool = make_tool(dir.path());
@@ -384,7 +384,7 @@ mod tests {
         assert!(matches!(err, FcpError::SchemaViolation(_)));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn existing_task_id_replaces_alarm_and_promotes_to_self() -> Result<()> {
         let dir = tempdir().expect("tmp");
         let agenda_path = crate::vault_layout::agenda_json(dir.path());
@@ -426,7 +426,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn legacy_agenda_row_parses_with_default_kind() {
         let raw = r#"[{"id":"a1","created_at":1,"description":"old","status":"pending"}]"#;
         let tasks: Vec<AgendaTask> = serde_json::from_str(raw).expect("parse legacy");
@@ -435,7 +435,7 @@ mod tests {
         assert!(tasks[0].alarm_id.is_none());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn neither_task_nor_description_rejected() {
         let dir = tempdir().expect("tmp");
         let tool = make_tool(dir.path());
@@ -449,7 +449,7 @@ mod tests {
         assert!(matches!(err, FcpError::SchemaViolation(_)));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn both_schedules_rejected() {
         let dir = tempdir().expect("tmp");
         let tool = make_tool(dir.path());

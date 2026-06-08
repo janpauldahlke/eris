@@ -238,7 +238,7 @@ mod tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_ollama_client_offline_returns_network_fault() {
         let mut config = AppConfig::default();
         config.ollama_host = "http://localhost:65535".to_string(); // Dead port
@@ -254,7 +254,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_ollama_client_timeout_returns_engine_fault() {
         let mock_server = MockServer::start().await;
 
@@ -287,7 +287,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_ollama_client_handles_valid_response() {
         let mock_server = MockServer::start().await;
 

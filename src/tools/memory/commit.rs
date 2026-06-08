@@ -256,7 +256,7 @@ impl Tool for MemoryCommitTool {
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_write_revisioned_creates_synthesis_zettel() {
         let temp_dir = tempfile::tempdir().unwrap();
         let workspace_root = temp_dir.path();
@@ -292,7 +292,7 @@ mod tests {
         assert!(content.contains("rev: 1"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_write_revisioned_increments_revision() {
         let temp_dir = tempfile::tempdir().unwrap();
         let workspace_root = temp_dir.path();
@@ -344,7 +344,7 @@ mod tests {
         assert!(!VaultKind::Synthesis.dir_name().starts_with("00_"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_write_topology_flat_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let workspace_root = temp_dir.path();

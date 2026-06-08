@@ -9,6 +9,10 @@ authors = [
 ]
 edition = "2024"
 
+[[bin]]
+name = "eris-test-full"
+path = "src/bin/eris_test_full.rs"
+
 [dependencies]
 clap = { version = "4.6.0", features = ["derive", "env"] }
 thiserror = "2.0.18"
@@ -71,6 +75,17 @@ tempfile = "3.27.0"
 figment = { version = "0.10", features = ["test"] }
 wiremock = "0.6"
 tracing-test = "0.2"
+
+[profile.dev]
+# Smaller debug sections → lower rustc/linker peak RSS on large crates (helps `cargo test` on laptops).
+debug = 1
+split-debuginfo = "unpacked"
+
+[profile.test]
+inherits = "dev"
+# Smaller test binary → lower RSS when the harness loads all crate code.
+debug = 0
+opt-level = 1
 
 [profile.release]
 opt-level = 3

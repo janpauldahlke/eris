@@ -437,7 +437,7 @@ mod tests {
         (orch, root)
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn skill_guidance_none_when_no_candidates() {
         let (orch, _root) = test_orchestrator_with_skills().await;
         let none = orch
@@ -452,7 +452,7 @@ mod tests {
         assert!(none.is_none());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn skill_guidance_includes_failed_db_recovery() {
         let (orch, _root) = test_orchestrator_with_skills().await;
         let mut failed = HashSet::new();
@@ -465,7 +465,7 @@ mod tests {
         assert!(out.contains("db-connections-recovery"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn skill_guidance_includes_mail_mandatory_on_router_hit() {
         let (orch, _root) = test_orchestrator_with_skills().await;
         let out = orch

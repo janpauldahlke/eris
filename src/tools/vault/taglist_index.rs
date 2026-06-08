@@ -360,7 +360,7 @@ mod tests {
         assert!(!is_synthesis_md_path("30_Synthesis/uuid/notes.txt"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn build_picks_highest_revision_and_groups_paths() {
         let dir = tempdir().expect("tmpdir");
         let root = dir.path();
@@ -409,7 +409,7 @@ mod tests {
         assert!(snap.tags.windows(2).all(|w| w[0].count >= w[1].count));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn persist_and_load_roundtrip() {
         let dir = tempdir().expect("tmpdir");
         let snap = TaglistSnapshot {
@@ -427,7 +427,7 @@ mod tests {
         assert_eq!(back.tags[0].tag, "x");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn load_missing_returns_none() {
         let dir = tempdir().expect("tmpdir");
         let got = load_persisted(dir.path()).await.expect("load");

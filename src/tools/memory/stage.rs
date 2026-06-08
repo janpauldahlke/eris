@@ -191,7 +191,7 @@ mod tests {
         Arc::new(AppConfig::default())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_memory_stage_execution() {
         let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
         let tool = MemoryStageTool {
@@ -213,7 +213,7 @@ mod tests {
         assert_eq!(entry.tier, EphemeralTier::Session);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_memory_stage_upsert_bumps_score() {
         let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
         let config = test_config();
@@ -250,7 +250,7 @@ mod tests {
         assert!(entry.promotion_score >= config.promotion_stage_boost * 2.0 - 0.01);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_memory_stage_tier_fastlane() {
         let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
         let tool = MemoryStageTool {
@@ -273,7 +273,7 @@ mod tests {
         assert_eq!(entry.tier, EphemeralTier::Promote);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_memory_stage_kind_routing() {
         let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
         let tool = MemoryStageTool {
@@ -296,7 +296,7 @@ mod tests {
         assert_eq!(entry.kind, VaultKind::Topology);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_memory_stage_rejects_null_title() {
         let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
         let tool = MemoryStageTool {
@@ -316,7 +316,7 @@ mod tests {
         assert!(err.contains("title is required"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_memory_stage_rejects_null_tags() {
         let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
         let tool = MemoryStageTool {
@@ -336,7 +336,7 @@ mod tests {
         assert!(err.contains("tags is required"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_memory_stage_rejects_oversized_content() {
         let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
         let tool = MemoryStageTool {
@@ -354,7 +354,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_memory_stage_rejects_empty_content() {
         let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
         let tool = MemoryStageTool {

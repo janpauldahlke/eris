@@ -769,7 +769,7 @@ mod repeat_failure_streak_tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn web_turn_cap_suppressed_does_not_leave_pending_intent() {
         let mut gatekeeper = Gatekeeper::new();
         gatekeeper.register(Arc::new(OkWebFetchTool));
@@ -840,7 +840,7 @@ mod repeat_failure_streak_tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn third_identical_repeatable_suppressed_after_two_failures_when_moltbook_latched() {
         let calls = Arc::new(AtomicUsize::new(0));
         let mut orch = orchestrator_with_probe(calls.clone());
@@ -983,7 +983,7 @@ mod targeted_schema_retry_phase5_tests {
         )
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn targeted_retry_uses_natural_language_for_llamacpp() {
         let mut orch = orchestrator_for_schema_retry(LlmBackend::LlamaCpp);
         orch.state = AgentState::Chat;
@@ -1024,7 +1024,7 @@ mod targeted_schema_retry_phase5_tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn targeted_retry_uses_json_schema_for_ollama() {
         let mut orch = orchestrator_for_schema_retry(LlmBackend::Ollama);
         orch.state = AgentState::Chat;

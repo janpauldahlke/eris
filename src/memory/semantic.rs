@@ -1264,7 +1264,7 @@ mod tests {
         Arc::new(OllamaEmbedding::new(ollama, "nomic-embed-text".into()))
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_semantic_brain_offline_returns_vector_db_offline() {
         let mut config = AppConfig::default();
         config.qdrant_url = "http://localhost:65535".to_string();
@@ -1277,7 +1277,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_semantic_brain_connect_retries_exhaust_dead_port() {
         let mut config = AppConfig::default();
         config.qdrant_url = "http://127.0.0.1:65535".to_string();

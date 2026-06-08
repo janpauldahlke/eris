@@ -88,7 +88,7 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_agenda_push_creates_file() -> Result<()> {
         let dir = tempdir().unwrap();
         let tool = AgendaPushTool {

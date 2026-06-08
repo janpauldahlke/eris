@@ -365,7 +365,7 @@ mod tests {
         assert_eq!(String::from_utf8(decoded).expect("utf8"), msg);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn gmail_client_none_when_disabled() {
         let config = GoogleConfig {
             enabled: false,
@@ -375,7 +375,7 @@ mod tests {
         assert!(client.is_none());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn gmail_client_errors_on_missing_key() {
         let config = GoogleConfig {
             enabled: true,
@@ -386,7 +386,7 @@ mod tests {
         assert!(matches!(result, Err(FcpError::Config(_))));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn gmail_client_errors_on_missing_user() {
         let config = GoogleConfig {
             enabled: true,

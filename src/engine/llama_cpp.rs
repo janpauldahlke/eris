@@ -488,7 +488,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn non_streaming_valid_response() {
         let mock_server = MockServer::start().await;
         let body = serde_json::json!({
@@ -512,7 +512,7 @@ mod tests {
         assert_eq!(result.generated_tokens, 5);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn token_metrics_publish_llamacpp() {
         let mock_server = MockServer::start().await;
         let body = serde_json::json!({
@@ -549,7 +549,7 @@ mod tests {
         assert_eq!(snap.generated_tokens, 7);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn streaming_valid_response() {
         let mock_server = MockServer::start().await;
         let sse_body = "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n\
@@ -582,7 +582,7 @@ mod tests {
         assert_eq!(deltas, vec!["Hello", " world"]);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn streaming_forwards_deltas_to_tx() {
         let mock_server = MockServer::start().await;
         let sse_body = "data: {\"choices\":[{\"delta\":{\"content\":\"A\"}}]}\n\n\
@@ -613,7 +613,7 @@ mod tests {
         assert_eq!(deltas, vec!["A", "B", "C"]);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn http_timeout_returns_network_fault() {
         let mock_server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -642,7 +642,7 @@ mod tests {
         assert!(err.to_string().contains("timed out"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn http_500_returns_network_fault() {
         let mock_server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -662,7 +662,7 @@ mod tests {
         assert!(msg.contains("internal error"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn connection_refused_returns_network_fault() {
         let chat_url = "http://127.0.0.1:19999/v1/chat/completions".to_string();
         let http = reqwest::Client::builder()
@@ -685,7 +685,7 @@ mod tests {
         assert!(msg.contains("connection refused") || msg.contains("request failed"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn missing_usage_defaults_to_zero() {
         let mock_server = MockServer::start().await;
         let body = serde_json::json!({
@@ -707,7 +707,7 @@ mod tests {
         assert_eq!(result.generated_tokens, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn empty_content_in_delta_skipped() {
         let mock_server = MockServer::start().await;
         let sse_body = "data: {\"choices\":[{\"delta\":{\"content\":null}}]}\n\n\
@@ -738,7 +738,7 @@ mod tests {
         assert_eq!(deltas, vec!["ok"]);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn done_sentinel_terminates_stream() {
         let mock_server = MockServer::start().await;
         let sse_body = "data: {\"choices\":[{\"delta\":{\"content\":\"first\"}}]}\n\n\
@@ -765,7 +765,7 @@ mod tests {
     }
 
     #[traced_test]
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn grammar_subset_override_wires_short_grammar_and_logs_source() {
         let mock_server = MockServer::start().await;
         let body = serde_json::json!({
@@ -826,7 +826,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn attach_session_grammar_false_omits_grammar_json_field_even_with_session_set() {
         let mock_server = MockServer::start().await;
         let body = serde_json::json!({
@@ -875,7 +875,7 @@ mod tests {
         assert!(posted.get("grammar").is_none());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn constructor_validates_config() {
         let tmp = tempfile::TempDir::new().expect("tempdir");
         let bin_dir = tmp.path().join("bin");

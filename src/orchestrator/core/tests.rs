@@ -377,7 +377,7 @@ fn test_schema_or_parse_error_detection() {
     ));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn test_step_resets_counters_on_entry() {
     let json = r#"{
             "thought": "done",
@@ -398,7 +398,7 @@ async fn test_step_resets_counters_on_entry() {
     assert_eq!(orchestrator.state, AgentState::Idle);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn test_step_system_fatality_aborts() {
     let engine = MockEngine::with_network_fault("daemon offline");
     let mut orchestrator = setup_orchestrator_with_engine(engine);
@@ -414,7 +414,7 @@ async fn test_step_system_fatality_aborts() {
     assert_eq!(orchestrator.state, AgentState::Idle);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn test_step_empty_user_line_sy_fnord_no_llm() {
     let json = r#"{"status":"Idle","message_to_user":"engine should not run"}"#;
     let engine = MockEngine::with_content(json);
@@ -434,7 +434,7 @@ async fn test_step_empty_user_line_sy_fnord_no_llm() {
     assert!(last.content.contains(EMPTY_USER_MESSAGE_TAG));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn test_step_halt_directive_resets_state() {
     let json = r#"{
             "thought": "I'm done",
@@ -455,7 +455,7 @@ async fn test_step_halt_directive_resets_state() {
     assert_eq!(orchestrator.recovery_count, 0);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn test_execute_condensation_sliding_window_stack_only() {
     let rolling_json = r#"{"kind":"rolling_summary_v1","summary":"folded","key_facts":[],"open_threads":[],"last_updated":"2026-01-01T00:00:00+00:00"}"#;
     let engine = MockEngine::with_content(rolling_json);
@@ -506,7 +506,7 @@ async fn test_execute_condensation_sliding_window_stack_only() {
     assert_eq!(orchestrator.state, AgentState::Chat);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn test_step_triggers_reflection_on_token_exhaustion() {
     let json = r#"{
             "thought": "I'm done",
@@ -529,7 +529,7 @@ async fn test_step_triggers_reflection_on_token_exhaustion() {
     // Let's change json to ShiftToReflection (InitiateReflection).
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn test_async_guillotine_interrupts_generation() {
     use std::time::Duration;
 
@@ -641,7 +641,7 @@ async fn test_async_guillotine_interrupts_generation() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn test_duplicate_only_batch_halts_without_extra_generation() {
     #[derive(Clone)]
     struct SequenceEngine {
@@ -850,7 +850,7 @@ async fn orchestrator_with_presentation(
     )
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn emit_optional_user_message_emits_model_thought_then_incoming_message() {
     let (pres_tx, mut pres_rx) = mpsc::channel::<SessionEvent>(32);
     let mut orch = orchestrator_with_presentation(pres_tx).await;
@@ -871,7 +871,7 @@ async fn emit_optional_user_message_emits_model_thought_then_incoming_message() 
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn emit_optional_user_message_skips_whitespace_only_thought() {
     let (pres_tx, mut pres_rx) = mpsc::channel::<SessionEvent>(32);
     let mut orch = orchestrator_with_presentation(pres_tx).await;
@@ -888,7 +888,7 @@ async fn emit_optional_user_message_skips_whitespace_only_thought() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn emit_optional_user_message_tool_round_skips_transcript_uses_activity_line() {
     let (pres_tx, mut pres_rx) = mpsc::channel::<SessionEvent>(32);
     let mut orch = orchestrator_with_presentation(pres_tx).await;

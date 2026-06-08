@@ -262,6 +262,7 @@ impl TuiApp {
                         display: trimmed.to_string(),
                         for_model: None,
                         image: None,
+                        audio: None,
                     };
                     let _ = self
                         .action_tx

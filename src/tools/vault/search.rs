@@ -452,7 +452,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn recursive_match_ranks_by_hits() -> Result<()> {
         let dir = tempdir().unwrap();
         fs::create_dir_all(dir.path().join("a")).await.unwrap();
@@ -474,7 +474,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn case_insensitive_default() -> Result<()> {
         let dir = tempdir().unwrap();
         fs::write(
@@ -491,7 +491,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn respects_directory_scope() -> Result<()> {
         let dir = tempdir().unwrap();
         fs::create_dir_all(dir.path().join("10_Topology"))
@@ -518,7 +518,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn skips_dotfcp_and_oversized() -> Result<()> {
         let dir = tempdir().unwrap();
         fs::create_dir_all(dir.path().join(".fcp/telemetry/logs"))
@@ -551,7 +551,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn path_traversal_denied() -> Result<()> {
         let dir = tempdir().unwrap();
         let t = tool(dir.path());
@@ -571,7 +571,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn total_char_budget_truncates() -> Result<()> {
         let dir = tempdir().unwrap();
         for i in 0..15 {
@@ -598,7 +598,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn regex_flag_compiles() -> Result<()> {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("r.md"), "code 123 and 456\n")

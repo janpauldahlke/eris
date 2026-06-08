@@ -86,7 +86,7 @@ mod tests {
     use super::*;
     use crate::presentation::AlarmPayload;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn multiplex_relays_alarm_once_and_forwards_incoming_to_discord_queue() {
         let (pres_tx, pres_rx) = mpsc::channel::<SessionEvent>(8);
         let (bc_tx, mut bc_sub) = broadcast::channel::<SessionEvent>(8);
@@ -129,7 +129,7 @@ mod tests {
         let _ = _jh.await;
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn multiplex_relays_self_prompt_alarm_to_user_action() {
         let (pres_tx, pres_rx) = mpsc::channel::<SessionEvent>(8);
         let (ua_tx, mut ua_rx) = mpsc::channel::<UserAction>(8);
@@ -178,7 +178,7 @@ mod tests {
         let _ = _jh.await;
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn user_transcript_line_broadcast_not_discord_queue() {
         use std::time::Duration;
 
@@ -204,6 +204,7 @@ mod tests {
                 source: InputSource::Discord,
                 body: "from discord".into(),
                 image: None,
+                audio: None,
             })
             .await
             .expect("send");

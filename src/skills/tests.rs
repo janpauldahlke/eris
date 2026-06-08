@@ -5,7 +5,7 @@ use super::seed::seed_runtime_skills;
 use super::store::{SkillCreateInput, create_or_update_vault_skill, list_vault_skills, load_vault_skill_by_id};
 use super::types::SkillPriority;
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn seed_runtime_skills_is_seed_only() {
     let dir = tempdir().expect("tempdir");
     let report = seed_runtime_skills(dir.path()).await.expect("seed");
@@ -15,7 +15,7 @@ async fn seed_runtime_skills_is_seed_only() {
     assert!(report_2.skipped_existing >= 2);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn build_guidance_is_bounded_and_deduped() {
     let dir = tempdir().expect("tempdir");
     seed_runtime_skills(dir.path()).await.expect("seed");
@@ -33,7 +33,7 @@ async fn build_guidance_is_bounded_and_deduped() {
     assert!(out.contains("db-connections-recovery"));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn list_and_read_vault_skills() {
     let dir = tempdir().expect("tempdir");
     seed_runtime_skills(dir.path()).await.expect("seed");
@@ -47,7 +47,7 @@ async fn list_and_read_vault_skills() {
     assert_eq!(one.id, "db-connections-recovery");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn create_rejects_duplicate_without_overwrite_and_allows_with_flag() {
     let dir = tempdir().expect("tempdir");
     let first = create_or_update_vault_skill(
@@ -96,7 +96,7 @@ async fn create_rejects_duplicate_without_overwrite_and_allows_with_flag() {
     assert_eq!(third.skill.title, "Sample Updated");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn create_rejects_invalid_id() {
     let dir = tempdir().expect("tempdir");
     let bad = create_or_update_vault_skill(
