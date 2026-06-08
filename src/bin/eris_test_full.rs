@@ -75,6 +75,22 @@ fn banner(index: usize, total: usize, filter: &str, phase: &str) {
     append_log(&format!("[{index}/{total}] {phase}: {filter}"));
 }
 
+fn warm_test_binary() -> Result<(), String> {
+    let _ = writeln!(io::stderr(), "eris test-full: building test binary (once)...");
+    append_log("=== cargo build --bin eris --tests ===");
+    let status = Command::new("cargo")
+        .args(["build", "--bin", "eris", "--tests"])
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .map_err(|e| format!("failed to spawn cargo build: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("cargo build --bin eris --tests failed".into())
+    }
+}
+
 fn run_batch(index: usize, total: usize, filter: &str) -> Result<bool, String> {
     banner(index, total, filter, "START");
     let status = Command::new("cargo")
@@ -103,6 +119,12 @@ fn main() -> ExitCode {
         "eris test-full: {total} batches — log: {LOG_FILE}\n"
     );
     append_log(&format!("=== eris test-full run ({total} batches) ==="));
+
+    if let Err(e) = warm_test_binary() {
+        let _ = writeln!(io::stderr(), "{e}");
+        append_log(&format!("*** ERROR: {e} ***"));
+        return ExitCode::from(1);
+    }
 
     let mut failed = false;
     for (i, filter) in BATCHES.iter().enumerate() {

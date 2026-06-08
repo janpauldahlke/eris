@@ -275,6 +275,26 @@ impl Drop for PeripheralLifecycle {
 fn sync_reap_managed_child(child: &mut Child, name: &'static str, options: ReapOptions) {
     #[cfg(unix)]
     {
+        // Fast path: short-lived stubs (e.g. `/bin/true` in unit tests) may already be a zombie.
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                tracing::debug!(
+                    daemon = name,
+                    code = ?status.code(),
+                    "Managed daemon already exited before SIGTERM"
+                );
+                return;
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(
+                    daemon = name,
+                    error = %e,
+                    "try_wait failed before SIGTERM; proceeding with shutdown"
+                );
+            }
+        }
+
         let pid = child.id();
         if pid == 0 {
             tracing::warn!(
@@ -1287,11 +1307,10 @@ mod tests {
         assert!(!lifecycle.started_llama_chat());
         assert!(!lifecycle.started_llama_embed());
 
-        let child = Command::new("true")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
+        let mut cmd = Command::new("true");
+        cmd.stdout(Stdio::null()).stderr(Stdio::null());
+        apply_unix_sidecar_process_group(&mut cmd);
+        let child = cmd.spawn().unwrap();
         let mut lifecycle = PeripheralLifecycle {
             ollama: None,
             qdrant: None,
