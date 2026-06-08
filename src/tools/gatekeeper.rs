@@ -774,6 +774,7 @@ mod tests {
     #[tokio::test]
     async fn gatekeeper_rejects_web_find_non_uuid_artifact_id() {
         #[derive(JsonSchema, Deserialize)]
+        #[allow(dead_code)] // fields exist for JSON Schema shape, not read by this stub test
         struct FindArgs {
             artifact_id: String,
             query: String,
