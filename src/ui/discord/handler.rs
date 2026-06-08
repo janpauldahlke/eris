@@ -165,6 +165,7 @@ async fn build_discord_ingress(
         display,
         for_model: Some(tagged),
         image,
+        audio: None,
     })
 }
 

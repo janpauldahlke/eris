@@ -86,6 +86,8 @@ async fn enqueue_user_ingress(
     if ing.display.is_empty() {
         if ing.image.is_some() {
             ing.display = "(image attachment)".to_string();
+        } else if ing.audio.is_some() {
+            // STT fills display before the orchestrator turn.
         } else {
             return;
         }
@@ -331,6 +333,7 @@ pub async fn start_chat_session(
         };
 
     config.validate_vision_ready()?;
+    config.validate_audio_ready()?;
 
     let api_http = Arc::new(crate::util::ApiHttpClient::new(config.clone())?);
 
@@ -852,6 +855,7 @@ pub async fn start_chat_session(
     let cancel_token_loop = cancel_token.clone();
     let interrupt_tx_user = interrupt_tx.clone();
     let discord_typing_loop = discord_typing_tx.clone();
+    let workspace_root_loop = workspace_root.clone();
     tokio::spawn(async move {
         let mut pending_inputs: VecDeque<UserIngress> = VecDeque::new();
         loop {
@@ -1056,6 +1060,7 @@ pub async fn start_chat_session(
                                     display,
                                     for_model: None,
                                     image: None,
+                                    audio: None,
                                 },
                             )
                             .await;
@@ -1087,19 +1092,100 @@ pub async fn start_chat_session(
                         .await;
                     continue;
                 }
-                let for_model = build_user_for_model(&ing);
+                if ing.audio.is_some() && !orchestrator.config.audio.enabled {
+                    tracing::warn!(
+                        target: "fcp.audio",
+                        "Rejected user ingress with audio attachment while audio disabled"
+                    );
+                    let _ = presentation_tx_err
+                        .send(SessionEvent::SystemError(
+                            "[ui] Voice ingress is disabled in config — audio attachment rejected."
+                                .into(),
+                        ))
+                        .await;
+                    continue;
+                }
+
+                let (display, for_model) = if let Some(audio_att) = &ing.audio {
+                    let _ = presentation_tx_err
+                        .send(SessionEvent::SystemError(
+                            "[ui] Transcribing voice…".into(),
+                        ))
+                        .await;
+                    match crate::util::audio::transcribe_audio(
+                        &orchestrator.config,
+                        &workspace_root_loop,
+                        &audio_att.relative_path,
+                    )
+                    .await
+                    {
+                        Ok(transcript) => {
+                            let t = transcript.trim();
+                            if t.is_empty() {
+                                tracing::warn!(
+                                    target: "fcp.audio",
+                                    path = %audio_att.relative_path,
+                                    "STT returned empty transcript"
+                                );
+                                let _ = presentation_tx_err
+                                    .send(SessionEvent::SystemError(
+                                        "[ui] Could not transcribe audio — empty result."
+                                            .into(),
+                                    ))
+                                    .await;
+                                continue;
+                            }
+                            let caption = ing.display.trim();
+                            let merged = if caption.is_empty()
+                                || caption == "(voice message)"
+                            {
+                                t.to_string()
+                            } else {
+                                format!("{t}\n\n{caption}")
+                            };
+                            tracing::info!(
+                                target: "fcp.audio",
+                                path = %audio_att.relative_path,
+                                transcript_len = merged.len(),
+                                "voice transcribed for orchestrator turn"
+                            );
+                            (merged.clone(), merged)
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                target: "fcp.audio",
+                                error = %e,
+                                "STT failed"
+                            );
+                            let _ = presentation_tx_err
+                                .send(SessionEvent::SystemError(format!(
+                                    "[ui] Voice transcription failed: {e}"
+                                )))
+                                .await;
+                            continue;
+                        }
+                    }
+                } else {
+                    (
+                        ing.display.clone(),
+                        build_user_for_model(&ing),
+                    )
+                };
+
                 tracing::info!(
                     msg_len = for_model.len(),
                     queued = pending_inputs.len(),
                     source = ?ing.source,
                     has_image = ing.image.is_some(),
+                    has_audio = ing.audio.is_some(),
                     "User input received"
                 );
                 if presentation_tx_err
                     .send(SessionEvent::UserTranscriptLine {
                         source: ing.source,
-                        body: ing.display.clone(),
+                        body: display,
                         image: ing.image.clone(),
+                        audio: ing.audio.clone(),
                     })
                     .await
                     .is_err()

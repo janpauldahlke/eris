@@ -204,6 +204,7 @@ mod tests {
                 source: InputSource::Discord,
                 body: "from discord".into(),
                 image: None,
+                audio: None,
             })
             .await
             .expect("send");

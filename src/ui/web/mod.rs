@@ -1,5 +1,6 @@
 //! Localhost web UI for chat (`eris chat --web`): Axum + SSE + minimal JS.
 
+mod audio_handlers;
 mod bridge;
 mod handlers;
 mod router;

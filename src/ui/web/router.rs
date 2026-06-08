@@ -7,6 +7,7 @@ use super::WebAppState;
 use super::handlers;
 use super::sse;
 use super::vision_handlers;
+use super::audio_handlers;
 
 pub fn web_chat_router(state: WebAppState) -> Router {
     Router::new()
@@ -20,6 +21,12 @@ pub fn web_chat_router(state: WebAppState) -> Router {
         .route(
             "/api/vision/preview/{filename}",
             get(vision_handlers::get_vision_preview),
+        )
+        .route("/api/audio/status", get(audio_handlers::audio_status))
+        .route("/api/audio/upload", post(audio_handlers::post_audio_upload))
+        .route(
+            "/api/audio/preview/{filename}",
+            get(audio_handlers::get_audio_preview),
         )
         .with_state(state)
 }

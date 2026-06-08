@@ -119,6 +119,11 @@ impl Tool for SystemHealthTool {
             "mmproj_path": cfg.llama_cpp.as_ref().and_then(|lc| lc.mmproj_path.as_ref()).map(|p| p.display().to_string()),
             "media_path": cfg.llama_cpp.as_ref().and_then(|lc| lc.media_path.as_ref()).map(|p| p.display().to_string()),
         });
+        let audio_section = json!({
+            "enabled": cfg.audio.enabled,
+            "upload_dir": cfg.audio.upload_dir.as_str(),
+            "max_duration_secs": cfg.audio.max_duration_secs,
+        });
         let fcp_moved = fcp_section;
         let llama_moved = llama_health;
 
@@ -232,6 +237,7 @@ impl Tool for SystemHealthTool {
             );
             map.insert("disks".into(), json!(disk_entries));
             map.insert("vision".into(), vision_section);
+            map.insert("audio".into(), audio_section);
 
             if let Some(h) = llama_moved {
                 map.insert("llama_cpp_health".into(), h);

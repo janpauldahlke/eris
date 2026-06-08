@@ -40,8 +40,16 @@ pub struct ImageAttachment {
     pub height: u32,
 }
 
+/// Audio attached to a user turn (web upload / mic pipeline).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AudioAttachment {
+    pub relative_path: String,
+    pub preview_url: String,
+    pub duration_secs: f32,
+}
+
 /// One queued user turn: what UIs show (`display`) vs what the model receives (`for_model`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UserIngress {
     pub source: InputSource,
     /// Plain text for transcript badges (e.g. Discord message body without framing).
@@ -52,6 +60,9 @@ pub struct UserIngress {
     /// Normalized vault image from web upload; requires `[vision] enabled`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<ImageAttachment>,
+    /// Normalized vault audio from web upload; requires `[audio] enabled`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<AudioAttachment>,
 }
 
 /// Prefix applied by the orchestrator when turning [`UserAction::SystemInject`] into a `user` line.
@@ -86,7 +97,7 @@ pub enum AlarmPayload {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum UserAction {
     Submit(String),
     /// Preferred path: includes [`InputSource`] for transcript badges; optional `for_model` for LLM-only framing.
@@ -115,7 +126,7 @@ pub enum UserAction {
 }
 
 /// Outbound updates from core to the active presentation (terminal or web).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SessionEvent {
     StateUpdate(AgentStateUpdate),
     /// User line accepted into the session queue (before the model runs); drives web/TUI transcript with source badge.
@@ -124,6 +135,8 @@ pub enum SessionEvent {
         body: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         image: Option<ImageAttachment>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        audio: Option<AudioAttachment>,
     },
     IncomingMessage(String),
     /// JSON protocol `thought` string from the assistant reply (internal reasoning; not `message_to_user`).
@@ -184,6 +197,7 @@ mod tests {
                 display: "ping".into(),
                 for_model: Some("[Discord] ping".into()),
                 image: None,
+                audio: None,
             }),
             UserAction::CancelCurrentTurn,
             UserAction::SystemInject("water".into()),
@@ -238,6 +252,7 @@ mod tests {
             source: InputSource::Discord,
             body: "hello from #nemos-home".into(),
             image: None,
+            audio: None,
         };
         let j = serde_json::to_string(&ev).expect("serialize");
         let back: SessionEvent = serde_json::from_str(&j).expect("deserialize");

@@ -127,7 +127,7 @@
   }
 
   /** @param {string} source — `web` | `cli` | `discord` */
-  function appendUserTranscriptLine(source, body, image) {
+  function appendUserTranscriptLine(source, body, image, audio) {
     const row = document.createElement("div");
     row.className = "msg user";
     const badge = document.createElement("span");
@@ -144,6 +144,14 @@
       img.src = image.preview_url;
       img.alt = "Attached image";
       row.appendChild(img);
+    }
+    if (audio && audio.preview_url) {
+      const aud = document.createElement("audio");
+      aud.className = "user-audio";
+      aud.controls = true;
+      aud.src = audio.preview_url;
+      aud.preload = "metadata";
+      row.appendChild(aud);
     }
     transcript.appendChild(row);
     transcript.scrollTop = transcript.scrollHeight;
@@ -366,7 +374,7 @@
     }
     if (data.UserTranscriptLine) {
       const u = data.UserTranscriptLine;
-      appendUserTranscriptLine(u.source, u.body, u.image || null);
+      appendUserTranscriptLine(u.source, u.body, u.image || null, u.audio || null);
       return;
     }
     if (data.ModelThought) {
@@ -411,6 +419,43 @@
   });
 
   let pendingAttachment = null;
+  let pendingAudioAttachment = null;
+  let mediaRecorder = null;
+  let mediaStream = null;
+  let recordedChunks = [];
+
+  function clearPendingAudioAttachment() {
+    pendingAudioAttachment = null;
+    const chip = document.getElementById("audio-chip");
+    const preview = document.getElementById("audio-preview");
+    const label = document.getElementById("audio-chip-label");
+    if (chip) chip.classList.remove("visible");
+    if (preview) {
+      preview.removeAttribute("src");
+      preview.load();
+    }
+    if (label) label.textContent = "Voice clip";
+  }
+
+  function setPendingAudioAttachment(data) {
+    pendingAudioAttachment = {
+      relative_path: data.relative_path,
+      preview_url: data.preview_url,
+      duration_secs: data.duration_secs,
+    };
+    const chip = document.getElementById("audio-chip");
+    const preview = document.getElementById("audio-preview");
+    const label = document.getElementById("audio-chip-label");
+    if (preview) preview.src = data.preview_url;
+    if (label) {
+      const d = Number(data.duration_secs);
+      label.textContent =
+        Number.isFinite(d) && d > 0
+          ? "Voice " + d.toFixed(1) + "s"
+          : "Voice clip";
+    }
+    if (chip) chip.classList.add("visible");
+  }
 
   function clearPendingAttachment() {
     pendingAttachment = null;
@@ -531,7 +576,142 @@
     document.body &&
     document.body.getAttribute("data-vision-enabled") === "true";
 
+  const audioEnabled =
+    document.body &&
+    document.body.getAttribute("data-audio-enabled") === "true";
+
+  async function submitIngress(ingress) {
+    try {
+      const res = await fetch("/api/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ SubmitIngress: ingress }),
+      });
+      if (!res.ok) {
+        appendLine("[ui] could not send message (channel busy?)", "system");
+      }
+    } catch (_err) {
+      appendLine("[ui] network error sending message", "system");
+    }
+  }
+
+  async function uploadAudioFile(file, autoSend) {
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch("/api/audio/upload", { method: "POST", body: fd });
+    if (!res.ok) {
+      let err = {};
+      try {
+        err = await res.json();
+      } catch (_e) {}
+      appendLine(
+        "[ui] audio upload failed: " + (err.error || res.status),
+        "system"
+      );
+      return null;
+    }
+    const data = await res.json();
+    const attachment = {
+      relative_path: data.relative_path,
+      preview_url: data.preview_url,
+      duration_secs: data.duration_secs,
+    };
+    if (autoSend) {
+      const caption = input ? input.value : "";
+      if (input) input.value = "";
+      await submitIngress({
+        source: "web",
+        display: caption,
+        for_model: null,
+        audio: attachment,
+      });
+      return attachment;
+    }
+    setPendingAudioAttachment(data);
+    return attachment;
+  }
+
+  function stopMediaCapture() {
+    if (mediaRecorder && mediaRecorder.state !== "inactive") {
+      mediaRecorder.stop();
+    }
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(function (t) {
+        t.stop();
+      });
+      mediaStream = null;
+    }
+  }
+
   const composeStack = document.querySelector(".compose-stack");
+
+  if (audioEnabled) {
+    const toolbar = document.getElementById("compose-toolbar");
+    if (toolbar) toolbar.hidden = false;
+
+    const audioRemove = document.getElementById("audio-remove");
+    if (audioRemove) {
+      audioRemove.addEventListener("click", function () {
+        clearPendingAudioAttachment();
+      });
+    }
+
+    const micBtn = document.getElementById("audio-mic-btn");
+    if (micBtn) {
+      micBtn.addEventListener("click", async function () {
+        if (mediaRecorder && mediaRecorder.state === "recording") {
+          stopMediaCapture();
+          micBtn.classList.remove("recording");
+          micBtn.setAttribute("aria-label", "Record voice");
+          return;
+        }
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          appendLine("[ui] microphone not supported in this browser", "system");
+          return;
+        }
+        try {
+          mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          recordedChunks = [];
+          mediaRecorder = new MediaRecorder(mediaStream);
+          mediaRecorder.ondataavailable = function (e) {
+            if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+          };
+          mediaRecorder.onstop = async function () {
+            const mimeType =
+              (mediaRecorder && mediaRecorder.mimeType) || "audio/webm";
+            const blob = new Blob(recordedChunks, { type: mimeType });
+            recordedChunks = [];
+            mediaRecorder = null;
+            if (mediaStream) {
+              mediaStream.getTracks().forEach(function (t) {
+                t.stop();
+              });
+              mediaStream = null;
+            }
+            if (blob.size === 0) {
+              appendLine("[ui] empty recording", "system");
+              return;
+            }
+            const file = new File([blob], "recording.webm", {
+              type: blob.type || "audio/webm",
+            });
+            try {
+              await uploadAudioFile(file, true);
+            } catch (_err) {
+              appendLine("[ui] network error uploading recording", "system");
+            }
+          };
+          mediaRecorder.start();
+          micBtn.classList.add("recording");
+          micBtn.setAttribute("aria-label", "Stop recording and send");
+        } catch (_err) {
+          appendLine("[ui] microphone permission denied or unavailable", "system");
+        }
+      });
+    }
+  }
+
+  const composeStackVision = composeStack;
 
   if (visionEnabled && form) {
     const removeBtn = document.getElementById("attachment-remove");
@@ -546,7 +726,7 @@
       e.stopPropagation();
     }
 
-    const dropTarget = composeStack || form;
+    const dropTarget = composeStackVision || form;
     ["dragenter", "dragover", "dragleave", "drop"].forEach(function (evName) {
       dropTarget.addEventListener(evName, preventDefaults, false);
     });
@@ -577,7 +757,7 @@
   form.addEventListener("submit", async function (e) {
     e.preventDefault();
     const text = input.value;
-    if (!text.trim()) return;
+    if (!text.trim() && !pendingAudioAttachment) return;
     const trimmed = text.trim();
     const norm = trimmed.toLowerCase();
     if (norm === "/exit" || norm === "/quit") {
@@ -595,18 +775,11 @@
       ingress.image = pendingAttachment;
       clearPendingAttachment();
     }
-    try {
-      const res = await fetch("/api/action", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ SubmitIngress: ingress }),
-      });
-      if (!res.ok) {
-        appendLine("[ui] could not send message (channel busy?)", "system");
-      }
-    } catch (err) {
-      appendLine("[ui] network error sending message", "system");
+    if (pendingAudioAttachment) {
+      ingress.audio = pendingAudioAttachment;
+      clearPendingAudioAttachment();
     }
+    await submitIngress(ingress);
   });
 
   window.addEventListener("keydown", function (e) {

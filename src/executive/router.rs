@@ -51,8 +51,54 @@ async fn cleanup_web_missions_on_chat_exit(workspace_root: &Path, config: &AppCo
     }
 }
 
+async fn cleanup_audio_uploads_on_chat_exit(workspace_root: &Path, config: &AppConfig) {
+    if !config.audio.enabled || !config.audio.cleanup_uploads_on_chat_exit {
+        tracing::debug!(
+            target: "fcp.audio",
+            enabled = config.audio.enabled,
+            cleanup = config.audio.cleanup_uploads_on_chat_exit,
+            "Skipping voice upload dir purge on chat exit"
+        );
+        return;
+    }
+    let root = workspace_root.to_path_buf();
+    let audio = config.audio.clone();
+    let removed = match tokio::task::spawn_blocking(move || {
+        crate::util::audio::purge_upload_dir(&root, &audio)
+    })
+    .await
+    {
+        Ok(Ok(n)) => n,
+        Ok(Err(e)) => {
+            tracing::warn!(
+                target: "fcp.audio",
+                error = %e,
+                "Failed to purge voice upload dir on chat exit"
+            );
+            return;
+        }
+        Err(e) => {
+            tracing::warn!(
+                target: "fcp.audio",
+                error = %e,
+                "spawn_blocking join failed while purging voice uploads"
+            );
+            return;
+        }
+    };
+    if removed > 0 {
+        tracing::info!(
+            target: "fcp.audio",
+            removed_files = removed,
+            path = %config.audio.upload_dir,
+            "Purged voice upload dir on chat exit"
+        );
+    }
+}
+
 async fn log_peripheral_shutdown(session: &mut StartedChatSession, config: &AppConfig) {
     cleanup_web_missions_on_chat_exit(&config.active_vault(), config).await;
+    cleanup_audio_uploads_on_chat_exit(&config.active_vault(), config).await;
     let eris_owned_ollama = session.peripheral_lifecycle.started_ollama();
     tracing::info!("Tearing down peripheral daemons started by this session…");
     let llama_policy = crate::executive::peripherals::LlamaShutdownPolicy::from_config(config);
