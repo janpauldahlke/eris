@@ -105,10 +105,16 @@ jobs:
         run: |
           set -o pipefail
           batch='${{ matrix.batch }}'
-          output="$(cargo test --bin eris "$batch" -- --test-threads=1 2>&1 | tee /dev/stderr)"
-          ran="$(printf '%s\n' "$output" | sed -n 's/^running \([0-9][0-9]*\) tests.*/\1/p' | tail -1)"
-          if [ -z "$ran" ] || [ "$ran" = "0" ]; then
+          output="$(
+            CARGO_TERM_COLOR=never cargo test --bin eris "$batch" -- --test-threads=1 2>&1 \
+              | tee /dev/stderr
+          )"
+          if printf '%s\n' "$output" | grep -qE '^test result: ok\. 0 passed'; then
             echo "ERROR: batch filter matched zero tests: $batch"
+            exit 1
+          fi
+          if ! printf '%s\n' "$output" | grep -qE '^test result: ok\.'; then
+            echo "ERROR: cargo test did not succeed for batch: $batch"
             exit 1
           fi
 
@@ -139,13 +145,16 @@ jobs:
           set -o pipefail
           batch='${{ matrix.batch }}'
           output="$(
-            cargo llvm-cov test --bin eris "$batch" \
+            CARGO_TERM_COLOR=never cargo llvm-cov test --bin eris "$batch" \
               --codecov --output-path codecov.json \
               -- --test-threads=1 2>&1 | tee /dev/stderr
           )"
-          ran="$(printf '%s\n' "$output" | sed -n 's/^running \([0-9][0-9]*\) tests.*/\1/p' | tail -1)"
-          if [ -z "$ran" ] || [ "$ran" = "0" ]; then
+          if printf '%s\n' "$output" | grep -qE '^test result: ok\. 0 passed'; then
             echo "ERROR: batch filter matched zero tests: $batch"
+            exit 1
+          fi
+          if ! printf '%s\n' "$output" | grep -qE '^test result: ok\.'; then
+            echo "ERROR: cargo llvm-cov test did not succeed for batch: $batch"
             exit 1
           fi
 
