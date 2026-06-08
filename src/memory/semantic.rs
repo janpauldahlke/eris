@@ -142,13 +142,6 @@ pub struct MemoryHit {
     pub recency_ts_ms: Option<u64>,
 }
 
-#[derive(Debug, Clone)]
-pub struct SemanticChunkHit {
-    pub chunk_index: usize,
-    pub snippet: String,
-    pub score: f32,
-}
-
 #[derive(Clone)]
 pub struct SemanticBrain {
     client: Arc<Qdrant>,
@@ -306,114 +299,37 @@ impl SemanticBrain {
         Ok(())
     }
 
-    pub async fn upsert_web_chunk(
-        &self,
-        artifact_id: &str,
-        url: &str,
-        chunk_index: usize,
-        text: &str,
-    ) -> Result<()> {
-        let embedding = self.generate_embedding(text).await?;
-        let id = uuid::Uuid::new_v4().to_string();
-
-        let mut payload: HashMap<String, serde_json::Value> = HashMap::new();
-        payload.insert("text".to_string(), serde_json::json!(text));
-        payload.insert("source".to_string(), serde_json::json!("web_artifact"));
-        payload.insert("artifact_id".to_string(), serde_json::json!(artifact_id));
-        payload.insert("url".to_string(), serde_json::json!(url));
-        payload.insert("chunk_index".to_string(), serde_json::json!(chunk_index));
-        payload.insert("tags".to_string(), serde_json::json!(vec!["web_artifact"]));
-        payload.insert(
-            RECENCY_TS_PAYLOAD_KEY.to_string(),
-            serde_json::json!(unix_ms_now()),
-        );
-
-        let point = PointStruct::new(id, embedding, payload);
-        self.client
-            .upsert_points(UpsertPointsBuilder::new(
-                &self.config.qdrant_collection_v2,
-                vec![point],
-            ))
-            .await
-            .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
-
-        Ok(())
-    }
-
-    pub async fn search_web_artifact(
-        &self,
-        query: &str,
-        artifact_id: &str,
-        limit: usize,
-    ) -> Result<Vec<SemanticChunkHit>> {
-        let embedding = self.generate_embedding(query).await?;
-        let oversample = (limit.max(1) * 4) as u64;
-        let search_result = self
-            .client
-            .search_points(
-                SearchPointsBuilder::new(&self.config.qdrant_collection_v2, embedding, oversample)
-                    .with_payload(true),
-            )
-            .await
-            .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
-
-        let mut out = Vec::new();
-        for point in search_result.result {
-            let payload = point.payload;
-            let Some(artifact_val) = payload.get("artifact_id") else {
-                continue;
-            };
-            let Some(qdrant_client::qdrant::value::Kind::StringValue(found_artifact_id)) =
-                &artifact_val.kind
-            else {
-                continue;
-            };
-            if found_artifact_id != artifact_id {
-                continue;
-            }
-
-            let text = payload
-                .get("text")
-                .and_then(|v| v.kind.as_ref())
-                .and_then(|k| match k {
-                    qdrant_client::qdrant::value::Kind::StringValue(s) => Some(s.clone()),
-                    _ => None,
-                })
-                .unwrap_or_default();
-            let chunk_index = payload
-                .get("chunk_index")
-                .and_then(|v| v.kind.as_ref())
-                .and_then(|k| match k {
-                    qdrant_client::qdrant::value::Kind::IntegerValue(i) => usize::try_from(*i).ok(),
-                    _ => None,
-                })
-                .unwrap_or(0);
-
-            out.push(SemanticChunkHit {
-                chunk_index,
-                snippet: text,
-                score: point.score,
-            });
-            if out.len() >= limit.max(1) {
-                break;
-            }
+    /// Remove a vault document point by stable `vault_key` (UUID v5 of key).
+    pub async fn delete_vault_document_v2(&self, vault_relative_key: &str) -> Result<()> {
+        let collection = &self.config.qdrant_collection_v2;
+        if collection.is_empty() {
+            return Ok(());
         }
-        Ok(out)
-    }
-
-    pub async fn delete_web_artifact_points(&self, artifact_id: &str) -> Result<()> {
+        let point_id =
+            uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, vault_relative_key.as_bytes()).to_string();
         self.client
             .delete_points(
-                DeletePointsBuilder::new(&self.config.qdrant_collection_v2)
-                    .points(Filter::must([Condition::matches(
-                        "artifact_id",
-                        artifact_id.to_string(),
-                    )]))
+                DeletePointsBuilder::new(collection)
+                    .points(vec![point_id])
                     .wait(true),
             )
             .await
             .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
         Ok(())
+    }
+
+    /// Semantic vector search returning ranked hits (used by turn-start prefetch).
+    pub async fn semantic_search_hits(
+        &self,
+        query: &str,
+        top_k: usize,
+        min_score: Option<f32>,
+    ) -> Result<Vec<MemoryHit>> {
+        let embedding = self.generate_embedding(query).await?;
+        let limit = u64::try_from(top_k.max(1)).unwrap_or(u64::MAX);
+        let mut hits = self.search_points_hits(&embedding, limit, None).await?;
+        hits = filter_hits_min_score(hits, min_score);
+        Ok(sort_and_limit_hits(hits, top_k))
     }
 
     /// Upsert a vault document into the **v2** collection with enriched payload fields.
@@ -467,8 +383,39 @@ impl SemanticBrain {
         Ok(())
     }
 
+    /// Sync one vault-relative markdown path into Qdrant (or delete if the file is gone).
+    pub async fn sync_vault_path(
+        &self,
+        vault_root: &std::path::Path,
+        rel_path: &str,
+    ) -> Result<()> {
+        let key = rel_path.replace('\\', "/");
+        if !vault_key_is_ingest_eligible(&key) {
+            return Ok(());
+        }
+
+        if key.starts_with("30_Synthesis/") {
+            if let Some(node_id) = synthesis_node_id_from_key(&key) {
+                let _ = self.index_synthesis_node(vault_root, &node_id).await?;
+            }
+            return Ok(());
+        }
+
+        let abs = vault_root.join(&key);
+        if !abs.is_file() {
+            self.delete_vault_document_v2(&key).await?;
+            tracing::debug!(vault_key = %key, "semantic reindex: removed deleted vault file");
+            return Ok(());
+        }
+
+        if self.index_tree_md_file(vault_root, &abs).await? {
+            tracing::debug!(vault_key = %key, "semantic reindex: indexed vault file");
+        }
+        Ok(())
+    }
+
     /// Recursive v2 vault ingest. For `30_Synthesis`, only indexes the **current head**
-    /// revision per node_id directory. Other roots are flat-ingested.
+    /// revision per node_id directory. Other roots are tree-ingested.
     pub async fn ingest_vault_v2(&self, vault_root: &std::path::Path) -> Result<usize> {
         if self.config.qdrant_collection_v2.is_empty() {
             return Ok(0);
@@ -487,9 +434,9 @@ impl SemanticBrain {
             }
 
             if *subdir == "30_Synthesis" {
-                count += self.ingest_synthesis_recursive(&dir, subdir).await;
+                count += self.ingest_synthesis_recursive(vault_root, &dir).await;
             } else {
-                count += self.ingest_flat_v2(&dir, subdir).await;
+                count += self.ingest_tree_v2(&dir, vault_root).await;
             }
         }
 
@@ -497,79 +444,144 @@ impl SemanticBrain {
         Ok(count)
     }
 
-    /// Ingest flat .md files from a v2 root (Invariants, Topology, Discourse).
-    async fn ingest_flat_v2(&self, dir: &std::path::Path, subdir: &str) -> usize {
+    /// Recursively ingest `.md` files under a v2 root (Invariants, Topology, Discourse).
+    async fn ingest_tree_v2(&self, dir: &std::path::Path, vault_root: &std::path::Path) -> usize {
         let mut count = 0usize;
-        let mut entries = match tokio::fs::read_dir(dir).await {
-            Ok(e) => e,
-            Err(e) => {
-                tracing::warn!(dir = %dir.display(), error = %e, "v2 ingest: failed to read dir");
-                return 0;
-            }
-        };
-
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            let path = entry.path();
-            if path.extension().is_none_or(|e| e != "md") {
-                continue;
-            }
-            if path
-                .to_string_lossy()
-                .replace('\\', "/")
-                .contains("/web/missions/")
-            {
-                continue;
-            }
-            match tokio::fs::read_to_string(&path).await {
-                Ok(raw) => {
-                    let parsed = parse_vault_md(&raw);
-                    if parsed.content.trim().is_empty() {
-                        continue;
-                    }
-                    let recency_ts_ms = tokio::fs::metadata(&path)
-                        .await
-                        .ok()
-                        .and_then(|m| m.modified().ok())
-                        .and_then(system_time_to_unix_ms)
-                        .unwrap_or_else(unix_ms_now);
-                    let file_name = path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("note.md");
-                    let vault_key = format!("{subdir}/{file_name}");
-                    let embed_text =
-                        vault_embed_text(parsed.title.as_deref(), &parsed.tags, &parsed.content);
-
-                    if let Err(e) = self
-                        .upsert_vault_document_v2(
-                            &vault_key,
-                            &embed_text,
-                            parsed.tags,
-                            None,
-                            None,
-                            true,
-                            None,
-                            recency_ts_ms,
-                        )
-                        .await
-                    {
-                        tracing::warn!(path = %path.display(), error = %e, "v2 ingest: failed to index");
-                    } else {
-                        tracing::debug!(vault_key = %vault_key, "v2 ingest: indexed flat file");
-                        count += 1;
-                    }
-                }
+        let mut stack = vec![dir.to_path_buf()];
+        while let Some(current) = stack.pop() {
+            let mut entries = match tokio::fs::read_dir(&current).await {
+                Ok(e) => e,
                 Err(e) => {
-                    tracing::warn!(path = %path.display(), error = %e, "v2 ingest: failed to read");
+                    tracing::warn!(dir = %current.display(), error = %e, "v2 ingest: failed to read dir");
+                    continue;
+                }
+            };
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if self.index_tree_md_file(vault_root, &path).await.unwrap_or(false) {
+                    count += 1;
                 }
             }
         }
         count
     }
 
-    /// Ingest `30_Synthesis/<node_id>/rXXXX.md` — only the highest-rev file with
-    /// `is_current: true` (or highest rev if no marker found).
-    async fn ingest_synthesis_recursive(&self, synth_dir: &std::path::Path, subdir: &str) -> usize {
+    async fn index_tree_md_file(
+        &self,
+        vault_root: &std::path::Path,
+        path: &std::path::Path,
+    ) -> Result<bool> {
+        if path.extension().is_none_or(|e| e != "md") {
+            return Ok(false);
+        }
+        let normalized = path.to_string_lossy().replace('\\', "/");
+        if normalized.contains("/web/missions/") {
+            return Ok(false);
+        }
+        let vault_key = match vault_key_from_abs_path(vault_root, path) {
+            Some(k) if vault_key_is_ingest_eligible(&k) => k,
+            _ => return Ok(false),
+        };
+
+        let raw = tokio::fs::read_to_string(path).await.map_err(FcpError::Io)?;
+        let parsed = parse_vault_md(&raw);
+        if parsed.content.trim().is_empty() {
+            return Ok(false);
+        }
+        let recency_ts_ms = tokio::fs::metadata(path)
+            .await
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(system_time_to_unix_ms)
+            .unwrap_or_else(unix_ms_now);
+        let embed_text = vault_embed_text(parsed.title.as_deref(), &parsed.tags, &parsed.content);
+        let epistemic = extract_frontmatter_field(&raw, "epistemic_status");
+
+        self.upsert_vault_document_v2(
+            &vault_key,
+            &embed_text,
+            parsed.tags,
+            None,
+            None,
+            true,
+            epistemic.as_deref(),
+            recency_ts_ms,
+        )
+        .await?;
+        tracing::debug!(vault_key = %vault_key, "v2 ingest: indexed file");
+        Ok(true)
+    }
+
+    async fn index_synthesis_node(&self, vault_root: &std::path::Path, node_id: &str) -> Result<bool> {
+        let node_path = vault_root.join("30_Synthesis").join(node_id);
+        if !node_path.is_dir() {
+            return Ok(false);
+        }
+        let subdir = "30_Synthesis";
+        let mut best_rev: Option<(u32, std::path::PathBuf)> = None;
+        let mut rev_entries = match tokio::fs::read_dir(&node_path).await {
+            Ok(e) => e,
+            Err(_) => return Ok(false),
+        };
+        while let Ok(Some(rev_entry)) = rev_entries.next_entry().await {
+            let name = rev_entry.file_name();
+            let name_str = name.to_string_lossy();
+            if let Some(num_str) = name_str
+                .strip_prefix('r')
+                .and_then(|s| s.strip_suffix(".md"))
+                && let Ok(n) = num_str.parse::<u32>()
+                && best_rev.as_ref().is_none_or(|(best, _)| n > *best)
+            {
+                best_rev = Some((n, rev_entry.path()));
+            }
+        }
+        let Some((rev, head_path)) = best_rev else {
+            return Ok(false);
+        };
+
+        let raw = tokio::fs::read_to_string(&head_path).await.map_err(FcpError::Io)?;
+        let parsed = parse_vault_md(&raw);
+        if parsed.content.trim().is_empty() {
+            return Ok(false);
+        }
+        let recency_ts_ms = tokio::fs::metadata(&head_path)
+            .await
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(system_time_to_unix_ms)
+            .unwrap_or_else(unix_ms_now);
+        let file_name = head_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("r0001.md");
+        let vault_key = format!("{subdir}/{node_id}/{file_name}");
+        let embed_text = vault_embed_text(parsed.title.as_deref(), &parsed.tags, &parsed.content);
+        let epistemic = extract_frontmatter_field(&raw, "epistemic_status");
+
+        self.upsert_vault_document_v2(
+            &vault_key,
+            &embed_text,
+            parsed.tags,
+            Some(node_id),
+            Some(rev),
+            true,
+            epistemic.as_deref(),
+            recency_ts_ms,
+        )
+        .await?;
+        Ok(true)
+    }
+
+    /// Ingest `30_Synthesis/<node_id>/rXXXX.md` — only the highest-rev head per node.
+    async fn ingest_synthesis_recursive(
+        &self,
+        vault_root: &std::path::Path,
+        synth_dir: &std::path::Path,
+    ) -> usize {
         let mut count = 0usize;
         let mut node_dirs = match tokio::fs::read_dir(synth_dir).await {
             Ok(e) => e,
@@ -593,82 +605,14 @@ impl SemanticBrain {
                 continue;
             }
 
-            // Find highest revision file
-            let mut best_rev: Option<(u32, std::path::PathBuf)> = None;
-            let mut rev_entries = match tokio::fs::read_dir(&node_path).await {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
-            while let Ok(Some(rev_entry)) = rev_entries.next_entry().await {
-                let name = rev_entry.file_name();
-                let name_str = name.to_string_lossy();
-                if let Some(num_str) = name_str
-                    .strip_prefix('r')
-                    .and_then(|s| s.strip_suffix(".md"))
-                    && let Ok(n) = num_str.parse::<u32>()
-                    && best_rev.as_ref().is_none_or(|(best, _)| n > *best)
-                {
-                    best_rev = Some((n, rev_entry.path()));
+            match self.index_synthesis_node(vault_root, &node_id).await {
+                Ok(true) => {
+                    tracing::debug!(node_id = %node_id, "v2 ingest: indexed synthesis head revision");
+                    count += 1;
                 }
-            }
-
-            let Some((rev, head_path)) = best_rev else {
-                continue;
-            };
-
-            match tokio::fs::read_to_string(&head_path).await {
-                Ok(raw) => {
-                    let parsed = parse_vault_md(&raw);
-                    if parsed.content.trim().is_empty() {
-                        continue;
-                    }
-                    let recency_ts_ms = tokio::fs::metadata(&head_path)
-                        .await
-                        .ok()
-                        .and_then(|m| m.modified().ok())
-                        .and_then(system_time_to_unix_ms)
-                        .unwrap_or_else(unix_ms_now);
-                    let file_name = head_path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("r0001.md");
-                    let vault_key = format!("{subdir}/{node_id}/{file_name}");
-                    let embed_text =
-                        vault_embed_text(parsed.title.as_deref(), &parsed.tags, &parsed.content);
-
-                    // Extract epistemic_status from frontmatter if present
-                    let epistemic = extract_frontmatter_field(&raw, "epistemic_status");
-
-                    if let Err(e) = self
-                        .upsert_vault_document_v2(
-                            &vault_key,
-                            &embed_text,
-                            parsed.tags,
-                            Some(&node_id),
-                            Some(rev),
-                            true,
-                            epistemic.as_deref(),
-                            recency_ts_ms,
-                        )
-                        .await
-                    {
-                        tracing::warn!(
-                            path = %head_path.display(),
-                            error = %e,
-                            "v2 ingest: failed to index synthesis head"
-                        );
-                    } else {
-                        tracing::debug!(
-                            node_id = %node_id,
-                            rev,
-                            vault_key = %vault_key,
-                            "v2 ingest: indexed synthesis head revision"
-                        );
-                        count += 1;
-                    }
-                }
+                Ok(false) => {}
                 Err(e) => {
-                    tracing::warn!(path = %head_path.display(), error = %e, "v2 ingest: failed to read head revision");
+                    tracing::warn!(node_id = %node_id, error = %e, "v2 ingest: failed to index synthesis head");
                 }
             }
         }
@@ -1149,6 +1093,33 @@ pub fn format_memory_hits_markdown(hits: &[MemoryHit], max_total_chars: usize) -
         out.push_str(&line);
     }
     out
+}
+
+fn vault_key_from_abs_path(vault_root: &std::path::Path, path: &std::path::Path) -> Option<String> {
+    let rel = path.strip_prefix(vault_root).ok()?;
+    let key = rel.to_string_lossy().replace('\\', "/");
+    if key.is_empty() {
+        return None;
+    }
+    Some(key)
+}
+
+fn vault_key_is_ingest_eligible(key: &str) -> bool {
+    if key.contains("/web/missions/") {
+        return false;
+    }
+    VAULT_INGEST_SUBDIRS_V2
+        .iter()
+        .any(|subdir| key.starts_with(&format!("{subdir}/")) || key == *subdir)
+}
+
+fn synthesis_node_id_from_key(key: &str) -> Option<String> {
+    let rest = key.strip_prefix("30_Synthesis/")?;
+    let node_id = rest.split('/').next()?;
+    if node_id.is_empty() {
+        return None;
+    }
+    Some(node_id.to_string())
 }
 
 /// Text stored in Qdrant and embedded for vault-sourced memory (title/tags header + body).

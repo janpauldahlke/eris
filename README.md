@@ -58,18 +58,35 @@ Full instructions: **[docs/HOW_TO/LLAMA_CPP_SETUP.md](docs/HOW_TO/LLAMA_CPP_SETU
 
 ### Qdrant (vector DB)
 
-Used for semantic memory (`memory:query`), boot ingest, and web-artifact cleanup. The client uses the URL in `qdrant_url` (default `http://localhost:6334`). gRPC must be reachable after TCP connect.
+Used for semantic memory (`memory:query`), boot ingest, live vault re-index (`vault_reindex_on_write`), and **turn-start prefetch** (`memory_prefetch_enabled` — auto-injects a compact `[RELEVANT_LEARNED_MEMORY]` block from indexed knowledge before each LLM step; deterministic, not an LLM tool). The client uses the URL in `qdrant_url` (default `http://localhost:6334`). gRPC must be reachable after TCP connect.
 
 **Option A — Docker (typical)**
 
 ```bash
-docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant
+docker run -p 6333:6333 -p 6334:6334 -v eris-qdrant-data:/qdrant/storage qdrant/qdrant
 ```
 
 - **6333** — REST/dashboard (optional).
 - **6334** — gRPC (what Eris uses by default).
 
 **Option B — native/binary** — install Qdrant from upstream and listen on the same ports, or change `qdrant_url` in `.fcp/config.toml`.
+
+**Why a Docker volume?** Boot ingest rebuilds vectors *from your Markdown vault* into Qdrant, but Qdrant still stores those vectors on *its own disk*. Without `-v eris-qdrant-data:/qdrant/storage`, stopping or recreating the container wipes the collection — every restart would re-embed all vault files (slow, redundant Ollama calls). The volume keeps the index between container lifetimes; ingest and live re-index then only touch what changed. Your vault files on the host are unchanged either way.
+
+**Live sync (`vault_reindex_on_write`)** — when `true` (default), a debounced filesystem watch on ingest roots (`10_Topology/`, `30_Synthesis/`, etc.) upserts edits into Qdrant and removes **Qdrant points** when a watched `.md` file is deleted or renamed. This does **not** delete anything on your vault filesystem — only the semantic index mirror inside Qdrant.
+
+**Turn-start prefetch** — deterministic Rust (not an LLM tool): embed the user message, search Qdrant, inject a compact `[RELEVANT_LEARNED_MEMORY]` block into the system prompt when hits pass the score floor. Empty results omit the block entirely. `memory:query` remains for deep/filtered/recency search.
+
+| Key | Default | Role |
+| --- | --- | --- |
+| `memory_prefetch_enabled` | `true` | Master switch for turn-start prefetch |
+| `memory_prefetch_top_k` | `2` | Max hits injected per turn |
+| `memory_prefetch_min_score` | `0.52` | Cosine similarity floor (0.0–1.0); raise if noise appears |
+| `memory_prefetch_max_chars` | `600` | Total character budget inside the prefetch block |
+| `memory_prefetch_max_chars_per_hit` | `280` | Per-hit snippet cap |
+| `memory_prefetch_min_user_chars` | `16` | Skip prefetch on very short user messages |
+| `memory_prefetch_timeout_secs` | `5` | Fail-open timeout for embed + search (turn continues with no block) |
+| `vault_reindex_on_write` | `true` | Debounced vault watch → Qdrant upsert/delete |
 
 If Qdrant is unreachable and `require_semantic_brain` is `true` (default), \*\*chat startup fails\*\* after retries. Set `require_semantic_brain = false` only if you want chat without vector tools.
 

@@ -884,6 +884,30 @@ pub struct AppConfig {
     /// Minimum Qdrant limit when oversampling for path prefix.
     #[serde(default = "default_memory_query_oversample_min")]
     pub memory_query_oversample_min: u64,
+    /// When true, embed the user message at turn start and inject `[RELEVANT_LEARNED_MEMORY]` from Qdrant.
+    #[serde(default = "default_memory_prefetch_enabled")]
+    pub memory_prefetch_enabled: bool,
+    /// Max semantic hits in the turn-start prefetch block.
+    #[serde(default = "default_memory_prefetch_top_k")]
+    pub memory_prefetch_top_k: u32,
+    /// Cosine similarity floor for prefetch hits (0.0–1.0).
+    #[serde(default = "default_memory_prefetch_min_score")]
+    pub memory_prefetch_min_score: f32,
+    /// Total character budget inside `[RELEVANT_LEARNED_MEMORY]` tags.
+    #[serde(default = "default_memory_prefetch_max_chars")]
+    pub memory_prefetch_max_chars: usize,
+    /// Per-hit snippet cap inside the prefetch block.
+    #[serde(default = "default_memory_prefetch_max_chars_per_hit")]
+    pub memory_prefetch_max_chars_per_hit: usize,
+    /// Skip prefetch when the user message is shorter than this (chars).
+    #[serde(default = "default_memory_prefetch_min_user_chars")]
+    pub memory_prefetch_min_user_chars: usize,
+    /// Fail-open timeout for embed + Qdrant search during prefetch (seconds).
+    #[serde(default = "default_memory_prefetch_timeout_secs")]
+    pub memory_prefetch_timeout_secs: u64,
+    /// When true, debounced vault watch re-indexes markdown under ingest roots into Qdrant.
+    #[serde(default = "default_vault_reindex_on_write")]
+    pub vault_reindex_on_write: bool,
     /// Max files returned by [`crate::tools::vault::VaultSearchTool`] (caps LLM `max_files`).
     #[serde(default = "default_vault_search_max_files")]
     pub vault_search_max_files: u32,
@@ -1125,6 +1149,38 @@ fn default_memory_query_oversample_multiplier() -> u64 {
 /// Minimum Qdrant limit during oversampling for path-prefix queries.
 fn default_memory_query_oversample_min() -> u64 {
     30
+}
+
+fn default_memory_prefetch_enabled() -> bool {
+    true
+}
+
+fn default_memory_prefetch_top_k() -> u32 {
+    2
+}
+
+fn default_memory_prefetch_min_score() -> f32 {
+    0.52
+}
+
+fn default_memory_prefetch_max_chars() -> usize {
+    600
+}
+
+fn default_memory_prefetch_max_chars_per_hit() -> usize {
+    280
+}
+
+fn default_memory_prefetch_min_user_chars() -> usize {
+    16
+}
+
+fn default_memory_prefetch_timeout_secs() -> u64 {
+    5
+}
+
+fn default_vault_reindex_on_write() -> bool {
+    true
 }
 
 fn default_vault_search_max_files() -> u32 {
@@ -1434,6 +1490,14 @@ impl Default for AppConfig {
             memory_query_oversample_cap: default_memory_query_oversample_cap(),
             memory_query_oversample_multiplier: default_memory_query_oversample_multiplier(),
             memory_query_oversample_min: default_memory_query_oversample_min(),
+            memory_prefetch_enabled: default_memory_prefetch_enabled(),
+            memory_prefetch_top_k: default_memory_prefetch_top_k(),
+            memory_prefetch_min_score: default_memory_prefetch_min_score(),
+            memory_prefetch_max_chars: default_memory_prefetch_max_chars(),
+            memory_prefetch_max_chars_per_hit: default_memory_prefetch_max_chars_per_hit(),
+            memory_prefetch_min_user_chars: default_memory_prefetch_min_user_chars(),
+            memory_prefetch_timeout_secs: default_memory_prefetch_timeout_secs(),
+            vault_reindex_on_write: default_vault_reindex_on_write(),
             vault_search_max_files: default_vault_search_max_files(),
             vault_search_max_snippets_per_file: default_vault_search_max_snippets_per_file(),
             vault_search_snippet_radius_lines: default_vault_search_snippet_radius_lines(),

@@ -351,6 +351,7 @@ pub async fn run_benchmark(
         Arc::new(std::sync::atomic::AtomicBool::new(false)),
         None,
         None,
+        semantic_arc,
     );
 
     let harness = BenchmarkHarness::new(&config.active_vault(), isolation_mode)?;

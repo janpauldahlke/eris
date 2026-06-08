@@ -55,6 +55,8 @@ impl<E: LlmEngine> Orchestrator<E> {
         self.force_full_tool_schemas_in_llm_view = false;
         self.activity_line = None;
         self.last_deck_message_body = None;
+        self.last_prefetch_ms = 0;
+        self.context_assembler.set_turn_prefetch_block(None);
         let mut web_tool_activity = false;
         self.web_tool_calls_this_turn = 0;
         if let Some(ledger) = &self.web_ledger {
@@ -86,6 +88,20 @@ impl<E: LlmEngine> Orchestrator<E> {
             .await?
         {
             return Ok(());
+        }
+
+        // ── Turn-start semantic prefetch (deterministic; not an LLM tool) ──
+        if let Some(semantic) = self.semantic.as_ref() {
+            let user_text = self.last_user_content().to_string();
+            let prefetch_started = Instant::now();
+            if let Some(block) =
+                crate::memory::prefetch::run_turn_prefetch(semantic, &user_text, &self.config).await
+            {
+                self.last_prefetch_ms = prefetch_started.elapsed().as_millis() as u64;
+                let hit_count = block.matches('\n').count().saturating_add(1);
+                self.activity_line = Some(format!("Recalled {hit_count} indexed fact(s)"));
+                self.context_assembler.set_turn_prefetch_block(Some(block));
+            }
         }
 
         // ── Pre-LLM semantic routing ─────────────────────────────────
