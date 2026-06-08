@@ -46,6 +46,25 @@ impl ChatViewMode {
     }
 }
 
+/// LLM-facing user content: optional vision path hint when an image attachment is present.
+fn build_user_for_model(ing: &UserIngress) -> String {
+    if let Some(ref img) = ing.image {
+        let prompt = ing
+            .for_model
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(ing.display.as_str());
+        format!(
+            "{prompt}\n\n[Attached image at vault path: {path}]\nBefore answering any question about this image, call vision:see with relative_path \"{path}\" and a prompt that matches what the user asked.",
+            path = img.relative_path,
+        )
+    } else {
+        ing.for_model
+            .clone()
+            .unwrap_or_else(|| ing.display.clone())
+    }
+}
+
 fn try_send_discord_typing(tx: &Option<mpsc::Sender<DiscordTypingCtl>>, cmd: DiscordTypingCtl) {
     if let Some(t) = tx {
         if t.try_send(cmd).is_err() {
@@ -65,7 +84,11 @@ async fn enqueue_user_ingress(
 ) {
     ing.display = ing.display.trim().to_string();
     if ing.display.is_empty() {
-        return;
+        if ing.image.is_some() {
+            ing.display = "(image attachment)".to_string();
+        } else {
+            return;
+        }
     }
     if pending_inputs.len() >= 3 {
         let _ = pending_inputs.pop_front();
@@ -307,6 +330,8 @@ pub async fn start_chat_session(
             }
         };
 
+    config.validate_vision_ready()?;
+
     let api_http = Arc::new(crate::util::ApiHttpClient::new(config.clone())?);
 
     let mut gatekeeper = Gatekeeper::new();
@@ -539,6 +564,15 @@ pub async fn start_chat_session(
     gatekeeper.register(Arc::new(crate::tools::system::SystemHealthTool {
         config: config.clone(),
     }));
+
+    if config.vision.enabled {
+        gatekeeper.register(Arc::new(crate::tools::vision::VisionSeeTool {
+            config: config.clone(),
+            workspace_root: workspace_root.clone(),
+        }));
+    } else {
+        tracing::info!("vision:see disabled by config — not registered");
+    }
 
     gatekeeper.register(Arc::new(crate::tools::clock::ClockNowTool));
     gatekeeper.register(Arc::new(crate::tools::clock::ClockTimerTool {
@@ -1021,6 +1055,7 @@ pub async fn start_chat_session(
                                     source: submit_source_default,
                                     display,
                                     for_model: None,
+                                    image: None,
                                 },
                             )
                             .await;
@@ -1039,17 +1074,32 @@ pub async fn start_chat_session(
             while let Some(ing) = pending_inputs.pop_front() {
                 orchestrator.queued_inputs = pending_inputs.len();
                 orchestrator.broadcast_state().await;
-                let for_model = ing.for_model.unwrap_or_else(|| ing.display.clone());
+                if ing.image.is_some() && !orchestrator.config.vision.enabled {
+                    tracing::warn!(
+                        target: "fcp.vision",
+                        "Rejected user ingress with image attachment while vision disabled"
+                    );
+                    let _ = presentation_tx_err
+                        .send(SessionEvent::SystemError(
+                            "[ui] Vision is disabled in config — image attachment rejected."
+                                .into(),
+                        ))
+                        .await;
+                    continue;
+                }
+                let for_model = build_user_for_model(&ing);
                 tracing::info!(
                     msg_len = for_model.len(),
                     queued = pending_inputs.len(),
                     source = ?ing.source,
+                    has_image = ing.image.is_some(),
                     "User input received"
                 );
                 if presentation_tx_err
                     .send(SessionEvent::UserTranscriptLine {
                         source: ing.source,
                         body: ing.display.clone(),
+                        image: ing.image.clone(),
                     })
                     .await
                     .is_err()

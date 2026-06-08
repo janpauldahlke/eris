@@ -131,6 +131,32 @@ Context length for the managed `llama-server` comes from the top-level `num_ctx`
 | `embed_model_path` | path | — | Full path to embed GGUF |
 | `n_gpu_layers` | int | 0 | Layers offloaded to GPU. `99` = all. `0` = CPU only. |
 | `ready_timeout_secs` | int | 30 | Max seconds to wait for server readiness |
+| `mmproj_path` | path | — | Multimodal projector GGUF; required when `[vision] enabled = true` |
+| `media_path` | path | vault root | `--media-path` for `file://` image paths in `vision:see` |
+
+---
+
+## 4b. Vision (optional multimodal)
+
+Image understanding is **only** on the llama.cpp path (`vision:see`). Ollama backend does not register the tool or spawn mmproj.
+
+1. Use a **multimodal chat GGUF** and matching **mmproj** (tested: Gemma 4 12B + Unsloth `mmproj-F16.gguf`).
+2. Build **recent llama.cpp** — Gemma 4’s `gemma4uv` projector needs **b9493+**; older `llama-server` builds fail at mmproj load.
+3. Enable in config:
+
+```toml
+[vision]
+enabled = true
+
+[llama_cpp]
+mmproj_path = "/path/to/mmproj-F16.gguf"
+ready_timeout_secs = 120
+```
+
+4. **Web:** `eris chat --web` — drop image + question in compose area.
+5. **Discord:** optional sidecar downloads channel image attachments into the same vault upload folder.
+
+Operator guide: **[VISION.md](VISION.md)**.
 
 ---
 
@@ -224,3 +250,9 @@ This is the main advantage over the Ollama path, where the model can (and occasi
 - Indicates a bug in the GBNF grammar compilation
 - File an issue with the grammar string (logged at startup)
 - Workaround: switch to the Ollama backend temporarily (`llm_backend = "Ollama"`)
+
+**`unknown projector type: gemma4uv` (vision)**
+- Your `llama-server` build predates Gemma 4 multimodal support — rebuild llama.cpp from current master (see [VISION.md](VISION.md))
+
+**Vision enabled but chat server has no mmproj**
+- Stale external `llama-server` on port 8090 — stop it so Eris spawns a managed instance with `--mmproj` / `--media-path`

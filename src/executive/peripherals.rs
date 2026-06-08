@@ -553,6 +553,23 @@ impl PeripheralLifecycle {
                 cmd.arg("--reasoning").arg("off");
                 cmd.arg("--reasoning-budget").arg("0");
             }
+            if config.vision.enabled {
+                if let Some(ref mmproj) = lc.mmproj_path {
+                    cmd.arg("--mmproj").arg(mmproj);
+                }
+                let media_path = lc
+                    .media_path
+                    .as_ref()
+                    .cloned()
+                    .unwrap_or_else(|| config.active_vault());
+                cmd.arg("--media-path").arg(&media_path);
+                tracing::info!(
+                    server = "llama-chat",
+                    mmproj = ?lc.mmproj_path,
+                    media_path = %media_path.display(),
+                    "vision enabled: multimodal flags applied"
+                );
+            }
             apply_unix_sidecar_process_group(&mut cmd);
 
             let chat_child = cmd.spawn().map_err(|e| {

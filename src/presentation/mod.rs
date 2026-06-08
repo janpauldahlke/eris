@@ -31,6 +31,15 @@ impl InputSource {
     }
 }
 
+/// Image attached to a user turn (web upload pipeline).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImageAttachment {
+    pub relative_path: String,
+    pub preview_url: String,
+    pub width: u32,
+    pub height: u32,
+}
+
 /// One queued user turn: what UIs show (`display`) vs what the model receives (`for_model`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserIngress {
@@ -40,6 +49,9 @@ pub struct UserIngress {
     /// When set, pushed to the LLM stack as `user` content; otherwise `display` is used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub for_model: Option<String>,
+    /// Normalized vault image from web upload; requires `[vision] enabled`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<ImageAttachment>,
 }
 
 /// Prefix applied by the orchestrator when turning [`UserAction::SystemInject`] into a `user` line.
@@ -110,6 +122,8 @@ pub enum SessionEvent {
     UserTranscriptLine {
         source: InputSource,
         body: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        image: Option<ImageAttachment>,
     },
     IncomingMessage(String),
     /// JSON protocol `thought` string from the assistant reply (internal reasoning; not `message_to_user`).
@@ -169,6 +183,7 @@ mod tests {
                 source: InputSource::Discord,
                 display: "ping".into(),
                 for_model: Some("[Discord] ping".into()),
+                image: None,
             }),
             UserAction::CancelCurrentTurn,
             UserAction::SystemInject("water".into()),
@@ -222,6 +237,7 @@ mod tests {
         let ev = SessionEvent::UserTranscriptLine {
             source: InputSource::Discord,
             body: "hello from #nemos-home".into(),
+            image: None,
         };
         let j = serde_json::to_string(&ev).expect("serialize");
         let back: SessionEvent = serde_json::from_str(&j).expect("deserialize");

@@ -149,6 +149,84 @@ fn default_api_profile_enabled() -> bool {
     true
 }
 
+/// Multimodal vision (`vision:see`, web drop zone). Master switch: when false, no mmproj spawn, no upload routes, no tool.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct VisionConfig {
+    #[serde(default = "default_vision_enabled")]
+    pub enabled: bool,
+    /// Vault-relative directory for normalized uploads (e.g. `99_USER_UPLOADED/images`).
+    #[serde(default = "default_vision_upload_dir")]
+    pub upload_dir: String,
+    /// Longest edge (px) after server-side normalize (Gemma encoder tile size).
+    #[serde(default = "default_vision_target_max_px")]
+    pub target_max_px: u32,
+    /// Reject raw multipart uploads above this size (bytes).
+    #[serde(default = "default_vision_max_upload_bytes")]
+    pub max_upload_bytes: u64,
+    /// Reject normalized JPEG output above this size (bytes).
+    #[serde(default = "default_vision_max_output_bytes")]
+    pub max_output_bytes: u64,
+    #[serde(default = "default_vision_allowed_extensions")]
+    pub allowed_extensions: Vec<String>,
+    #[serde(default = "default_vision_jpeg_quality")]
+    pub jpeg_quality: u8,
+    #[serde(default = "default_vision_default_prompt")]
+    pub default_prompt: String,
+}
+
+fn default_vision_enabled() -> bool {
+    false
+}
+
+fn default_vision_upload_dir() -> String {
+    "99_USER_UPLOADED/images".into()
+}
+
+fn default_vision_target_max_px() -> u32 {
+    896
+}
+
+fn default_vision_max_upload_bytes() -> u64 {
+    10 * 1024 * 1024
+}
+
+fn default_vision_max_output_bytes() -> u64 {
+    2 * 1024 * 1024
+}
+
+fn default_vision_allowed_extensions() -> Vec<String> {
+    vec![
+        "png".into(),
+        "jpg".into(),
+        "jpeg".into(),
+        "webp".into(),
+        "gif".into(),
+    ]
+}
+
+fn default_vision_jpeg_quality() -> u8 {
+    85
+}
+
+fn default_vision_default_prompt() -> String {
+    "Describe this image in detail for the user.".into()
+}
+
+impl Default for VisionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_vision_enabled(),
+            upload_dir: default_vision_upload_dir(),
+            target_max_px: default_vision_target_max_px(),
+            max_upload_bytes: default_vision_max_upload_bytes(),
+            max_output_bytes: default_vision_max_output_bytes(),
+            allowed_extensions: default_vision_allowed_extensions(),
+            jpeg_quality: default_vision_jpeg_quality(),
+            default_prompt: default_vision_default_prompt(),
+        }
+    }
+}
+
 /// Curated vault paths relative to chat `workspace_root`. Identity file paths trigger snapshot hot-reload; `99_USER_UPLOADED` is watched recursively (activity is logged, see `spawn_vault_identity_watch`).
 /// Debounced `notify` paths under the chat workspace root (identity hot-reload, uploads, etc.).
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -397,6 +475,12 @@ pub struct LlamaCppConfig {
     /// When false (default), Eris never SIGKILLs managed llama-servers — only SIGTERM then detach.
     #[serde(default)]
     pub shutdown_allow_sigkill: bool,
+    /// Multimodal projector GGUF; required when [`crate::config::VisionConfig::enabled`] is true.
+    #[serde(default)]
+    pub mmproj_path: Option<PathBuf>,
+    /// Root for llama-server `--media-path` (`file://` relative URLs). Defaults to active vault at spawn.
+    #[serde(default)]
+    pub media_path: Option<PathBuf>,
 }
 
 pub(crate) fn default_llamacpp_ready_timeout() -> u64 {
@@ -425,6 +509,8 @@ impl Default for LlamaCppConfig {
             shutdown_grace_secs: default_llamacpp_shutdown_grace_secs(),
             shutdown_stagger_secs: default_llamacpp_shutdown_stagger_secs(),
             shutdown_allow_sigkill: false,
+            mmproj_path: None,
+            media_path: None,
         }
     }
 }
@@ -637,6 +723,9 @@ pub struct AppConfig {
     /// Debounced filesystem watch for identity and uploads under the vault (see [`VaultWatchConfig`]).
     #[serde(default)]
     pub vault_watch: VaultWatchConfig,
+    /// Multimodal vision feature gate (tool, upload routes, mmproj spawn).
+    #[serde(default)]
+    pub vision: VisionConfig,
     /// When true, [`crate::orchestrator::context::build_llm_view`] feeds a lean copy to the LLM only; [`crate::orchestrator::core::Orchestrator::chat_stack`] stays full fidelity.
     #[serde(default = "default_optimize_context")]
     pub optimize_context: bool,
@@ -1221,6 +1310,7 @@ impl Default for AppConfig {
             semantic_brain_connect_retry_delay_ms: default_semantic_brain_connect_retry_delay_ms(),
             apis: default_builtin_apis(),
             vault_watch: VaultWatchConfig::default(),
+            vision: VisionConfig::default(),
             optimize_context: default_optimize_context(),
             optimize_context_max_tool_snippet_chars:
                 default_optimize_context_max_tool_snippet_chars(),
@@ -1459,6 +1549,35 @@ impl AppConfig {
             )));
         }
         Ok(lc)
+    }
+
+    /// When [`VisionConfig::enabled`], require LlamaCpp backend and a present `mmproj_path`.
+    pub fn validate_vision_ready(&self) -> crate::executive::error::Result<()> {
+        if !self.vision.enabled {
+            return Ok(());
+        }
+        if !self.is_llamacpp() {
+            return Err(crate::executive::error::FcpError::Config(
+                "[vision] enabled requires llm_backend = LlamaCpp".into(),
+            ));
+        }
+        let lc = self.llama_cpp.as_ref().ok_or_else(|| {
+            crate::executive::error::FcpError::Config(
+                "[vision] enabled requires [llama_cpp] section".into(),
+            )
+        })?;
+        let mmproj = lc.mmproj_path.as_ref().ok_or_else(|| {
+            crate::executive::error::FcpError::Config(
+                "[vision] enabled requires llama_cpp.mmproj_path".into(),
+            )
+        })?;
+        if !mmproj.exists() {
+            return Err(crate::executive::error::FcpError::Config(format!(
+                "[vision] mmproj not found: {}",
+                mmproj.display()
+            )));
+        }
+        Ok(())
     }
 
     /// Physical directory for chat, ignition, tools, and `.fcp/` — always the process working directory
@@ -1818,6 +1937,20 @@ mod tests {
         let config: AppConfig = toml::from_str(toml_str).expect("deserialize");
         assert_eq!(config.llm_backend, LlmBackend::Ollama);
         assert!(config.llama_cpp.is_none());
+    }
+
+    #[test]
+    fn vision_defaults_disabled() {
+        let config = AppConfig::default();
+        assert!(!config.vision.enabled);
+        assert_eq!(config.vision.upload_dir, "99_USER_UPLOADED/images");
+        assert_eq!(config.vision.target_max_px, 896);
+    }
+
+    #[test]
+    fn validate_vision_ready_noop_when_disabled() {
+        let config = AppConfig::default();
+        assert!(config.validate_vision_ready().is_ok());
     }
 
     #[test]

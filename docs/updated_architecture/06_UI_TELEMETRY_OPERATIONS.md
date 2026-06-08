@@ -27,6 +27,7 @@ The orchestrator holds **`presentation_tx: Option<mpsc::Sender<SessionEvent>>`**
 ## Web UI (`ui/web/`)
 
 - **`eris chat --web`:** after `start_chat_session`, `run_web_chat` or `run_web_chat_with_broadcast` binds **`web_bind_addr`:` `web_port`**, serves Axum routes + **SSE** stream of serialized `SessionEvent`, static HTML/JS under `templates/` and `assets/`.
+- **Vision (when `[vision] enabled`):** `POST /api/vision/upload`, `GET /api/vision/preview/{filename}`, `GET /api/vision/status`; compose-area drop zone sets `UserIngress.image` on submit. **LlamaCpp backend only** — see [HOW_TO/VISION.md](../HOW_TO/VISION.md).
 - **Shutdown:** shares `CancellationToken` with the rest of chat. The bundled JS calls **`POST /api/shutdown`** from the explicit exit control (clean stop, same intent as Ctrl+C in the TUI); simply closing a tab without that hook leaves the server running until the operator stops the `eris` process.
 - **`web_open_browser`:** optional `open` / `xdg-open` / `cmd start` on listen URL.
 
@@ -34,6 +35,7 @@ The orchestrator holds **`presentation_tx: Option<mpsc::Sender<SessionEvent>>`**
 
 - **Sidecar task:** Serenity gateway; reads config (`discord.*`), resolves channel by id or by exact name at READY, consumes outbound + typing channels from router wiring.
 - **Ingress:** maps channel messages to `UserAction::SubmitIngress` with `InputSource::Discord` so the transcript shows provenance.
+- **Vision (when `[vision] enabled`):** first image attachment in the listen channel is downloaded from Discord CDN, normalized via `util/vision/normalize`, persisted under `[vision].upload_dir`, and attached on `UserIngress.image` (same `vision:see` path as web). Image-only posts are accepted.
 - **Typing:** optional `DiscordTypingCtl` channel from core for “typing” indicators on Discord-originated turns only.
 
 If `discord.enabled` is true but **`bot_token`** is unset/empty, **`discord_sidecar_should_run`** is false: chat proceeds; **`validate_discord_sidecar`** still enforces required ids/channel when enabled.

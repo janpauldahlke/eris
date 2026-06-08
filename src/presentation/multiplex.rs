@@ -203,6 +203,7 @@ mod tests {
             .send(SessionEvent::UserTranscriptLine {
                 source: InputSource::Discord,
                 body: "from discord".into(),
+                image: None,
             })
             .await
             .expect("send");

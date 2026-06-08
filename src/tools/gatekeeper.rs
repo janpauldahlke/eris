@@ -55,6 +55,7 @@ impl Gatekeeper {
                     | "agenda:remind_at"
                     | "agenda:remind_self"
                     | "web:find"
+                    | "vision:see"
                     | "system:health"
                     | "clock:now"
                     | "clock:timer"
@@ -100,6 +101,7 @@ impl Gatekeeper {
                     | "web:search"
                     | "news:today"
                     | "web:find"
+                    | "vision:see"
                     | "system:health"
                     | "clock:now"
                     | "clock:timer"
@@ -149,6 +151,7 @@ impl Gatekeeper {
                     | "web:fetch"
                     | "web:search"
                     | "web:find"
+                    | "vision:see"
                     | "system:health"
                     | "clock:now"
             ),

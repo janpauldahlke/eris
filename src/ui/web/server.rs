@@ -1,6 +1,7 @@
 //! Axum listener, optional browser open, and wiring for the web chat UI.
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
@@ -58,6 +59,8 @@ pub struct WebAppState {
     pub user_action_tx: mpsc::Sender<UserAction>,
     /// Same token as chat session / SIGINT: cancelling stops Axum and ends `eris chat --web`.
     pub shutdown_token: CancellationToken,
+    pub config: Arc<AppConfig>,
+    pub workspace_root: PathBuf,
 }
 
 /// Run the HTTP server with an **existing** session event broadcast (e.g. presentation multiplexer + Discord).
@@ -67,10 +70,13 @@ pub async fn run_web_chat_with_broadcast(
     config: Arc<AppConfig>,
     cancel_token: CancellationToken,
 ) -> Result<()> {
+    let workspace_root = config.active_vault();
     let state = WebAppState {
         events_tx: events_tx.clone(),
         user_action_tx,
         shutdown_token: cancel_token.clone(),
+        config: config.clone(),
+        workspace_root,
     };
     let app: Router = super::router::web_chat_router(state);
 

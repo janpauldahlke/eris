@@ -113,6 +113,12 @@ impl Tool for SystemHealthTool {
         let skip_ollama_ps = !cfg.is_ollama();
         let llm_backend_json = serde_json::to_value(&cfg.llm_backend)
             .unwrap_or_else(|_| json!(cfg.llm_backend.to_string()));
+        let vision_section = json!({
+            "enabled": cfg.vision.enabled,
+            "upload_dir": cfg.vision.upload_dir.as_str(),
+            "mmproj_path": cfg.llama_cpp.as_ref().and_then(|lc| lc.mmproj_path.as_ref()).map(|p| p.display().to_string()),
+            "media_path": cfg.llama_cpp.as_ref().and_then(|lc| lc.media_path.as_ref()).map(|p| p.display().to_string()),
+        });
         let fcp_moved = fcp_section;
         let llama_moved = llama_health;
 
@@ -225,6 +231,7 @@ impl Tool for SystemHealthTool {
                 }),
             );
             map.insert("disks".into(), json!(disk_entries));
+            map.insert("vision".into(), vision_section);
 
             if let Some(h) = llama_moved {
                 map.insert("llama_cpp_health".into(), h);
