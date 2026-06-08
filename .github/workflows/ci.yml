@@ -32,8 +32,24 @@ jobs:
         with:
           tool: cargo-llvm-cov
 
+      # Batched: single-process llvm-cov OOMs on GHA (see eris_test_full.rs).
       - name: cargo llvm-cov (tests + Codecov report)
-        run: cargo llvm-cov test --bin eris --codecov --output-path codecov.json -- --test-threads=1
+        run: |
+          batches=(
+            config:: engine::grammar:: engine::router:: engine::token_metrics:: engine::embedding::
+            engine::ollama:: engine::llama_cpp:: memory:: executive:: benchmark:: presentation::
+            telemetry:: ui:: skills:: workspace:: ingest:: util:: orchestrator::core::
+            orchestrator::context:: orchestrator::llm_support:: orchestrator::tool_router::
+            orchestrator::state:: "orchestrator::r#loop::" orchestrator::heartbeat:: orchestrator::alarms::
+            tools::web:: tools::vault:: tools::agenda:: tools::mail:: tools::gatekeeper::
+            tools::moltbook:: tools::memory:: tools::db_rest:: tools::validation:: tools::skills::
+            tools::weather:: tools::wiki:: tools::system:: tools::vision:: tools::clock:: tools::calendar::
+          )
+          for batch in "${batches[@]}"; do
+            echo "=== llvm-cov batch: ${batch} ==="
+            cargo llvm-cov --no-report test --bin eris "$batch" -- --test-threads=1
+          done
+          cargo llvm-cov report --codecov --output-path codecov.json
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
