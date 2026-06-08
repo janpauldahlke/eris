@@ -1,4 +1,4 @@
-# Rust CI: clippy, batched tests (OOM-safe), coverage via matrix shards (fresh runner each).
+# Rust CI: clippy, shared test build, matrix test/coverage shards (OOM + long-job safe).
 # Toolchain: https://github.com/dtolnay/rust-toolchain
 # Caching: https://github.com/Swatinem/rust-cache
 
@@ -29,10 +29,11 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --bin eris
 
-  test:
-    name: Test (batched)
+  # One cold compile per workflow; matrix jobs reuse target/ via rust-cache.
+  build-tests:
+    name: Build test binary
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -40,14 +41,74 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: cargo test-full
-        run: cargo run --quiet --bin eris-test-full
+      - name: cargo build --tests
+        run: cargo build --bin eris --tests
+
+  test:
+    name: Test (${{ matrix.batch }})
+    needs: build-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        batch:
+          - config::
+          - engine::grammar::
+          - engine::router::
+          - engine::token_metrics::
+          - engine::embedding::
+          - engine::ollama::
+          - engine::llama_cpp::
+          - memory::
+          - executive::
+          - benchmark::
+          - presentation::
+          - telemetry::
+          - ui::
+          - skills::
+          - workspace::
+          - ingest::
+          - util::
+          - orchestrator::core::
+          - orchestrator::context::
+          - orchestrator::llm_support::
+          - orchestrator::tool_router::
+          - orchestrator::state::
+          - orchestrator::r#loop::
+          - orchestrator::heartbeat::
+          - orchestrator::alarms::
+          - tools::web::
+          - tools::vault::
+          - tools::agenda::
+          - tools::mail::
+          - tools::gatekeeper::
+          - tools::moltbook::
+          - tools::memory::
+          - tools::db_rest::
+          - tools::validation::
+          - tools::skills::
+          - tools::weather::
+          - tools::wiki::
+          - tools::system::
+          - tools::vision::
+          - tools::clock::
+          - tools::calendar::
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo test (${{ matrix.batch }})
+        run: cargo test --bin eris "${{ matrix.batch }}" -- --test-threads=1
 
   coverage:
     name: Coverage (${{ matrix.batch }})
     needs: [clippy, test]
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -106,7 +167,6 @@ jobs:
         with:
           tool: cargo-llvm-cov
 
-      # One batch per matrix job: fresh 7GB runner, no cross-batch profraw accumulation.
       - name: cargo llvm-cov (${{ matrix.batch }})
         run: cargo llvm-cov test --bin eris "${{ matrix.batch }}" --codecov --output-path codecov.json -- --test-threads=1
 
