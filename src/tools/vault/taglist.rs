@@ -170,7 +170,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn cold_call_builds_and_persists() -> Result<()> {
         let dir = tempdir().expect("tmp");
         write_synth(dir.path(), "node-a", 1, "tags:\n  - sandbox\n  - agent");
@@ -188,7 +188,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn second_call_without_dirty_reads_existing_snapshot() -> Result<()> {
         let dir = tempdir().expect("tmp");
         write_synth(dir.path(), "node-a", 1, "tags:\n  - sandbox");
@@ -202,7 +202,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn dirty_flag_forces_rebuild() -> Result<()> {
         let dir = tempdir().expect("tmp");
         write_synth(dir.path(), "node-a", 1, "tags:\n  - sandbox");
@@ -218,7 +218,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn refresh_arg_forces_rebuild_even_when_clean() -> Result<()> {
         let dir = tempdir().expect("tmp");
         write_synth(dir.path(), "node-a", 1, "tags:\n  - sandbox");
@@ -233,7 +233,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn tag_arg_returns_paths() -> Result<()> {
         let dir = tempdir().expect("tmp");
         write_synth(dir.path(), "node-a", 1, "tags:\n  - sandbox");
@@ -249,7 +249,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn prefix_and_top_k_filter() -> Result<()> {
         let dir = tempdir().expect("tmp");
         write_synth(dir.path(), "n1", 1, "tags:\n  - agent-loop");
@@ -275,7 +275,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn empty_synthesis_returns_empty_snapshot() -> Result<()> {
         let dir = tempdir().expect("tmp");
         let tool = make_tool(dir.path());

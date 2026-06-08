@@ -517,7 +517,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_gatekeeper_executes_registered_tool() {
         let mut gatekeeper = Gatekeeper::new();
         gatekeeper.register(Arc::new(MockPingTool));
@@ -534,7 +534,7 @@ mod tests {
         assert!(res.is_err());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_gatekeeper_schema_violation_missing_args() {
         let mut gatekeeper = Gatekeeper::new();
         gatekeeper.register(Arc::new(MockPingTool));
@@ -551,7 +551,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_gatekeeper_unauthorized_tool_in_reflect() {
         let mut gatekeeper = Gatekeeper::new();
         gatekeeper.register(Arc::new(MockVaultWrite));
@@ -601,7 +601,7 @@ mod tests {
     #[derive(JsonSchema, Deserialize)]
     struct EmptyArgs {}
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_gatekeeper_semantic_guard_empty_result() {
         struct EmptyTool;
         #[async_trait]
@@ -635,7 +635,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_gatekeeper_blocks_agenda_complete_in_chat() {
         let mut gatekeeper = Gatekeeper::new();
 
@@ -771,7 +771,7 @@ mod tests {
         assert!(args.get("category").is_none());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn gatekeeper_rejects_web_find_non_uuid_artifact_id() {
         #[derive(JsonSchema, Deserialize)]
         #[allow(dead_code)] // fields exist for JSON Schema shape, not read by this stub test

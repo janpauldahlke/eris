@@ -114,7 +114,7 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_agenda_complete_missing_task() -> Result<()> {
         let dir = tempdir().unwrap();
         let (tx, _rx) = mpsc::unbounded_channel();

@@ -19,7 +19,7 @@ mod integration_tests {
 
     use super::WikiSummaryTool;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn wiki_summary_wiremock_path_and_user_agent() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))

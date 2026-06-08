@@ -151,7 +151,7 @@ mod tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn llamacpp_embedding_valid_response() {
         let mock_server = MockServer::start().await;
         let body = serde_json::json!({
@@ -169,7 +169,7 @@ mod tests {
         assert!((vec[0] - 0.1).abs() < 1e-6);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn llamacpp_embedding_server_error() {
         let mock_server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -183,7 +183,7 @@ mod tests {
         assert!(err.to_string().contains("500"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn llamacpp_embedding_empty_data() {
         let mock_server = MockServer::start().await;
         let body = serde_json::json!({ "data": [] });

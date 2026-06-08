@@ -562,6 +562,10 @@
         border-color: var(--accent);
         box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
       }
+      .compose-stack.compose-busy #chat-input,
+      .compose-stack.compose-busy button[type="submit"] {
+        opacity: 0.55;
+      }
       .compose-row {
         display: flex;
         gap: 0.35rem;
@@ -645,6 +649,7 @@
                 id="audio-mic-btn"
                 title="Record voice (click to start, click again to send)"
                 aria-label="Record voice"
+                hidden
               >
                 Mic
               </button>

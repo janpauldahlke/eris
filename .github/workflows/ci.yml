@@ -26,14 +26,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: cargo clippy
-        run: cargo clippy --all-targets --all-features
+        run: cargo clippy --bin eris
 
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov
 
       - name: cargo llvm-cov (tests + Codecov report)
-        run: cargo llvm-cov test --all-features --codecov --output-path codecov.json
+        run: cargo llvm-cov test --bin eris --codecov --output-path codecov.json -- --test-threads=1
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4

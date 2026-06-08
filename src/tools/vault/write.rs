@@ -152,7 +152,7 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_vault_write_overwrite() -> Result<()> {
         let dir = tempdir().unwrap();
         let tool = VaultWriteTool {
@@ -180,7 +180,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_vault_write_gatekeeper_block() -> Result<()> {
         let dir = tempdir().unwrap();
         let tool = VaultWriteTool {
@@ -200,7 +200,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_vault_write_yaml_frontmatter_override() -> Result<()> {
         let dir = tempdir().unwrap();
         let tool = VaultWriteTool {
@@ -228,7 +228,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn synthesis_write_marks_taglist_cache_dirty() -> Result<()> {
         let dir = tempdir().unwrap();
         let cache = TaglistCache::into_arc();
@@ -249,7 +249,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn non_synthesis_write_does_not_dirty_taglist_cache() -> Result<()> {
         let dir = tempdir().unwrap();
         let cache = TaglistCache::into_arc();

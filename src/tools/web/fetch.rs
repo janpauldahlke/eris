@@ -71,7 +71,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn fetch_writes_mission_page() {
         let dir = tempfile::tempdir().expect("tempdir");
         let tool = WebFetchTool {

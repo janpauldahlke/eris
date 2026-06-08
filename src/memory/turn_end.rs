@@ -201,7 +201,7 @@ mod tests {
     use super::*;
     use crate::memory::types::{EphemeralTier, VaultKind};
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn mention_hook_bumps_score_and_refreshes_ttl() {
         let memory = EphemeralMemory::new("t".into());
         let mut cfg = AppConfig::default();
@@ -241,7 +241,7 @@ mod tests {
         assert!(updated.expires_at >= now + 900);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn mention_hook_skips_when_disabled() {
         let memory = EphemeralMemory::new("t".into());
         let mut cfg = AppConfig::default();

@@ -143,8 +143,11 @@ pub async fn run_web_chat(
     let (events_tx, _) = broadcast::channel::<SessionEvent>(EVENT_BACKLOG);
     let bridge_user_tx = user_action_tx.clone();
     let bridge_events_tx = events_tx.clone();
-    let _bridge =
-        super::bridge::spawn_presentation_bridge(presentation_rx, bridge_events_tx, bridge_user_tx);
+    let _bridge = super::bridge::spawn_presentation_bridge(
+        presentation_rx,
+        bridge_events_tx,
+        bridge_user_tx,
+    );
 
     run_web_chat_with_broadcast(events_tx, user_action_tx, config, cancel_token).await
 }

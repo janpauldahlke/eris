@@ -1,0 +1,11 @@
+# test-full spawns a fresh process per module batch (RSS resets; avoids runtime OOM).
+# Single-process fallback: cargo test --bin eris -- --test-threads=1
+[env]
+RUST_TEST_THREADS = "1"
+
+[build]
+jobs = 2
+
+[alias]
+test-full = ["run", "--quiet", "--bin", "eris-test-full"]
+t = ["run", "--quiet", "--bin", "eris-test-full"]

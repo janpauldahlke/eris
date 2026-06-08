@@ -63,7 +63,7 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn sync_inserts_after_agent_line() {
         let dir = tempdir().unwrap();
         let core = dir.path().join("00_Invariants");
@@ -83,7 +83,7 @@ mod tests {
         assert!(got.contains("Footer."));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn sync_replaces_existing_user_line() {
         let dir = tempdir().unwrap();
         let core = dir.path().join("00_Invariants");
@@ -102,7 +102,7 @@ mod tests {
         assert!(got.contains("User Name is: New (your main user!)"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn sync_empty_removes_user_line() {
         let dir = tempdir().unwrap();
         let core = dir.path().join("00_Invariants");

@@ -57,7 +57,7 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn list_returns_seeded_skills() {
         let dir = tempdir().expect("tempdir");
         crate::skills::seed_runtime_skills(dir.path())

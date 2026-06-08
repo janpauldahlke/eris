@@ -483,7 +483,7 @@ fn filter_tools_by_offered_order(
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_assembler_reads_identity_snapshot() {
         let vault_root = std::path::Path::new("/tmp/unused_for_snapshot_test");
         let workspace = "test_workspace";
@@ -510,7 +510,7 @@ mod tests {
         assert!(assembled.contains(super::super::view::FCP_TOOL_DEFS_END));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_runtime_state_recover_injects_repair_focus() {
         let vault_root = std::path::Path::new("/tmp/unused_for_snapshot_test");
         let workspace = "test_workspace";
@@ -533,7 +533,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_assembler_identity_hot_reload_via_watch() {
         let vault_root = std::path::Path::new("/tmp/unused_for_snapshot_test");
         let workspace = "test_workspace";
@@ -560,7 +560,7 @@ mod tests {
         assert_ne!(assembled_v1, assembled_v2);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_moltbook_overlay_is_opt_in() {
         let dir = tempfile::tempdir().expect("tempdir");
         let workspace = "test_workspace";
@@ -600,7 +600,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_assemble_slim_tool_map_omits_parameters_in_defs() {
         let vault_root = std::path::Path::new("/tmp/unused_for_snapshot_test");
         let workspace = "test_workspace";

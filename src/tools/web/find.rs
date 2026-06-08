@@ -368,7 +368,7 @@ mod tests {
         assert!(u.contains("Klima"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn find_returns_lexical_hit() {
         let dir = tempfile::tempdir().expect("tempdir");
         let allowlist_path = dir.path().join(".fcp/web_allowlist.toml");

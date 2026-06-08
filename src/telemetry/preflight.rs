@@ -49,7 +49,7 @@ pub async fn run_preflight_checks(command: &Commands, config: &AppConfig) -> Res
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn preflight_skips_chat_mode() {
         let mut config = AppConfig::default();
         config.ollama_host = "not a url".into();
@@ -58,7 +58,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn preflight_checks_non_chat_mode() {
         let mut config = AppConfig::default();
         config.ollama_host = "http://127.0.0.1:9".into();
@@ -66,7 +66,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn preflight_llamacpp_unreachable() {
         use crate::config::{LlamaCppConfig, LlmBackend};
         use std::path::PathBuf;
@@ -91,7 +91,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn preflight_ollama_skipped_for_llamacpp() {
         use crate::config::{LlamaCppConfig, LlmBackend};
         use std::path::PathBuf;

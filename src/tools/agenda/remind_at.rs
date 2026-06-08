@@ -285,7 +285,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_remind_at_new_description_minutes() -> Result<()> {
         let dir = tempdir().unwrap();
         let (tx, _rx) = mpsc::unbounded_channel();
@@ -309,7 +309,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_remind_at_existing_task_replaces_alarm() -> Result<()> {
         let dir = tempdir().unwrap();
         let (tx, _rx) = mpsc::unbounded_channel();
@@ -344,7 +344,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_remind_at_both_task_id_and_description_prefers_existing_id() -> Result<()> {
         let dir = tempdir().unwrap();
         let (tx, _rx) = mpsc::unbounded_channel();
@@ -368,7 +368,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_remind_at_neither_task_nor_description_rejected() {
         let dir = tempdir().unwrap();
         let (tx, _rx) = mpsc::unbounded_channel();
@@ -383,7 +383,7 @@ mod tests {
         assert!(matches!(err, FcpError::SchemaViolation(_)));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_remind_at_both_unknown_id_falls_back_to_description() -> Result<()> {
         let dir = tempdir().unwrap();
         let (tx, _rx) = mpsc::unbounded_channel();
@@ -411,7 +411,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_remind_at_reuses_pending_same_description() -> Result<()> {
         let dir = tempdir().unwrap();
         let (tx, _rx) = mpsc::unbounded_channel();

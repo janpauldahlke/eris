@@ -96,7 +96,7 @@ mod tests {
 
     use tempfile::tempdir;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_boot_creates_identity_and_seal() {
         let temp_dir = tempdir().unwrap();
         let vault_root = temp_dir.path();
@@ -129,7 +129,7 @@ mod tests {
         assert_eq!(model_from_seal_text(&seal_content).as_deref(), Some(model));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_boot_seal_mismatch_fails() {
         let temp_dir = tempdir().unwrap();
         let vault_root = temp_dir.path();
@@ -155,7 +155,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_missing_seal_on_existing_workspace_fails() {
         let temp_dir = tempdir().unwrap();
         let vault_root = temp_dir.path();

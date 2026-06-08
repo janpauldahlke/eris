@@ -54,7 +54,7 @@ Full instructions: **[docs/HOW_TO/LLAMA_CPP_SETUP.md](docs/HOW_TO/LLAMA_CPP_SETU
 
 **Vision (optional):** Image understanding via **`vision:see`** requires **`llm_backend = "LlamaCpp"`**, `[vision] enabled = true`, a compatible **chat GGUF + mmproj**, and a recent **`llama-server`** (multimodal projector support is model-specific — e.g. Gemma 4 needs llama.cpp **b9493+**). Not available on Ollama. Setup: **[docs/HOW_TO/VISION.md](docs/HOW_TO/VISION.md)**.
 
-**Voice (optional):** Speech-to-text ingress transcribes web mic audio **before** the orchestrator turn so spoken commands route like typed text. Requires **`[audio] enabled = true`** (same mmproj as vision), **`ffmpeg` installed on the host PATH** (local CLI — not bundled with Eris), and llama.cpp `input_audio` support. Setup: **[docs/HOW_TO/AUDIO.md](docs/HOW_TO/AUDIO.md)**.
+**Voice ingress (optional):** Speech-to-text transcribes web mic audio **before** the orchestrator turn. Requires **`[audio] enabled = true`** (same mmproj as vision), **`ffmpeg`**, and llama.cpp `input_audio` support. Recordings are clipped to **`max_duration_secs`** during ffmpeg normalize (default **30**; set e.g. **`max_duration_secs = 120`** in `[audio]` for longer monologues). Setup: **[docs/HOW_TO/AUDIO.md](docs/HOW_TO/AUDIO.md)**.
 
 ### Qdrant (vector DB)
 
@@ -101,7 +101,7 @@ ffmpeg -version
 brew install ffmpeg
 ```
 
-Optional: `FFMPEG=/path/to/ffmpeg` if the binary is not on PATH. Operator guide: [docs/HOW_TO/AUDIO.md](docs/HOW_TO/AUDIO.md).
+Optional: `FFMPEG=/path/to/ffmpeg` if the binary is not on PATH. Mic clips longer than **`[audio] max_duration_secs`** (default 30) are truncated before STT — raise it in `.fcp/config.toml` if you need longer takes. Operator guide: [docs/HOW_TO/AUDIO.md](docs/HOW_TO/AUDIO.md).
 
 ### Discord (optional)
 
@@ -127,7 +127,7 @@ Registration is explicit: ask Eris to register on Moltbook with a name and descr
 | Embed model | `embed_model_name`                              | Default `nomic-embed-text` (768-d vectors → Qdrant)                       |
 | llama.cpp   | `[llama_cpp]` table                             | `home`, model paths, ports, GPU layers — see [LLAMA_CPP_SETUP.md](docs/HOW_TO/LLAMA_CPP_SETUP.md) |
 | Vision      | `[vision]` + `llama_cpp.mmproj_path`            | **LlamaCpp only**; web + Discord image → `vision:see` — see [VISION.md](docs/HOW_TO/VISION.md) |
-| Voice       | `[audio]` + `llama_cpp.mmproj_path` + `ffmpeg`    | **LlamaCpp only**; web file/mic → STT → normal tool routing — see [AUDIO.md](docs/HOW_TO/AUDIO.md) |
+| Voice       | `[audio]` + `llama_cpp.mmproj_path` + `ffmpeg`    | **LlamaCpp only**; web file/mic → STT → normal tool routing; optional **`max_duration_secs`** (default 30) — see [AUDIO.md](docs/HOW_TO/AUDIO.md) |
 | Qdrant URL  | `qdrant_url`                                    | Default `http://localhost:6334` (gRPC)                                    |
 | Web UI      | `web_bind_addr`, `web_port`, `web_open_browser` | Loopback + port for `eris chat --web`; optional `FCP_WEB_*` env overrides |
 | Discord     | `[discord]` table                               | Optional; needs `bot_token` + app id + channel when `enabled = true`      |
@@ -138,6 +138,16 @@ Registration is explicit: ask Eris to register on Moltbook with a name and descr
 Figment also merges `FCP_` environment variables over TOML (e.g. `FCP_WORKSPACE`, `FCP_LOG_LEVEL`, `FCP_USER_NAME`). For other fields, match `AppConfig` in `[src/config.rs](src/config.rs)` to the env key shape your Figment build expects.
 
 **Installing a release binary (PATH, first-run wizard, day-to-day use):** [docs/HOW_TO/END_USER_README.md](docs/HOW_TO/END_USER_README.md).
+
+### Building from source (`cargo install`)
+
+From the repo root:
+
+```bash
+cargo install --path .
+```
+
+**Tests:** `cargo test-full` (batched subprocess runner; see `target/test-full.log` if a batch fails).
 
 ## Workspace initialization
 

@@ -20,7 +20,7 @@ mod integration_tests {
 
     use super::DbFindConnectionsTool;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn find_connections_locations_then_journeys_wiremock() {
         let server = MockServer::start().await;
 

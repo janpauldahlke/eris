@@ -558,8 +558,10 @@ pub struct LlamaCppConfig {
     /// Pause between stopping embed and chat llama-server (VRAM release stagger).
     #[serde(default = "default_llamacpp_shutdown_stagger_secs")]
     pub shutdown_stagger_secs: u64,
-    /// When false (default), Eris never SIGKILLs managed llama-servers — only SIGTERM then detach.
-    #[serde(default)]
+    /// Legacy knob; ignored when [`Self::detach_servers_on_chat_exit`] is false (Eris always
+    /// SIGKILLs after [`Self::shutdown_grace_secs`] if SIGTERM did not reap). Use detach mode
+    /// when you want servers left running after exit.
+    #[serde(default = "default_llamacpp_shutdown_allow_sigkill")]
     pub shutdown_allow_sigkill: bool,
     /// Multimodal projector GGUF; required when [`crate::config::VisionConfig::enabled`] is true.
     #[serde(default)]
@@ -581,6 +583,10 @@ fn default_llamacpp_shutdown_stagger_secs() -> u64 {
     3
 }
 
+fn default_llamacpp_shutdown_allow_sigkill() -> bool {
+    true
+}
+
 impl Default for LlamaCppConfig {
     fn default() -> Self {
         Self {
@@ -594,7 +600,7 @@ impl Default for LlamaCppConfig {
             detach_servers_on_chat_exit: false,
             shutdown_grace_secs: default_llamacpp_shutdown_grace_secs(),
             shutdown_stagger_secs: default_llamacpp_shutdown_stagger_secs(),
-            shutdown_allow_sigkill: false,
+            shutdown_allow_sigkill: default_llamacpp_shutdown_allow_sigkill(),
             mmproj_path: None,
             media_path: None,
         }

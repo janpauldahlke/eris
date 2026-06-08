@@ -155,7 +155,7 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn fire_due_self_alarm_emits_agenda_self_prompt() {
         let dir = tempdir().expect("tmpdir");
         let tools_dir = crate::vault_layout::tools_dir(dir.path());

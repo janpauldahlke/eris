@@ -91,7 +91,7 @@ mod tests {
         assert!(!preview_filename_allowed("not-uuid.jpg"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn validate_rejects_traversal() {
         let dir = TempDir::new().expect("tempdir");
         let root = dir.path();

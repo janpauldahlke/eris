@@ -23,7 +23,7 @@ mod integration_tests {
 
     use super::{WeatherCurrentTool, WeatherForecastTool};
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn weather_current_geocode_then_forecast_wiremock() {
         let geo = MockServer::start().await;
         Mock::given(method("GET"))
@@ -90,7 +90,7 @@ mod integration_tests {
         assert!(out.contains("weather:current"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn weather_forecast_geocode_then_hourly_wiremock() {
         let geo = MockServer::start().await;
         Mock::given(method("GET"))

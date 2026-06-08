@@ -587,18 +587,13 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_tool_non_existent_routing() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_tool_non_existent_routing() {
         let cmd = Commands::Tool {
             name: "non_existent_tool".to_string(),
             args: "{}".to_string(),
         };
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(execute_command(
-            test_cli(cmd),
-            test_config(),
-            CancellationToken::new(),
-        ));
+        let result = execute_command(test_cli(cmd), test_config(), CancellationToken::new()).await;
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -609,7 +604,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_cancellation_token_yields() {
         let cancel_token = CancellationToken::new();
         let token_clone = cancel_token.clone();
@@ -632,7 +627,7 @@ mod tests {
     /// Submit queues work that runs `system:health` (Reflect), then `SystemInject` is already on
     /// `action_rx`. The first `step` must fully finish (tool + follow-up generation) before the
     /// relay pulls the alarm—FIFO on the single action channel.
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn relay_submit_then_system_inject_orders_after_tool() {
         use std::collections::VecDeque;
         use std::sync::Arc;

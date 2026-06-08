@@ -1107,6 +1107,9 @@ pub async fn start_chat_session(
                 }
 
                 let (display, for_model) = if let Some(audio_att) = &ing.audio {
+                    orchestrator.state = crate::orchestrator::state::AgentState::Chat;
+                    orchestrator.activity_line = Some("Transcribing voice…".into());
+                    orchestrator.broadcast_state().await;
                     let _ = presentation_tx_err
                         .send(SessionEvent::SystemError(
                             "[ui] Transcribing voice…".into(),
@@ -1133,6 +1136,9 @@ pub async fn start_chat_session(
                                             .into(),
                                     ))
                                     .await;
+                                orchestrator.activity_line = None;
+                                orchestrator.state = crate::orchestrator::state::AgentState::Idle;
+                                orchestrator.broadcast_state().await;
                                 continue;
                             }
                             let caption = ing.display.trim();
@@ -1157,6 +1163,9 @@ pub async fn start_chat_session(
                                 error = %e,
                                 "STT failed"
                             );
+                            orchestrator.activity_line = None;
+                            orchestrator.state = crate::orchestrator::state::AgentState::Idle;
+                            orchestrator.broadcast_state().await;
                             let _ = presentation_tx_err
                                 .send(SessionEvent::SystemError(format!(
                                     "[ui] Voice transcription failed: {e}"

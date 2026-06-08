@@ -99,6 +99,15 @@
     transcript.scrollTop = transcript.scrollHeight;
   }
 
+  function setComposeBusy(busy) {
+    if (composeStack) composeStack.classList.toggle("compose-busy", !!busy);
+    if (shuttingDown) return;
+    if (input) input.disabled = !!busy;
+    if (btnSend) btnSend.disabled = !!busy;
+    const micBtn = document.getElementById("audio-mic-btn");
+    if (micBtn) micBtn.disabled = !!busy;
+  }
+
   function appendAssistantTranscript(raw) {
     const norm = normalizeLatexArrowsForDisplay(String(raw));
     const m = norm.match(/^\[([^\]]+)\]:\s*([\s\S]*)$/);
@@ -308,6 +317,8 @@
         chipPair("Avg", fmtTpsMilli(u.llm_tps_ewma_milli) + " tok/s");
     }
     setToolsActivity(u.activity_line || "");
+    const queued = Number(u.queued_inputs) || 0;
+    setComposeBusy(isBusyState(st) || queued > 0);
   }
 
   async function requestShutdown() {
@@ -382,7 +393,7 @@
       return;
     }
     if (data.SystemError) {
-      appendTelemetry(data.SystemError);
+      appendTelemetry(String(data.SystemError));
       return;
     }
     if (data.SystemAlarm) {
@@ -648,6 +659,11 @@
   if (audioEnabled) {
     const toolbar = document.getElementById("compose-toolbar");
     if (toolbar) toolbar.hidden = false;
+  }
+
+  if (audioEnabled) {
+    const micBtnShow = document.getElementById("audio-mic-btn");
+    if (micBtnShow) micBtnShow.hidden = false;
 
     const audioRemove = document.getElementById("audio-remove");
     if (audioRemove) {

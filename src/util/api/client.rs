@@ -168,7 +168,7 @@ mod tests {
     use wiremock::matchers::{method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn get_templated_success() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -204,7 +204,7 @@ mod tests {
         assert_eq!(body, r#"{"ok":true}"#);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn get_templated_404_is_tool_fault() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -242,7 +242,7 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn get_templated_missing_param_is_config_error() {
         let server = MockServer::start().await;
         let mut apis = HashMap::new();
@@ -267,7 +267,7 @@ mod tests {
         assert!(matches!(r, Err(FcpError::Config(_))));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn get_templated_truncates_body() {
         let server = MockServer::start().await;
         let body = "a".repeat(100);

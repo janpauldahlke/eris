@@ -70,7 +70,10 @@ impl LlamaShutdownPolicy {
     fn reap_options(self) -> ReapOptions {
         ReapOptions {
             grace_secs: self.grace_secs,
-            allow_sigkill: self.allow_sigkill,
+            // Only called when detach=false. Always SIGKILL after grace if SIGTERM did not reap —
+            // leaving GPU-loaded llama-server orphans defeats chat exit. To keep servers running,
+            // set detach_servers_on_chat_exit = true instead of disabling SIGKILL.
+            allow_sigkill: true,
         }
     }
 }
@@ -1021,7 +1024,7 @@ pub fn parse_socket_addr(service_url: &str, default_port: u16) -> Result<String>
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn qdrant_grpc_ready_false_on_dead_port() {
         assert!(
             !qdrant_grpc_ready("http://127.0.0.1:65535").await,
@@ -1029,7 +1032,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn qdrant_grpc_ready_false_on_invalid_url() {
         assert!(!qdrant_grpc_ready("not-a-url").await);
     }
@@ -1101,7 +1104,7 @@ mod tests {
         assert!(err.to_string().contains("Invalid server URL"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn ready_probe_succeeds_on_healthy_server() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -1128,7 +1131,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn ready_probe_waits_for_loading() {
         use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -1168,7 +1171,7 @@ mod tests {
         assert!(request_count.load(Ordering::SeqCst) >= 3);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn ready_probe_timeout_returns_error() {
         // Use a port that nothing is listening on.
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1182,7 +1185,7 @@ mod tests {
         assert!(msg.contains("failed to become ready"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn shutdown_reaps_both_processes() {
         let child1 = Command::new("sleep")
             .arg("300")
@@ -1232,6 +1235,49 @@ mod tests {
                     "Process {pid} should have been reaped"
                 );
             }
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn llama_shutdown_policy_sigkills_after_grace_even_when_config_disallows() {
+        let child = Command::new("sleep")
+            .arg("300")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+
+        let mut lifecycle = PeripheralLifecycle {
+            ollama: None,
+            qdrant: None,
+            llama_chat: Some(ManagedProcess {
+                name: "llama-chat",
+                kind: ManagedProcessKind::Child(child),
+            }),
+            llama_embed: None,
+        };
+
+        let policy = LlamaShutdownPolicy {
+            detach: false,
+            grace_secs: 1,
+            stagger_secs: 0,
+            allow_sigkill: false,
+        };
+        let _ = lifecycle.shutdown_async(Some(policy)).await;
+
+        #[cfg(unix)]
+        {
+            use std::process::Command as StdCmd;
+            let status = StdCmd::new("kill")
+                .args(["-0", &pid.to_string()])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            assert!(
+                status.map(|s| !s.success()).unwrap_or(true),
+                "llama-chat sleep stub should be reaped despite allow_sigkill=false in policy"
+            );
         }
     }
 

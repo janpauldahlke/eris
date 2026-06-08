@@ -211,7 +211,7 @@ mod tests {
         (client, metrics)
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn instrumented_client_records_metrics() {
         let (client, metrics) = create_test_client();
         let _instrumented = InstrumentedOllamaClient::new(client, metrics.clone());
@@ -232,51 +232,46 @@ mod tests {
         assert_eq!(snapshot.tool_calls_valid, 1);
     }
 
-    #[test]
-    fn analyze_response_detects_valid_json() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let (client, metrics) = create_test_client();
-            let instrumented = InstrumentedOllamaClient::new(client, metrics.clone());
+    #[tokio::test(flavor = "current_thread")]
+    async fn analyze_response_detects_valid_json() {
+        let (client, metrics) = create_test_client();
+        let instrumented = InstrumentedOllamaClient::new(client, metrics.clone());
 
-            let response = EngineResponse {
-                content: r#"{"thought":"test","status":"Idle","message_to_user":"hi","tool_calls":[]}"#.to_string(),
-                prompt_tokens: 10,
-                generated_tokens: 5,
-                generation_ms: 0,
-            };
+        let response = EngineResponse {
+            content: r#"{"thought":"test","status":"Idle","message_to_user":"hi","tool_calls":[]}"#
+                .to_string(),
+            prompt_tokens: 10,
+            generated_tokens: 5,
+            generation_ms: 0,
+        };
 
-            instrumented.analyze_response(&response).await;
+        instrumented.analyze_response(&response).await;
 
-            let m = metrics.lock().await;
-            assert_eq!(m.json_parse_attempts, 1);
-            assert_eq!(m.json_parse_successes, 1);
-        });
+        let m = metrics.lock().await;
+        assert_eq!(m.json_parse_attempts, 1);
+        assert_eq!(m.json_parse_successes, 1);
     }
 
-    #[test]
-    fn analyze_response_detects_invalid_json() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let (client, metrics) = create_test_client();
-            let instrumented = InstrumentedOllamaClient::new(client, metrics.clone());
+    #[tokio::test(flavor = "current_thread")]
+    async fn analyze_response_detects_invalid_json() {
+        let (client, metrics) = create_test_client();
+        let instrumented = InstrumentedOllamaClient::new(client, metrics.clone());
 
-            let response = EngineResponse {
-                content: "not valid json".to_string(),
-                prompt_tokens: 10,
-                generated_tokens: 5,
-                generation_ms: 0,
-            };
+        let response = EngineResponse {
+            content: "not valid json".to_string(),
+            prompt_tokens: 10,
+            generated_tokens: 5,
+            generation_ms: 0,
+        };
 
-            instrumented.analyze_response(&response).await;
+        instrumented.analyze_response(&response).await;
 
-            let m = metrics.lock().await;
-            assert_eq!(m.json_parse_attempts, 1);
-            assert_eq!(m.json_parse_successes, 0);
-        });
+        let m = metrics.lock().await;
+        assert_eq!(m.json_parse_attempts, 1);
+        assert_eq!(m.json_parse_successes, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn record_recovery_updates_metrics() {
         let metrics = Arc::new(Mutex::new(QualityMetrics::default()));
 
@@ -288,7 +283,7 @@ mod tests {
         assert_eq!(m.recovery_successes, 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn record_tool_validation_updates_metrics() {
         let metrics = Arc::new(Mutex::new(QualityMetrics::default()));
 

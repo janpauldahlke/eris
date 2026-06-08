@@ -595,7 +595,7 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_ephemeral_insert_and_get() {
         let memory = EphemeralMemory::new("test_ws".to_string());
 
@@ -611,7 +611,7 @@ mod tests {
         assert_eq!(entry.tags, vec!["tag1".to_string()]);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_upsert_by_title_replaces_prior() {
         let memory = EphemeralMemory::new("test_ws".to_string());
         memory.insert("same", "a", vec![], 60).await.unwrap();
@@ -629,7 +629,7 @@ mod tests {
         assert_eq!(count, 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_ephemeral_absolute_ttl_enforcement() {
         let memory = EphemeralMemory::new("test_ws".to_string());
 
@@ -665,7 +665,7 @@ mod tests {
         assert_eq!(result, None);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_snapshot_and_load_preserves_valid_keys() {
         let temp_dir = tempfile::tempdir().unwrap();
         let vault_root = temp_dir.path();
@@ -683,7 +683,7 @@ mod tests {
         assert_eq!(result, Some("value1".to_string()));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_load_drops_stale_keys_from_disk() {
         let temp_dir = tempfile::tempdir().unwrap();
         let vault_root = temp_dir.path();
@@ -754,7 +754,7 @@ mod tests {
         assert_eq!(r2, Some("valid".to_string()));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_daemon_snapshots_on_cancellation() {
         let temp_dir = tempfile::tempdir().unwrap();
         let vault_root = temp_dir.path().to_path_buf();
@@ -817,7 +817,7 @@ mod tests {
         assert_eq!(normalize_canonical_key("ﬁle_path"), "file_path");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_insert_populates_v2_fields() {
         let memory = EphemeralMemory::new("test_ws".to_string());
         let entry = memory
@@ -836,7 +836,7 @@ mod tests {
         assert_eq!(entry.kind, VaultKind::Synthesis);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_insert_with_tier_uses_given_tier() {
         let memory = EphemeralMemory::new("test_ws".to_string());
         let entry = memory
@@ -854,7 +854,7 @@ mod tests {
         assert_eq!(entry.kind, VaultKind::Discourse);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_upsert_preserves_node_id() {
         let memory = EphemeralMemory::new("test_ws".to_string());
         let first = memory
@@ -874,7 +874,7 @@ mod tests {
         assert_eq!(second.first_seen_at, first.first_seen_at);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_get_by_canonical_key() {
         let memory = EphemeralMemory::new("test_ws".to_string());
         memory
@@ -892,7 +892,7 @@ mod tests {
         assert_eq!(found.unwrap().data, "black, no sugar");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_get_by_node_id() {
         let memory = EphemeralMemory::new("test_ws".to_string());
         let entry = memory
@@ -905,7 +905,7 @@ mod tests {
         assert_eq!(found.unwrap().staged_id, entry.staged_id);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_promotion_engine_promotes_on_threshold() {
         let memory = EphemeralMemory::new("test_ws".to_string());
         let mut config = crate::config::AppConfig::default();
@@ -934,7 +934,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_promotion_engine_applies_decay() {
         let memory = EphemeralMemory::new("test_ws".to_string());
         let mut config = crate::config::AppConfig::default();
@@ -960,7 +960,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_promotion_engine_demotes_on_low_score() {
         let memory = EphemeralMemory::new("test_ws".to_string());
         let mut config = crate::config::AppConfig::default();
@@ -989,7 +989,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_needs_review_blocks_promotion() {
         let memory = EphemeralMemory::new("test_ws".to_string());
         let mut config = crate::config::AppConfig::default();

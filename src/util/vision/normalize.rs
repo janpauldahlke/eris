@@ -133,7 +133,8 @@ mod tests {
 
     #[test]
     fn normalize_png_to_jpeg() {
-        let img: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::from_fn(1200, 800, |x, y| {
+        // Keep fixtures small: parallel `cargo test` runs many image tests at once.
+        let img: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::from_fn(640, 480, |x, y| {
             Rgb([(x % 256) as u8, (y % 256) as u8, 128])
         });
         let mut raw = Vec::new();
@@ -153,7 +154,7 @@ mod tests {
             ..VisionConfig::default()
         };
         let img: ImageBuffer<Rgb<u8>, Vec<u8>> =
-            ImageBuffer::from_fn(2000, 2000, |_, _| Rgb([200, 100, 50]));
+            ImageBuffer::from_fn(640, 640, |_, _| Rgb([200, 100, 50]));
         let mut raw = Vec::new();
         img.write_to(&mut Cursor::new(&mut raw), ImageFormat::Png)
             .expect("png");
@@ -166,8 +167,9 @@ mod tests {
             max_output_bytes: 400 * 1024,
             ..VisionConfig::default()
         };
+        // 1280×960 is enough to exercise resize + JPEG budget without OOM when tests run in parallel.
         let img: ImageBuffer<Rgb<u8>, Vec<u8>> =
-            ImageBuffer::from_fn(4000, 3000, |x, y| Rgb([(x % 256) as u8, (y % 256) as u8, 128]));
+            ImageBuffer::from_fn(1280, 960, |x, y| Rgb([(x % 256) as u8, (y % 256) as u8, 128]));
         let mut raw = Vec::new();
         img.write_to(&mut Cursor::new(&mut raw), ImageFormat::Png)
             .expect("png");

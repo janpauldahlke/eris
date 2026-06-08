@@ -86,7 +86,7 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn create_success() {
         let dir = tempdir().expect("tempdir");
         let tool = SkillsCreateTool {
@@ -104,7 +104,7 @@ mod tests {
         assert!(out.contains("sample-skill"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn duplicate_rejected_without_overwrite() {
         let dir = tempdir().expect("tempdir");
         let tool = SkillsCreateTool {
@@ -123,7 +123,7 @@ mod tests {
         assert!(err.to_string().contains("already exists"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn overwrite_allowed_with_flag() {
         let dir = tempdir().expect("tempdir");
         let tool = SkillsCreateTool {

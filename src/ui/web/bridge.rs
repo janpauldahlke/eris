@@ -52,7 +52,7 @@ mod tests {
     use super::*;
     use crate::presentation::{AlarmPayload, SessionEvent};
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn bridge_relays_system_alarm_to_user_action_and_broadcasts() {
         let (pres_tx, pres_rx) = mpsc::channel::<SessionEvent>(8);
         let (bc_tx, mut bc_sub) = broadcast::channel::<SessionEvent>(8);
@@ -82,7 +82,7 @@ mod tests {
         let _ = _jh.await;
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn bridge_broadcasts_model_thought_for_sse() {
         let (pres_tx, pres_rx) = mpsc::channel::<SessionEvent>(8);
         let (bc_tx, mut bc_sub) = broadcast::channel::<SessionEvent>(8);

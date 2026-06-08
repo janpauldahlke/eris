@@ -256,7 +256,7 @@ impl Tool for SystemHealthTool {
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_system_health_execution() {
         let tool = SystemHealthTool {
             config: Arc::new(AppConfig::default()),
@@ -312,7 +312,7 @@ mod tests {
         assert!(parsed.get("disks").is_some());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn health_output_ollama_backend() {
         let tool = SystemHealthTool {
             config: Arc::new(AppConfig::default()),
@@ -330,7 +330,7 @@ mod tests {
             .is_some_and(|t| t.contains("llama.cpp")));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn health_output_llamacpp_backend() {
         use crate::config::LlamaCppConfig;
         use std::path::PathBuf;
