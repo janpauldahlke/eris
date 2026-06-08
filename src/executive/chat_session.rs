@@ -752,12 +752,25 @@ pub async fn start_chat_session(
     crate::memory::ephemeral::spawn_snapshot_daemon(
         ephemeral.clone(),
         workspace_root.clone(),
-        semantic_arc,
+        semantic_arc.clone(),
         config.snapshot_interval_secs,
         cancel_token.clone(),
         config.clone(),
         promotion_suppressed_during_step.clone(),
     );
+
+    if config.vault_reindex_on_write {
+        if let Some(semantic) = semantic_arc.clone() {
+            let debounce =
+                std::time::Duration::from_millis(config.vault_watch.debounce_ms.max(1));
+            crate::memory::reindex_watch::spawn_vault_semantic_reindex_watch(
+                cancel_token.child_token(),
+                debounce,
+                workspace_root.clone(),
+                semantic,
+            );
+        }
+    }
 
     let context_view_hints =
         gatekeeper.merge_context_view_hints(&config.optimize_context_tool_overrides);
@@ -835,6 +848,7 @@ pub async fn start_chat_session(
         promotion_suppressed_during_step,
         Some(token_metrics_rx.clone()),
         Some(web_ledger),
+        semantic_arc,
     );
 
     tracing::info!(

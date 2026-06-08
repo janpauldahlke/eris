@@ -227,6 +227,7 @@ mod phase5_recovery_tests {
             Arc::new(AtomicBool::new(false)),
             None,
             None,
+            None,
         )
     }
 

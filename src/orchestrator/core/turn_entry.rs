@@ -433,6 +433,7 @@ mod tests {
             Arc::new(AtomicBool::new(false)),
             None,
             None,
+            None,
         );
         (orch, root)
     }

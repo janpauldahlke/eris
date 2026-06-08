@@ -52,48 +52,48 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        batch:
-          - config::
-          - engine::grammar::
-          - engine::router::
-          - engine::token_metrics::
-          - engine::embedding::
-          - engine::ollama::
-          - engine::llama_cpp::
-          - memory::
-          - executive::
-          - benchmark::
-          - presentation::
-          - telemetry::
-          - ui::
-          - skills::
-          - workspace::
-          - ingest::
-          - util::
-          - orchestrator::core::
-          - orchestrator::context::
-          - orchestrator::llm_support::
-          - orchestrator::tool_router::
-          - orchestrator::state::
-          - orchestrator::r#loop::
-          - orchestrator::heartbeat::
-          - orchestrator::alarms::
-          - tools::web::
-          - tools::vault::
-          - tools::agenda::
-          - tools::mail::
-          - tools::gatekeeper::
-          - tools::moltbook::
-          - tools::memory::
-          - tools::db_rest::
-          - tools::validation::
-          - tools::skills::
-          - tools::weather::
-          - tools::wiki::
-          - tools::system::
-          - tools::vision::
-          - tools::clock::
-          - tools::calendar::
+        batch: &test-batches
+          - "config::"
+          - "engine::grammar::"
+          - "engine::router::"
+          - "engine::token_metrics::"
+          - "engine::embedding::"
+          - "engine::ollama::"
+          - "engine::llama_cpp::"
+          - "memory::"
+          - "executive::"
+          - "benchmark::"
+          - "presentation::"
+          - "telemetry::"
+          - "ui::"
+          - "skills::"
+          - "workspace::"
+          - "ingest::"
+          - "util::"
+          - "orchestrator::core::"
+          - "orchestrator::context::"
+          - "orchestrator::llm_support::"
+          - "orchestrator::tool_router::"
+          - "orchestrator::state::"
+          - "orchestrator::r#loop::"
+          - "orchestrator::heartbeat::"
+          - "orchestrator::alarms::"
+          - "tools::web::"
+          - "tools::vault::"
+          - "tools::agenda::"
+          - "tools::mail::"
+          - "tools::gatekeeper::"
+          - "tools::moltbook::"
+          - "tools::memory::"
+          - "tools::db_rest::"
+          - "tools::validation::"
+          - "tools::skills::"
+          - "tools::weather::"
+          - "tools::wiki::"
+          - "tools::system::"
+          - "tools::vision::"
+          - "tools::clock::"
+          - "tools::calendar::"
     steps:
       - uses: actions/checkout@v4
 
@@ -102,7 +102,21 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: cargo test (${{ matrix.batch }})
-        run: cargo test --bin eris "${{ matrix.batch }}" -- --test-threads=1
+        run: |
+          set -o pipefail
+          batch='${{ matrix.batch }}'
+          output="$(
+            CARGO_TERM_COLOR=never cargo test --bin eris "$batch" -- --test-threads=1 2>&1 \
+              | tee /dev/stderr
+          )"
+          if printf '%s\n' "$output" | grep -qE '^test result: ok\. 0 passed'; then
+            echo "ERROR: batch filter matched zero tests: $batch"
+            exit 1
+          fi
+          if ! printf '%s\n' "$output" | grep -qE '^test result: ok\.'; then
+            echo "ERROR: cargo test did not succeed for batch: $batch"
+            exit 1
+          fi
 
   coverage:
     name: Coverage (${{ matrix.batch }})
@@ -112,48 +126,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        batch:
-          - config::
-          - engine::grammar::
-          - engine::router::
-          - engine::token_metrics::
-          - engine::embedding::
-          - engine::ollama::
-          - engine::llama_cpp::
-          - memory::
-          - executive::
-          - benchmark::
-          - presentation::
-          - telemetry::
-          - ui::
-          - skills::
-          - workspace::
-          - ingest::
-          - util::
-          - orchestrator::core::
-          - orchestrator::context::
-          - orchestrator::llm_support::
-          - orchestrator::tool_router::
-          - orchestrator::state::
-          - orchestrator::r#loop::
-          - orchestrator::heartbeat::
-          - orchestrator::alarms::
-          - tools::web::
-          - tools::vault::
-          - tools::agenda::
-          - tools::mail::
-          - tools::gatekeeper::
-          - tools::moltbook::
-          - tools::memory::
-          - tools::db_rest::
-          - tools::validation::
-          - tools::skills::
-          - tools::weather::
-          - tools::wiki::
-          - tools::system::
-          - tools::vision::
-          - tools::clock::
-          - tools::calendar::
+        batch: *test-batches
     steps:
       - uses: actions/checkout@v4
 
@@ -168,7 +141,22 @@ jobs:
           tool: cargo-llvm-cov
 
       - name: cargo llvm-cov (${{ matrix.batch }})
-        run: cargo llvm-cov test --bin eris "${{ matrix.batch }}" --codecov --output-path codecov.json -- --test-threads=1
+        run: |
+          set -o pipefail
+          batch='${{ matrix.batch }}'
+          output="$(
+            CARGO_TERM_COLOR=never cargo llvm-cov test --bin eris "$batch" \
+              --codecov --output-path codecov.json \
+              -- --test-threads=1 2>&1 | tee /dev/stderr
+          )"
+          if printf '%s\n' "$output" | grep -qE '^test result: ok\. 0 passed'; then
+            echo "ERROR: batch filter matched zero tests: $batch"
+            exit 1
+          fi
+          if ! printf '%s\n' "$output" | grep -qE '^test result: ok\.'; then
+            echo "ERROR: cargo llvm-cov test did not succeed for batch: $batch"
+            exit 1
+          fi
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4

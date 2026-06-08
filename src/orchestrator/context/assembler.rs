@@ -74,6 +74,8 @@ pub struct ContextAssembler {
     /// When true, append field-order instructions to the system prompt
     /// (the llama.cpp GBNF grammar requires a fixed key order).
     is_grammar_constrained: bool,
+    /// Turn-start semantic prefetch block (content-only facts from Qdrant).
+    turn_prefetch_block: Option<String>,
 }
 
 impl ContextAssembler {
@@ -88,7 +90,12 @@ impl ContextAssembler {
             identity,
             staged_memory_prompt_max_chars,
             is_grammar_constrained: false,
+            turn_prefetch_block: None,
         }
+    }
+
+    pub fn set_turn_prefetch_block(&mut self, block: Option<String>) {
+        self.turn_prefetch_block = block;
     }
 
     pub fn with_grammar_constraint(mut self, enabled: bool) -> Self {
@@ -149,15 +156,20 @@ impl ContextAssembler {
         identity: String,
         ephemeral: &EphemeralMemory,
     ) -> String {
-        let block = crate::memory::turn_end::format_staged_digest_for_prompt(
+        let mut out = identity;
+        let staged = crate::memory::turn_end::format_staged_digest_for_prompt(
             ephemeral,
             self.staged_memory_prompt_max_chars,
         );
-        if block.is_empty() {
-            identity
-        } else {
-            format!("{identity}\n\n{block}")
+        if !staged.is_empty() {
+            out.push_str("\n\n");
+            out.push_str(&staged);
         }
+        if let Some(prefetch) = self.turn_prefetch_block.as_ref().filter(|b| !b.is_empty()) {
+            out.push_str("\n\n");
+            out.push_str(prefetch);
+        }
+        out
     }
 
     /// Reads Identity.md and formats the Ephemeral cache into a single string.
@@ -350,7 +362,8 @@ impl ContextAssembler {
             - Do NOT call memory:commit in the same multi-tool turn immediately after memory:stage unless the user clearly asked to save to the vault, keep forever, or persist to disk.\n\
             - When the user wants long-term vault storage, use memory:commit with staged_id for single-item persistence.\n\
             - Use memory:commit_all for bulk persistence of promote-tier rows only.\n\
-            - Web fetch staging (tags web_artifact): committing does NOT write markdown to disk; semantic chunks were stored at fetch time.\n\n\
+            - [RELEVANT_LEARNED_MEMORY] (when present) is auto-injected from indexed vault knowledge when your message matches semantically; use it directly; call memory:query only for more detail, filters, or recency ordering.\n\
+            - Web fetch content is stored under 20_Discourse/web/missions/ on disk; use web:find to search fetched pages.\n\n\
             Vault taxonomy — use the 'kind' field in memory:stage to route to the correct root:\n\
             - kind=topology → 10_Topology/ (environment, config, infrastructure)\n\
             - kind=discourse → 20_Discourse/ (raw interaction, append-only stream)\n\

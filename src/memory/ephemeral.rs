@@ -529,18 +529,6 @@ pub fn spawn_snapshot_daemon(
             tokio::select! {
                 _ = snapshot_tick.tick() => {
                     let expired_entries = memory.collect_expired_entries();
-                    for entry in &expired_entries {
-                        if entry.tags.iter().any(|t| t == "web_artifact")
-                            && let Some(semantic) = &_semantic
-                            && let Err(e) = semantic.delete_web_artifact_points(&entry.staged_id).await
-                        {
-                            tracing::warn!(
-                                staged_id = %entry.staged_id,
-                                error = %e,
-                                "Failed to cleanup vector points for expired web artifact"
-                            );
-                        }
-                    }
                     for staged_id in expired_entries.iter().map(|e| &e.staged_id) {
                         memory.cache.invalidate(staged_id).await;
                     }

@@ -1,6 +1,7 @@
 use crate::config::AppConfig;
 use crate::engine::LlmEngine;
 use crate::memory::ephemeral::EphemeralMemory;
+use crate::memory::semantic::SemanticBrain;
 use crate::orchestrator::context::ContextAssembler;
 use crate::orchestrator::context::ContextViewSettings;
 use crate::orchestrator::state::AgentState;
@@ -121,6 +122,10 @@ pub struct Orchestrator<E: LlmEngine> {
     pub web_ledger: Option<Arc<tokio::sync::Mutex<WebSessionLedger>>>,
     /// `web:fetch` + `news:today` invocations this user turn (orchestrator cap).
     pub web_tool_calls_this_turn: u32,
+    /// Semantic brain for turn-start prefetch (optional when `require_semantic_brain` is false).
+    pub semantic: Option<Arc<SemanticBrain>>,
+    /// Milliseconds spent on the last turn-start semantic prefetch (`0` when skipped).
+    pub last_prefetch_ms: u64,
 }
 
 impl<E: LlmEngine> Orchestrator<E> {
@@ -181,6 +186,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         promotion_suppressed_during_step: Arc<AtomicBool>,
         token_metrics_rx: Option<tokio::sync::watch::Receiver<crate::engine::token_metrics::LlmTokenSnapshot>>,
         web_ledger: Option<Arc<tokio::sync::Mutex<WebSessionLedger>>>,
+        semantic: Option<Arc<SemanticBrain>>,
     ) -> Self {
         Self {
             state: AgentState::Idle,
@@ -232,6 +238,8 @@ impl<E: LlmEngine> Orchestrator<E> {
             gbnf_subset_cache: GbnfSubsetCache::new(),
             web_ledger,
             web_tool_calls_this_turn: 0,
+            semantic,
+            last_prefetch_ms: 0,
         }
     }
 

@@ -745,6 +745,7 @@ mod repeat_failure_streak_tests {
             Arc::new(AtomicBool::new(false)),
             None,
             None,
+            None,
         )
     }
 
@@ -803,6 +804,7 @@ mod repeat_failure_streak_tests {
             Arc::new(config),
             id_rx,
             Arc::new(AtomicBool::new(false)),
+            None,
             None,
             None,
         );
@@ -978,6 +980,7 @@ mod targeted_schema_retry_phase5_tests {
             Arc::new(cfg),
             id_rx,
             Arc::new(AtomicBool::new(false)),
+            None,
             None,
             None,
         )

@@ -830,6 +830,8 @@ fn start_qdrant_via_docker(qdrant_url: &str) -> Result<String> {
                 &container_name,
                 "-p",
                 &format!("{host_port}:6334"),
+                "-v",
+                "eris-qdrant-data:/qdrant/storage",
                 "qdrant/qdrant:latest",
             ])
             .stdout(Stdio::null())
