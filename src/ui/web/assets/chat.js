@@ -127,7 +127,7 @@
   }
 
   /** @param {string} source — `web` | `cli` | `discord` */
-  function appendUserTranscriptLine(source, body) {
+  function appendUserTranscriptLine(source, body, image) {
     const row = document.createElement("div");
     row.className = "msg user";
     const badge = document.createElement("span");
@@ -138,6 +138,13 @@
     span.textContent = normalizeLatexArrowsForDisplay(String(body));
     row.appendChild(badge);
     row.appendChild(span);
+    if (image && image.preview_url) {
+      const img = document.createElement("img");
+      img.className = "user-image";
+      img.src = image.preview_url;
+      img.alt = "Attached image";
+      row.appendChild(img);
+    }
     transcript.appendChild(row);
     transcript.scrollTop = transcript.scrollHeight;
   }
@@ -359,7 +366,7 @@
     }
     if (data.UserTranscriptLine) {
       const u = data.UserTranscriptLine;
-      appendUserTranscriptLine(u.source, u.body);
+      appendUserTranscriptLine(u.source, u.body, u.image || null);
       return;
     }
     if (data.ModelThought) {
@@ -403,6 +410,170 @@
     form.requestSubmit();
   });
 
+  let pendingAttachment = null;
+
+  function clearPendingAttachment() {
+    pendingAttachment = null;
+    const chip = document.getElementById("attachment-chip");
+    const preview = document.getElementById("attachment-preview");
+    if (chip) chip.classList.remove("visible");
+    if (preview) preview.removeAttribute("src");
+  }
+
+  function setPendingAttachment(data) {
+    pendingAttachment = {
+      relative_path: data.relative_path,
+      preview_url: data.preview_url,
+      width: data.width,
+      height: data.height,
+    };
+    const chip = document.getElementById("attachment-chip");
+    const preview = document.getElementById("attachment-preview");
+    if (preview) preview.src = data.preview_url;
+    if (chip) chip.classList.add("visible");
+  }
+
+  const PRECOMPRESS_MAX_EDGE = 2048;
+  const PRECOMPRESS_JPEG_QUALITY = 0.85;
+  const PRECOMPRESS_IF_BYTES_OVER = 512 * 1024;
+
+  function isHeicFile(file) {
+    const t = String(file.type || "").toLowerCase();
+    const n = String(file.name || "").toLowerCase();
+    return (
+      t === "image/heic" ||
+      t === "image/heif" ||
+      n.endsWith(".heic") ||
+      n.endsWith(".heif")
+    );
+  }
+
+  /** Downscale large camera JPEGs/PNG in-browser before upload (server still normalizes to 896px). */
+  async function compressImageFile(file) {
+    if (!file || !file.type.startsWith("image/")) return file;
+    if (file.type === "image/gif") return file;
+    if (file.size <= PRECOMPRESS_IF_BYTES_OVER) return file;
+
+    let bitmap;
+    try {
+      bitmap = await createImageBitmap(file);
+    } catch (_e) {
+      return file;
+    }
+
+    let tw = bitmap.width;
+    let th = bitmap.height;
+    const maxEdge = Math.max(tw, th);
+    if (maxEdge > PRECOMPRESS_MAX_EDGE) {
+      const scale = PRECOMPRESS_MAX_EDGE / maxEdge;
+      tw = Math.max(1, Math.round(tw * scale));
+      th = Math.max(1, Math.round(th * scale));
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = tw;
+    canvas.height = th;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      bitmap.close();
+      return file;
+    }
+    ctx.drawImage(bitmap, 0, 0, tw, th);
+    bitmap.close();
+
+    const blob = await new Promise(function (resolve, reject) {
+      canvas.toBlob(
+        function (b) {
+          if (b) resolve(b);
+          else reject(new Error("compress failed"));
+        },
+        "image/jpeg",
+        PRECOMPRESS_JPEG_QUALITY
+      );
+    });
+
+    const base = String(file.name || "image").replace(/\.[^.]+$/, "") || "image";
+    return new File([blob], base + ".jpg", { type: "image/jpeg" });
+  }
+
+  async function uploadVisionImage(file) {
+    if (isHeicFile(file)) {
+      appendLine(
+        "[ui] HEIC/HEIF not supported in web upload — export as JPEG first",
+        "system"
+      );
+      return;
+    }
+    let uploadFile = file;
+    try {
+      uploadFile = await compressImageFile(file);
+    } catch (_e) {
+      uploadFile = file;
+    }
+    const fd = new FormData();
+    fd.append("file", uploadFile);
+    const res = await fetch("/api/vision/upload", { method: "POST", body: fd });
+    if (!res.ok) {
+      const err = await res.json().catch(function () {
+        return {};
+      });
+      appendLine(
+        "[ui] image upload failed: " + (err.error || res.status),
+        "system"
+      );
+      return;
+    }
+    const data = await res.json();
+    setPendingAttachment(data);
+  }
+
+  const visionEnabled =
+    document.body &&
+    document.body.getAttribute("data-vision-enabled") === "true";
+
+  const composeStack = document.querySelector(".compose-stack");
+
+  if (visionEnabled && form) {
+    const removeBtn = document.getElementById("attachment-remove");
+    if (removeBtn) {
+      removeBtn.addEventListener("click", function () {
+        clearPendingAttachment();
+      });
+    }
+
+    function preventDefaults(e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+
+    const dropTarget = composeStack || form;
+    ["dragenter", "dragover", "dragleave", "drop"].forEach(function (evName) {
+      dropTarget.addEventListener(evName, preventDefaults, false);
+    });
+
+    dropTarget.addEventListener("dragenter", function () {
+      form.classList.add("vision-drop-active");
+    });
+    dropTarget.addEventListener("dragleave", function () {
+      form.classList.remove("vision-drop-active");
+    });
+    dropTarget.addEventListener("drop", async function (e) {
+      form.classList.remove("vision-drop-active");
+      const dt = e.dataTransfer;
+      if (!dt || !dt.files || !dt.files.length) return;
+      const file = dt.files[0];
+      if (!file || (!file.type.startsWith("image/") && !isHeicFile(file))) {
+        appendLine("[ui] drop an image file (png, jpg, webp, gif)", "system");
+        return;
+      }
+      try {
+        await uploadVisionImage(file);
+      } catch (_err) {
+        appendLine("[ui] network error uploading image", "system");
+      }
+    });
+  }
+
   form.addEventListener("submit", async function (e) {
     e.preventDefault();
     const text = input.value;
@@ -415,17 +586,20 @@
       return;
     }
     input.value = "";
+    const ingress = {
+      source: "web",
+      display: text,
+      for_model: null,
+    };
+    if (pendingAttachment) {
+      ingress.image = pendingAttachment;
+      clearPendingAttachment();
+    }
     try {
       const res = await fetch("/api/action", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          SubmitIngress: {
-            source: "web",
-            display: text,
-            for_model: null,
-          },
-        }),
+        body: JSON.stringify({ SubmitIngress: ingress }),
       });
       if (!res.ok) {
         appendLine("[ui] could not send message (channel busy?)", "system");

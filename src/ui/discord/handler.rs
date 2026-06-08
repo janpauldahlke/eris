@@ -4,6 +4,7 @@
 //! Serenity fills guild channels from `GUILD_CREATE` after the READY payload; scanning the cache
 //! in `ready` often sees an empty channel list.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -19,10 +20,12 @@ use crate::config::AppConfig;
 use crate::presentation::{InputSource, UserAction, UserIngress};
 
 use super::DiscordReadySignal;
+use super::attachment::{ingest_first_discord_image, is_image_attachment};
 
 pub struct DiscordHandler {
     pub user_action_tx: mpsc::Sender<UserAction>,
     pub config: Arc<AppConfig>,
+    pub workspace_root: PathBuf,
     pub ready_tx: mpsc::Sender<DiscordReadySignal>,
     /// Filled after [`EventHandler::cache_ready`]; message handler compares without full cache scans.
     pub listen_channel_id: Arc<RwLock<Option<ChannelId>>>,
@@ -80,6 +83,89 @@ fn resolve_listen_channel(ctx: &Context, config: &AppConfig) -> Result<ChannelId
         "no text/news channel matching {:?} (case-insensitive) in {} server(s). Visible text/news names (sample): {}",
         name, guild_count, preview
     ))
+}
+
+async fn build_discord_ingress(
+    workspace_root: &PathBuf,
+    config: &AppConfig,
+    msg: &Message,
+) -> Option<UserIngress> {
+    let trimmed = msg.content.trim();
+    let has_image_candidate = msg
+        .attachments
+        .iter()
+        .any(|a| is_image_attachment(a, &config.vision));
+
+    if trimmed.is_empty() && !has_image_candidate {
+        if msg.content.is_empty() && msg.attachments.is_empty() {
+            tracing::warn!(
+                event = "fcp.discord.message_empty_content",
+                channel_id = %msg.channel_id,
+                "Discord message has no text in the listen channel; if you typed text, enable Message Content Intent (Developer Portal → Bot → Privileged Gateway Intents)"
+            );
+        }
+        return None;
+    }
+
+    if has_image_candidate && !config.vision.enabled {
+        tracing::warn!(
+            target: "fcp.vision",
+            event = "fcp.discord.image_ignored",
+            "Discord image attachment ignored: vision disabled in config"
+        );
+        if trimmed.is_empty() {
+            return None;
+        }
+    }
+
+    let mut image = None;
+    if has_image_candidate && config.vision.enabled {
+        match ingest_first_discord_image(workspace_root, config, &msg.attachments).await {
+            Ok(Some(att)) => image = Some(att),
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(
+                    target: "fcp.vision",
+                    event = "fcp.discord.image_ingest_failed",
+                    error = %e,
+                    "Failed to ingest Discord image attachment"
+                );
+                if trimmed.is_empty() {
+                    return None;
+                }
+            }
+        }
+    }
+
+    if trimmed.is_empty() && image.is_none() {
+        return None;
+    }
+
+    let author = msg
+        .author
+        .global_name
+        .as_deref()
+        .unwrap_or(msg.author.name.as_str());
+
+    let body = if trimmed.is_empty() {
+        "(image attachment)"
+    } else {
+        trimmed
+    };
+    let tagged = format!("[Input via Discord from @{author}]\n\n{body}");
+
+    let display = if trimmed.is_empty() {
+        "(image attachment)".to_string()
+    } else {
+        msg.content.clone()
+    };
+
+    Some(UserIngress {
+        source: InputSource::Discord,
+        display,
+        for_model: Some(tagged),
+        image,
+    })
 }
 
 #[async_trait]
@@ -180,28 +266,13 @@ impl EventHandler for DiscordHandler {
             return;
         }
 
-        if trimmed.is_empty() {
-            if msg.content.is_empty() && msg.attachments.is_empty() {
-                tracing::warn!(
-                    event = "fcp.discord.message_empty_content",
-                    channel_id = %msg.channel_id,
-                    "Discord message has no text in the listen channel; if you typed text, enable Message Content Intent (Developer Portal → Bot → Privileged Gateway Intents)"
-                );
-            }
+        let Some(ingress) =
+            build_discord_ingress(&self.workspace_root, &self.config, &msg).await
+        else {
             return;
-        }
-
-        let author = msg
-            .author
-            .global_name
-            .as_deref()
-            .unwrap_or(msg.author.name.as_str());
-        let tagged = format!("[Input via Discord from @{author}]\n\n{}", msg.content);
-        let ingress = UserIngress {
-            source: InputSource::Discord,
-            display: msg.content.clone(),
-            for_model: Some(tagged),
         };
+
+        let has_image = ingress.image.is_some();
         if self
             .user_action_tx
             .try_send(UserAction::SubmitIngress(ingress))
@@ -211,12 +282,14 @@ impl EventHandler for DiscordHandler {
                 event = "fcp.discord.submit_dropped",
                 reason = "channel_full",
                 message_len = msg.content.len(),
+                has_image,
                 "Dropped Discord submit: user action channel full or closed"
             );
         } else {
             tracing::info!(
                 event = "fcp.discord.submit_queued",
                 message_len = msg.content.len(),
+                has_image,
                 "Queued Submit from Discord to session"
             );
         }

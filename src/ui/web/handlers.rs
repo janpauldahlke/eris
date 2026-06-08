@@ -14,10 +14,14 @@ use super::WebAppState;
 
 #[derive(Template, WebTemplate)]
 #[template(path = "chat.html")]
-pub struct ChatShell;
+pub struct ChatShell {
+    pub vision_enabled: bool,
+}
 
-pub async fn chat_shell() -> ChatShell {
-    ChatShell
+pub async fn chat_shell(State(state): State<WebAppState>) -> ChatShell {
+    ChatShell {
+        vision_enabled: state.config.vision.enabled,
+    }
 }
 
 pub async fn chat_js() -> Response {

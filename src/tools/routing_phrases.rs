@@ -55,6 +55,9 @@ pub fn fallback_triggers(tool_name: &str) -> &'static str {
         "web:find" => {
             "query fetched web artifact by artifact id, search fetched page snippets, web find mission chunks"
         }
+        "vision:see" => {
+            "describe image, what is in this picture, look at screenshot, analyze photo, read image text, attached image, what do you see"
+        }
         "system:health" => {
             "system status, Ollama endpoint, LLM model, CPU usage, RAM memory usage, GPU usage NVIDIA nvidia-smi, disk space, health check, diagnostics, how is the system, performance, resources"
         }

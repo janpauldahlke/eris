@@ -5,5 +5,6 @@ mod handlers;
 mod router;
 mod server;
 mod sse;
+mod vision_handlers;
 
 pub use server::{WebAppState, run_web_chat, run_web_chat_with_broadcast};

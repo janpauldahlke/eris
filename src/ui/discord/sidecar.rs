@@ -1,5 +1,6 @@
 //! Start Serenity and a non-blocking outbound loop for assistant lines from the presentation mux.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
@@ -28,6 +29,7 @@ const READY_TIMEOUT: Duration = Duration::from_secs(90);
 /// `typing_ctl_rx` carries [`DiscordTypingCtl`] only; it never touches web or TUI [`SessionEvent`]s.
 pub async fn run_discord_sidecar(
     config: Arc<AppConfig>,
+    workspace_root: PathBuf,
     user_action_tx: mpsc::Sender<UserAction>,
     mut outbound_rx: mpsc::Receiver<String>,
     mut typing_ctl_rx: mpsc::Receiver<DiscordTypingCtl>,
@@ -47,6 +49,7 @@ pub async fn run_discord_sidecar(
     let handler = DiscordHandler {
         user_action_tx: user_action_tx.clone(),
         config: config.clone(),
+        workspace_root,
         ready_tx,
         listen_channel_id,
         listen_ready_sent,

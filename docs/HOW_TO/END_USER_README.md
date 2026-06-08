@@ -67,6 +67,7 @@ Minimal checklist:
    - **llama.cpp**: Build llama.cpp from source, download GGUF model files. See **[LLAMA_CPP_SETUP.md](../LLAMA_CPP_SETUP.md)** for the full guide.
 2. If you use Qdrant: run it (for example via Docker) or let Eris try to start it when possible; otherwise adjust `require_semantic_brain` in `.fcp/config.toml` once that file exists.
 3. **Web pages / headlines (optional):** install **[browser39](https://crates.io/crates/browser39)** on PATH (`cargo install browser39 --locked`; `browser39 --version` must work). Eris checks this at chat startup for `web:fetch`, `web:find`, `web:search`, and `news:today`. Details: [WEB_BROWSER39.md](../WEB_BROWSER39.md).
+4. **Vision / image understanding (optional):** only with the **llama.cpp** backend, a compatible multimodal GGUF + mmproj, and `[vision] enabled = true`. Not available on Ollama. See **[VISION.md](VISION.md)**.
 
 The first-run wizard (ignition) will ask which backend to use and guide you through model selection.
 

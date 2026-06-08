@@ -131,6 +131,7 @@ pub async fn execute_command(
 
             match view {
                 ChatViewMode::Web => {
+                    let workspace_for_discord = workspace_root.clone();
                     let session_result = start_chat_session(
                         cli,
                         config.clone(),
@@ -166,6 +167,7 @@ pub async fn execute_command(
                         );
                         let disc_jh = tokio::spawn(crate::ui::discord::run_discord_sidecar(
                             config.clone(),
+                            workspace_for_discord,
                             session.user_action_tx.clone(),
                             drx,
                             typing_rx,
@@ -218,6 +220,7 @@ pub async fn execute_command(
                     let terminal = setup_terminal()?;
                     let cfg_for_discord = config.clone();
                     let cfg_shutdown = config.clone();
+                    let workspace_for_discord = workspace_root.clone();
 
                     let session_result = start_chat_session(
                         cli,
@@ -257,6 +260,7 @@ pub async fn execute_command(
                         );
                         let disc_jh = tokio::spawn(crate::ui::discord::run_discord_sidecar(
                             cfg_for_discord,
+                            workspace_for_discord,
                             session.user_action_tx.clone(),
                             drx,
                             typing_rx,

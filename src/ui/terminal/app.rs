@@ -138,7 +138,7 @@ impl TuiApp {
                                 .push(format!("[model thought]{suffix}\n{body}"));
                             redraw_now = true;
                         }
-                        SessionEvent::UserTranscriptLine { source, body } => {
+                        SessionEvent::UserTranscriptLine { source, body, .. } => {
                             let badge = source.badge_label();
                             self.chat_stack.push(format!("[{badge}] {}", body));
                             self.chat_follow_latest = true;
@@ -261,6 +261,7 @@ impl TuiApp {
                         source: InputSource::Cli,
                         display: trimmed.to_string(),
                         for_model: None,
+                        image: None,
                     };
                     let _ = self
                         .action_tx

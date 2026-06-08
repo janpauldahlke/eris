@@ -41,8 +41,11 @@ Shared helpers (e.g. path mutability) used by vault tools.
 | `tools/db_rest/` | `db:find_connections` (Deutsche Bahn–style journey search via configured REST profile) |
 | `tools/mail/` | `mail:check`, `mail:read`, `mail:write`, `mail:digest`, `mail:delete`, `mail:move` (Gmail via Google Workspace client; tools register only when `google.enabled` and credentials resolve) |
 | `tools/calendar/` | `calendar:list`, `calendar:get`, `calendar:create`, `calendar:update`, `calendar:delete` (Google Calendar API; same `[google]` registration gate as mail) |
+| `tools/vision/` | `vision:see` — multimodal describe via llama.cpp chat server (`file://` + `--mmproj`); registers only when `[vision] enabled` and `llm_backend = LlamaCpp` |
 
 Agenda and alarms persist JSON under `.fcp/tools/` (see `vault_layout`).
+
+**Vision gate:** `VisionConfig::enabled` controls mmproj spawn (`executive/peripherals.rs`), web upload routes (`ui/web/vision_handlers.rs`), Discord attachment ingest (`ui/discord/attachment.rs`), tool registration (`chat_session.rs`), and ingress rejection when disabled. Normalized JPEGs land under `[vision].upload_dir` (default `99_USER_UPLOADED/images/`). Operator doc: [docs/HOW_TO/VISION.md](../../HOW_TO/VISION.md).
 
 ## Descriptors (`tools/descriptors.rs`, `tools/specs.rs`)
 

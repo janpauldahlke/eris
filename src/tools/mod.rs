@@ -16,6 +16,7 @@ pub mod system;
 pub mod traits;
 pub mod validation;
 pub mod vault;
+pub mod vision;
 pub mod weather;
 pub mod web;
 pub mod wiki;

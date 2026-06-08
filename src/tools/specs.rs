@@ -1200,4 +1200,22 @@ name = "read_conversation"
 args = { action = "read_conversation", conversation_id = "conv_123" }
 rationale = "Loads messages from an approved conversation."
 "#,
+    r#"descriptor_version = 1
+tool_name = "vision:see"
+short_description = "Describe a normalized JPEG under the vault vision upload folder via the multimodal model."
+when_to_use = "Use when the user attached an image in web or Discord chat, or asks about a file under the configured upload_dir (e.g. 99_USER_UPLOADED/images). Call with the exact relative_path from the attachment hint before answering visual questions."
+when_not_to_use = "Do not use for text files (vault:read), URLs (web:fetch), or when vision is disabled. Do not guess paths — use the path from [Attached image at vault path: …] in the user message."
+suggested_skills = ["vision-upload-workflow"]
+routing_hints = ["describe image", "what is in this picture", "look at screenshot", "analyze photo", "attached image", "what do you see"]
+
+[[examples_good]]
+name = "attached_upload"
+args = { relative_path = "99_USER_UPLOADED/images/550e8400-e29b-41d4-a716-446655440000.jpg", prompt = "What text and UI elements are visible?" }
+rationale = "Uses vault path from web upload attachment."
+
+[[examples_bad]]
+name = "vault_text_file"
+args = { relative_path = "10_Topology/skills/foo.md" }
+rationale = "Not an image under upload_dir; use vault:read."
+"#,
 ];

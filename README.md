@@ -4,7 +4,7 @@
 [![Rust edition](https://img.shields.io/badge/Rust-Edition%202024-dea584?logo=rust&logoColor=white)](https://doc.rust-lang.org/edition-guide/rust-2024/index.html)
 [![codecov](https://codecov.io/gh/janpauldahlke/eris/graph/badge.svg)](https://codecov.io/gh/janpauldahlke/eris)
 
-**Episodic Reasoning & Inference System** — a local, vault-centric assistant: same orchestrator and tools whether you use the **full-screen terminal UI (ratatui)**, **`eris chat --web`** (localhost Axum + SSE), or an **optional Discord sidecar** that shares the live session. Two LLM backends: **Ollama** (default, easiest) or **llama.cpp** (direct GGUF inference with GBNF grammar enforcement). Optional Qdrant holds semantic memory; notes live in a Markdown vault; tools run only through the JSON-schema gatekeeper.
+**Episodic Reasoning & Inference System** — a local, vault-centric assistant: same orchestrator and tools whether you use the **full-screen terminal UI (ratatui)**, **`eris chat --web`** (localhost Axum + SSE), or an **optional Discord sidecar** that shares the live session. Two LLM backends: **Ollama** (default, easiest) or **llama.cpp** (direct GGUF inference with GBNF grammar enforcement). Optional **vision** (`vision:see`) on the llama.cpp path only — web drop zone and Discord image uploads for supported multimodal GGUF models. Optional Qdrant holds semantic memory; notes live in a Markdown vault; tools run only through the JSON-schema gatekeeper.
 
 Architecture detail: [docs/updated_architecture/README.md](docs/updated_architecture/README.md).
 
@@ -50,7 +50,9 @@ Direct inference via `llama-server`. Eris manages the server processes, compiles
 2. **Download GGUF models** for chat and embeddings (e.g. from HuggingFace).
 3. **Configure** `llm_backend = "LlamaCpp"` and the `[llama_cpp]` section in `.fcp/config.toml`.
 
-Full instructions: **[docs/LLAMA_CPP_SETUP.md](docs/LLAMA_CPP_SETUP.md)**.
+Full instructions: **[docs/HOW_TO/LLAMA_CPP_SETUP.md](docs/HOW_TO/LLAMA_CPP_SETUP.md)**.
+
+**Vision (optional):** Image understanding via **`vision:see`** requires **`llm_backend = "LlamaCpp"`**, `[vision] enabled = true`, a compatible **chat GGUF + mmproj**, and a recent **`llama-server`** (multimodal projector support is model-specific — e.g. Gemma 4 needs llama.cpp **b9493+**). Not available on Ollama. Setup: **[docs/HOW_TO/VISION.md](docs/HOW_TO/VISION.md)**.
 
 ### Qdrant (vector DB)
 
@@ -106,7 +108,8 @@ Registration is explicit: ask Eris to register on Moltbook with a name and descr
 | Ollama HTTP | `ollama_host`                                   | Default `http://localhost:11434` (Ollama backend)                         |
 | Chat model  | `model_name`                                    | Match what you `ollama pull` (default `gemma4:26b`)                       |
 | Embed model | `embed_model_name`                              | Default `nomic-embed-text` (768-d vectors → Qdrant)                       |
-| llama.cpp   | `[llama_cpp]` table                             | `home`, model paths, ports, GPU layers — see [LLAMA_CPP_SETUP.md](docs/LLAMA_CPP_SETUP.md) |
+| llama.cpp   | `[llama_cpp]` table                             | `home`, model paths, ports, GPU layers — see [LLAMA_CPP_SETUP.md](docs/HOW_TO/LLAMA_CPP_SETUP.md) |
+| Vision      | `[vision]` + `llama_cpp.mmproj_path`            | **LlamaCpp only**; web + Discord image → `vision:see` — see [VISION.md](docs/HOW_TO/VISION.md) |
 | Qdrant URL  | `qdrant_url`                                    | Default `http://localhost:6334` (gRPC)                                    |
 | Web UI      | `web_bind_addr`, `web_port`, `web_open_browser` | Loopback + port for `eris chat --web`; optional `FCP_WEB_*` env overrides |
 | Discord     | `[discord]` table                               | Optional; needs `bot_token` + app id + channel when `enabled = true`      |
@@ -385,6 +388,7 @@ Representative **`routing_hints`** (say things _like_ this—the model still dec
 | **moltbook:search**        | semantic search Moltbook, find posts by meaning, discover discussions by topic                                   |
 | **moltbook:comment/post/vote** | comment on Moltbook, post to Moltbook, upvote Moltbook; only after explicit operator intent or approval      |
 | **moltbook:dm**            | Moltbook DM, direct messages, inbox, DM request, reply to Moltbook message                                       |
+| **vision:see**             | describe image, what is in this picture, look at screenshot, analyze photo, attached image, what do you see ( **llama.cpp + `[vision] enabled` only** ) |
 
 To change operator-facing routing text, prefer **`routing_hints`** in `[src/tools/specs.rs](src/tools/specs.rs)`; for tools without TOML hints, edit **`fallback_triggers`** in `[src/tools/routing_phrases.rs](src/tools/routing_phrases.rs)`. The lexical phrase lists inside `tool_router.rs` remain for URL/page detection and short-input guards (not the full tool roster).
 

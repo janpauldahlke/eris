@@ -1,5 +1,6 @@
 //! Optional Discord sidecar (Serenity): same `UserAction` / presentation stream as web or TUI.
 
+mod attachment;
 mod format;
 mod handler;
 mod ready_signal;
