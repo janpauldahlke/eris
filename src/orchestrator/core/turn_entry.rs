@@ -208,41 +208,6 @@ impl<E: LlmEngine> Orchestrator<E> {
         if self.force_full_tool_schemas_in_llm_view && !targeted_tools.is_empty() {
             return;
         }
-        let mut candidates = raw_llm_output
-            .map(crate::orchestrator::llm_support::json_envelope::extract_tool_call_names_best_effort)
-            .unwrap_or_default();
-        if candidates.is_empty() {
-            candidates =
-                crate::orchestrator::llm_support::json_envelope::infer_tools_from_user_message(
-                    self.last_user_content(),
-                );
-        }
-        if candidates.is_empty() {
-            candidates.extend(self.step_failed_tools.iter().cloned());
-        }
-        if candidates.is_empty() {
-            if let Some(name) =
-                crate::orchestrator::llm_support::json_envelope::last_tool_name_from_chat_stack(
-                    &self.chat_stack,
-                )
-            {
-                candidates.push(name);
-            }
-        }
-        if candidates.is_empty() {
-            candidates.extend(
-                router_hints
-                    .iter()
-                    .filter(|n| n.starts_with("web:") || n.as_str() == "news:today")
-                    .take(3)
-                    .cloned(),
-            );
-        }
-        if candidates.is_empty() {
-            if let Some(first) = router_hints.first() {
-                candidates.push(first.clone());
-            }
-        }
         let allowed: HashSet<String> = self
             .gatekeeper
             .get_allowed_tools(&AgentState::Chat)
@@ -254,9 +219,16 @@ impl<E: LlmEngine> Orchestrator<E> {
                     .map(|s| s.to_string())
             })
             .collect();
-        candidates.retain(|n| allowed.contains(n));
-        candidates.sort();
-        candidates.dedup();
+        let step_failed: Vec<String> = self.step_failed_tools.iter().cloned().collect();
+        let candidates = crate::orchestrator::llm_support::json_envelope::select_recovery_targeted_tools(
+            raw_llm_output,
+            self.last_user_content(),
+            &step_failed,
+            router_hints,
+            &self.chat_stack,
+            &allowed,
+            self.tool_map_offer_cap,
+        );
         if candidates.is_empty() {
             return;
         }

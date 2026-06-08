@@ -5,6 +5,7 @@ use schemars::schema::{
     InstanceType, RootSchema, Schema, SchemaObject, SingleOrVec,
 };
 use std::borrow::Cow;
+use std::collections::HashSet;
 
 /// First line of the JSON-parse recovery hint; also used to detect this path when shortening UI copy.
 pub const FCP_JSON_REPAIR_MARKER: &str = "[FCP JSON REPAIR]";
@@ -158,10 +159,156 @@ pub fn extract_tool_call_names_best_effort(raw: &str) -> Vec<String> {
     names
 }
 
-/// Infer web-related tool names from the latest user turn (Recover fallback when JSON parse fails).
+fn is_tool_name_token(name: &str) -> bool {
+    if name.contains(char::is_whitespace) {
+        return false;
+    }
+    let Some((ns, tool)) = name.split_once(':') else {
+        return false;
+    };
+    !ns.is_empty()
+        && !tool.is_empty()
+        && ns
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c == '_' || c.is_ascii_digit())
+        && tool
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c == '_' || c.is_ascii_digit())
+}
+
+fn push_unique_tool_name(names: &mut Vec<String>, name: &str) {
+    if is_tool_name_token(name) && !names.iter().any(|n| n == name) {
+        names.push(name.to_string());
+    }
+}
+
+/// Scan `text` for bare `namespace:tool` tokens (lowercase ASCII).
+fn scan_tool_name_tokens_in_text(text: &str, names: &mut Vec<String>) {
+    let bytes = text.as_bytes();
+    let len = bytes.len();
+    let mut i = 0usize;
+    while i < len {
+        if !bytes[i].is_ascii_lowercase() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < len && (bytes[i].is_ascii_lowercase() || bytes[i].is_ascii_digit() || bytes[i] == b'_')
+        {
+            i += 1;
+        }
+        if i >= len || bytes[i] != b':' {
+            continue;
+        }
+        i += 1;
+        if i >= len || !bytes[i].is_ascii_lowercase() {
+            continue;
+        }
+        while i < len && (bytes[i].is_ascii_lowercase() || bytes[i].is_ascii_digit() || bytes[i] == b'_')
+        {
+            i += 1;
+        }
+        push_unique_tool_name(names, &text[start..i]);
+    }
+}
+
+fn extract_backtick_tool_names(text: &str, names: &mut Vec<String>) {
+    let mut rest = text;
+    while let Some(start) = rest.find('`') {
+        let after = &rest[start + 1..];
+        let Some(end) = after.find('`') else {
+            break;
+        };
+        push_unique_tool_name(names, after[..end].trim());
+        rest = &after[end + 1..];
+    }
+}
+
+/// Best-effort extraction of tool names from model prose (not JSON `"name"` fields).
+pub fn extract_tool_names_from_prose(raw: &str) -> Vec<String> {
+    let mut names = Vec::<String>::new();
+    if let Some(idx) = raw.find("Invoked tools:") {
+        let after = &raw[idx + "Invoked tools:".len()..];
+        let line = after.lines().next().unwrap_or(after);
+        for part in line.split(',') {
+            push_unique_tool_name(&mut names, part.trim());
+        }
+    }
+    extract_backtick_tool_names(raw, &mut names);
+    scan_tool_name_tokens_in_text(raw, &mut names);
+    names
+}
+
+fn capped_router_hints(router_hints: &[String], cap: usize) -> Vec<String> {
+    if router_hints.is_empty() {
+        return Vec::new();
+    }
+    if cap == 0 {
+        router_hints.to_vec()
+    } else {
+        router_hints.iter().take(cap).cloned().collect()
+    }
+}
+
+/// Choose tool(s) for a Recover pass when protocol JSON parse fails or tools need full schemas.
+///
+/// Prefers the current turn's semantic router matches over stale tool-success lines in the chat stack.
+pub fn select_recovery_targeted_tools(
+    raw_llm_output: Option<&str>,
+    user_message: &str,
+    step_failed_tools: &[String],
+    router_hints: &[String],
+    chat_stack: &[crate::engine::Message],
+    allowed: &HashSet<String>,
+    router_cap: usize,
+) -> Vec<String> {
+    let raw = raw_llm_output.unwrap_or("");
+    let non_json = raw_appears_to_start_without_json_object(raw);
+
+    let mut candidates = if non_json {
+        Vec::new()
+    } else {
+        extract_tool_call_names_best_effort(raw)
+    };
+    if candidates.is_empty() {
+        candidates = extract_tool_names_from_prose(raw);
+    }
+    if candidates.is_empty() {
+        candidates = infer_tools_from_user_message(user_message);
+    }
+    if candidates.is_empty() {
+        candidates.extend(step_failed_tools.iter().cloned());
+    }
+    if candidates.is_empty() {
+        candidates.extend(capped_router_hints(router_hints, router_cap));
+    }
+    if candidates.is_empty() {
+        if let Some(name) = last_tool_name_from_chat_stack(chat_stack) {
+            candidates.push(name);
+        }
+    }
+
+    if step_failed_tools.is_empty() && !candidates.is_empty() && !router_hints.is_empty() {
+        let capped = capped_router_hints(router_hints, router_cap);
+        if let Some(top) = capped.first() {
+            let any_in_router = candidates.iter().any(|c| capped.contains(c));
+            if !any_in_router {
+                candidates.insert(0, top.clone());
+            }
+        }
+    }
+
+    candidates.retain(|n| allowed.contains(n));
+    candidates.sort();
+    candidates.dedup();
+    candidates
+}
+
+/// Infer tool names from the latest user turn (Recover fallback when JSON parse fails).
 pub fn infer_tools_from_user_message(user: &str) -> Vec<String> {
     let lower = user.to_lowercase();
     let mut out = Vec::<String>::new();
+    scan_tool_name_tokens_in_text(user, &mut out);
     let wants_find = lower.contains("web:find")
         || lower.contains("find on")
         || lower.contains("search within")
@@ -189,6 +336,42 @@ pub fn infer_tools_from_user_message(user: &str) -> Vec<String> {
     }
     if wants_news {
         out.push("news:today".into());
+    }
+    if (lower.contains("search") && lower.contains("vault")) || lower.contains("vault:search") {
+        push_unique_tool_name(&mut out, "vault:search");
+    }
+    if lower.contains("list")
+        && (lower.contains("folder")
+            || lower.contains("vault")
+            || lower.contains("director")
+            || lower.contains("files"))
+    {
+        push_unique_tool_name(&mut out, "vault:list");
+    }
+    if (lower.contains("identity") || lower.contains("invariants"))
+        && (lower.contains("read")
+            || lower.contains("who are you")
+            || lower.contains(".md")
+            || lower.contains("vault"))
+    {
+        push_unique_tool_name(&mut out, "vault:read");
+    }
+    if lower.contains("health check")
+        || lower.contains("system health")
+        || lower.contains("system:health")
+        || (lower.contains("health") && lower.contains("check"))
+    {
+        push_unique_tool_name(&mut out, "system:health");
+    }
+    if lower.contains("what time")
+        || lower.contains("current time")
+        || lower.contains("time is it")
+        || lower.contains("clock:now")
+    {
+        push_unique_tool_name(&mut out, "clock:now");
+    }
+    if lower.contains("timer") || lower.contains("countdown") || lower.contains("clock:timer") {
+        push_unique_tool_name(&mut out, "clock:timer");
     }
     out
 }
@@ -583,6 +766,137 @@ mod tests {
         let raw = r#"{"name":"web:search","tool_calls":[{"name":"web:search","args":{}},{"name":"web:search","args":{}}]}"#;
         let names = extract_tool_call_names_best_effort(raw);
         assert_eq!(names, vec!["web:search".to_string()]);
+    }
+
+    #[test]
+    fn extract_tool_names_from_prose_invoked_tools_line() {
+        let raw = "Invoked tools: vault:search";
+        let names = extract_tool_names_from_prose(raw);
+        assert_eq!(names, vec!["vault:search".to_string()]);
+    }
+
+    #[test]
+    fn extract_tool_names_from_prose_backtick_form() {
+        let raw = "Please proceed with `vault:search` for these terms.";
+        let names = extract_tool_names_from_prose(raw);
+        assert_eq!(names, vec!["vault:search".to_string()]);
+    }
+
+    #[test]
+    fn infer_tools_from_user_message_vault_search() {
+        let names = infer_tools_from_user_message("Search the vault for mentions of synthesis");
+        assert!(names.contains(&"vault:search".to_string()));
+    }
+
+    #[test]
+    fn select_recovery_router_beats_last_tool_on_chat_stack() {
+        use crate::engine::Message;
+        let allowed: HashSet<String> = [
+            "clock:now",
+            "vault:search",
+            "vault:list",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        let stack = vec![Message {
+            role: "system".to_string(),
+            content: "Tool 'clock:now' succeeded: SUCCESS: 16:00".to_string(),
+        }];
+        let router = vec![
+            "vault:search".to_string(),
+            "vault:list".to_string(),
+        ];
+        let user = "Search the vault for Talos and synthesis mentions.";
+        let raw = "I am ready to search but have not executed yet.";
+        let selected = select_recovery_targeted_tools(
+            Some(raw),
+            user,
+            &[],
+            &router,
+            &stack,
+            &allowed,
+            0,
+        );
+        assert_eq!(selected, vec!["vault:search".to_string()]);
+    }
+
+    #[test]
+    fn select_recovery_talos_turn8_regression() {
+        use crate::engine::Message;
+        let allowed: HashSet<String> = [
+            "clock:now",
+            "vault:search",
+            "vault:list",
+            "vault:read",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        let stack = vec![Message {
+            role: "system".to_string(),
+            content: "Tool 'clock:now' succeeded: SUCCESS: current time".to_string(),
+        }];
+        let router = vec![
+            "vault:search".to_string(),
+            "vault:taglist".to_string(),
+            "vault:list".to_string(),
+        ];
+        let user = "Search the vault for any notes mentioning synthesis or Talos.";
+        let raw = "I am ready to search the vault for mentions of \"synthesis\" or \"Talos\", but I have not executed the search yet. Please confirm if you would like me to proceed with `vault:search` for these terms.";
+        let selected = select_recovery_targeted_tools(
+            Some(raw),
+            user,
+            &[],
+            &router,
+            &stack,
+            &allowed,
+            0,
+        );
+        assert_eq!(selected, vec!["vault:search".to_string()]);
+    }
+
+    #[test]
+    fn select_recovery_failed_tool_precedence_over_last_tool() {
+        use crate::engine::Message;
+        let allowed: HashSet<String> = ["clock:now", "vault:read"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let stack = vec![Message {
+            role: "system".to_string(),
+            content: "Tool 'clock:now' succeeded: SUCCESS".to_string(),
+        }];
+        let selected = select_recovery_targeted_tools(
+            None,
+            "Read my identity file",
+            &["vault:read".to_string()],
+            &["wiki:summary".to_string()],
+            &stack,
+            &allowed,
+            0,
+        );
+        assert_eq!(selected, vec!["vault:read".to_string()]);
+    }
+
+    #[test]
+    fn select_recovery_split_brain_prepends_router_top() {
+        let allowed: HashSet<String> = ["clock:now", "vault:search"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let raw = r#"{"thought":"search vault","status":"Task","tool_calls":[{"name":"clock:now","args":{}}]"#;
+        let router = vec!["vault:search".to_string()];
+        let selected = select_recovery_targeted_tools(
+            Some(raw),
+            "Search the vault for Talos",
+            &[],
+            &router,
+            &[],
+            &allowed,
+            0,
+        );
+        assert_eq!(selected, vec!["clock:now".to_string(), "vault:search".to_string()]);
     }
 
     #[test]
