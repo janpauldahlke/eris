@@ -2,9 +2,11 @@
 
 mod audio_handlers;
 mod bridge;
+mod console_handlers;
 mod handlers;
 mod router;
 mod server;
+mod settings_merge;
 mod sse;
 mod vision_handlers;
 

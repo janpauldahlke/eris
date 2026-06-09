@@ -11,18 +11,28 @@ use axum::response::{IntoResponse, Response};
 use crate::presentation::UserAction;
 
 use super::WebAppState;
+use super::console_handlers::{parse_agent_name_from_identity, resolve_identity_path};
 
 #[derive(Template, WebTemplate)]
 #[template(path = "chat.html")]
 pub struct ChatShell {
     pub vision_enabled: bool,
     pub audio_enabled: bool,
+    pub workspace: String,
+    pub agent_name: String,
 }
 
 pub async fn chat_shell(State(state): State<WebAppState>) -> ChatShell {
+    let identity_path = resolve_identity_path(&state.workspace_root, &state.config);
+    let agent_name = match tokio::fs::read_to_string(&identity_path).await {
+        Ok(content) => parse_agent_name_from_identity(&content),
+        Err(_) => "Agent".to_string(),
+    };
     ChatShell {
         vision_enabled: state.config.vision.enabled,
         audio_enabled: state.config.audio.enabled,
+        workspace: state.config.workspace.clone(),
+        agent_name,
     }
 }
 

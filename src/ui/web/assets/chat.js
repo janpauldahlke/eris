@@ -642,6 +642,23 @@
     return attachment;
   }
 
+  function setMicIdleState(btn) {
+    if (!btn) return;
+    btn.classList.remove("recording");
+    btn.setAttribute("aria-label", "Record voice");
+    btn.setAttribute(
+      "title",
+      "Record voice (click to start, click again to send)"
+    );
+  }
+
+  function setMicRecordingState(btn) {
+    if (!btn) return;
+    btn.classList.add("recording");
+    btn.setAttribute("aria-label", "Stop recording and send");
+    btn.setAttribute("title", "Recording — click to stop and send");
+  }
+
   function stopMediaCapture() {
     if (mediaRecorder && mediaRecorder.state !== "inactive") {
       mediaRecorder.stop();
@@ -677,8 +694,7 @@
       micBtn.addEventListener("click", async function () {
         if (mediaRecorder && mediaRecorder.state === "recording") {
           stopMediaCapture();
-          micBtn.classList.remove("recording");
-          micBtn.setAttribute("aria-label", "Record voice");
+          setMicIdleState(micBtn);
           return;
         }
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -693,6 +709,7 @@
             if (e.data && e.data.size > 0) recordedChunks.push(e.data);
           };
           mediaRecorder.onstop = async function () {
+            setMicIdleState(micBtn);
             const mimeType =
               (mediaRecorder && mediaRecorder.mimeType) || "audio/webm";
             const blob = new Blob(recordedChunks, { type: mimeType });
@@ -718,9 +735,9 @@
             }
           };
           mediaRecorder.start();
-          micBtn.classList.add("recording");
-          micBtn.setAttribute("aria-label", "Stop recording and send");
+          setMicRecordingState(micBtn);
         } catch (_err) {
+          setMicIdleState(micBtn);
           appendLine("[ui] microphone permission denied or unavailable", "system");
         }
       });
@@ -798,8 +815,17 @@
     await submitIngress(ingress);
   });
 
+  window.erisAttach = {
+    setPendingAttachment: setPendingAttachment,
+    clearPendingAttachment: clearPendingAttachment,
+  };
+
   window.addEventListener("keydown", function (e) {
     if (e.key === "Escape") {
+      if (window.erisConsole && window.erisConsole.isModalOpen()) {
+        window.erisConsole.closeModal();
+        return;
+      }
       fetch("/api/action", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
