@@ -29,20 +29,34 @@
 
 ## Boot-time vault ingest
 
-`SemanticBrain::ingest_vault_v2` (router chat path) walks configured v2 roots: `00_Invariants`, `10_Topology`, `20_Discourse`, `30_Synthesis`. Flat roots ingest top-level `*.md` with frontmatter-aware parsing; **`30_Synthesis`** is traversed per **node** (`node_id` directories) and only the **current head** revision per node is indexed (see `ingest_synthesis_recursive`). Returns early with `0` if `qdrant_collection_v2` is empty or Ollama embedding ping fails at boot. Failures are logged; optional brain may still allow chat.
+`SemanticBrain::ingest_vault_v2` (router chat path) walks configured v2 roots via **`vault_ingest_subdirs_for_config`**: `00_Invariants`, `10_Topology`, `20_Discourse`, `30_Synthesis`, and **`40_MEDIA`** when **`[vision] enabled = true`**. Flat roots ingest top-level `*.md` with frontmatter-aware parsing; **`30_Synthesis`** is traversed per **node** (`node_id` directories) and only the **current head** revision per node is indexed (see `ingest_synthesis_recursive`). **`40_MEDIA`** uses **`index_tree_json_file`**: each `40_MEDIA/{content_hash}/media.json` is parsed and embedded as **text only** (no image vectors). Returns early with `0` if `qdrant_collection_v2` is empty or embedding ping fails at boot. Failures are logged; optional brain may still allow chat.
+
+**Live re-index:** `memory/reindex_watch.rs` watches the same ingest roots; `40_MEDIA/**/*.json` upserts/deletes Qdrant points when cards change on disk.
+
+## User-upload media catalog (`src/media/`)
+
+Structured **`40_MEDIA/{content_hash}/media.json`** cards reference blobs under **`99_USER_UPLOADED/`** (content-addressed `{sha256}.ext` via `util/blob_store`). Tools:
+
+- **`media:catalog`** — create/update card (v1: images)
+- **`media:meta`** — patch title, description, tags, notes
+
+Blobs are never embedded; only the card’s **`build_embed_text`** payload goes to Qdrant. Operator flow: [docs/HOW_TO/VISION.md](../HOW_TO/VISION.md).
 
 ## Mental model
 
 | Tier | Technology | Purpose |
 |------|------------|---------|
 | Ephemeral | moka + optional bincode file | Staging, web artifact cache lines, rolling summary (see `orchestrator::context` / `context/window.rs`), tiered promotion toward commit |
-| Semantic | Qdrant + `EmbeddingProvider` (Ollama or llama.cpp) | Long-term vector search, vault chunk recall (v2 layout + synthesis heads) |
+| Semantic | Qdrant + `EmbeddingProvider` (Ollama or llama.cpp) | Long-term vector search, vault chunk recall (v2 layout + synthesis heads), **`40_MEDIA` catalog text** when vision enabled |
+| Blob store | `99_USER_UPLOADED/` on disk | Raw JPEG/audio bytes; addressed by SHA-256 filename |
 
 ```mermaid
 flowchart LR
     ST["memory:stage"] --> CA["memory:commit"]
     CA --> Q["Qdrant"]
     ING["ingest_vault_v2"] --> Q
+    MC["media:catalog"] --> CARD["40_MEDIA/media.json"]
+    CARD --> Q
     SN["snapshot daemon"] --> BIN["ephemeral_*.bin"]
     PR["promotion tick"] --> EV["evaluate_promotions_and_decay"]
 ```

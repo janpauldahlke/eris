@@ -31,4 +31,4 @@ Use this skill when the user uploads an image and asks to remember it, recall a 
 
 - Do **not** catalog on every `vision:see` — only when the user asks to remember.
 - Do **not** stop at citing a vault path when the user asked to **show** an image — call `vision:display`.
-- Pass exact `relative_path` from upload hints or `40_MEDIA` recall.
+- Pass exact `relative_path` from upload hints or `40_MEDIA` recall (`path` / `file_path` are accepted — gatekeeper maps them to `relative_path`).

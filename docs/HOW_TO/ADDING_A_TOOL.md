@@ -3,9 +3,10 @@
 1. **Implement `Tool`** in `src/tools/<area>/` (`name`, `description`, `parameters_schema`, `execute`). Use `serde` + `JsonSchema` for args; route errors through `FcpError` (no `unwrap`/`expect` outside `#[test]`).
 2. **Register** the tool in `src/executive/chat_session.rs` (`gatekeeper.register(...)` during chat bootstrap), in the same order as related tools if dependencies matter (e.g. conditional blocks for `google.enabled` / shared `workspace_auth` for Gmail + Calendar, semantic brain, `web_fetch_deprecated`).
 3. **Descriptors:** add a TOML block to `DESCRIPTOR_TOMLS` in `src/tools/specs.rs` (`tool_name`, `short_description`, `when_to_use`, `when_not_to_use`, `routing_hints`, examples). Startup runs `ToolDescriptorRegistry::assert_covers_registered_tools` — **missing descriptor for a registered name fails boot**.
-4. **Gatekeeper:** extend `state_allows_tool` in `src/tools/gatekeeper.rs` for each `AgentState` that may call the tool; update `test_policy_covers_all_current_tools` in the same file.
-5. **ToolRouter (embedding text):** prefer rich **`routing_hints`** in the descriptor TOML (step 3). If the tool truly has no hints in the registry, add a **`fallback_triggers`** arm for your `name()` in **`src/tools/routing_phrases.rs`** — `ToolRouter::enrich_for_routing` pulls from there automatically. Only touch **`src/orchestrator/tool_router.rs`** when adding **global** lexical rules (short-input guard, URL / “visit the page” style web intent), not per-tool paraphrases.
-6. **Tests:** schema / happy path; any filesystem writes under `#[test]` must use **`tempfile`** (workspace rules).
+4. **Gatekeeper:** extend `state_allows_tool` in `src/tools/gatekeeper.rs` for each `AgentState` that may call the tool; update `test_policy_covers_all_current_tools` in the same file when the tool is always registered.
+5. **Arg aliases (optional):** if models often send wrong JSON keys, extend **`normalize_tool_args`** in `gatekeeper.rs` before schema validation.
+6. **ToolRouter (embedding text):** prefer rich **`routing_hints`** in the descriptor TOML (step 3). If the tool truly has no hints in the registry, add a **`fallback_triggers`** arm for your `name()` in **`src/tools/routing_phrases.rs`** — `ToolRouter::enrich_for_routing` pulls from there automatically. Only touch **`src/orchestrator/tool_router.rs`** when adding **global** lexical rules (short-input guard, URL / “visit the page” style web intent), not per-tool paraphrases.
+7. **Tests:** schema / happy path; any filesystem writes under `#[test]` must use **`tempfile`** (workspace rules).
 
 For architecture context: [docs/updated_architecture/05_TOOLS_GATEKEEPER_DESCRIPTORS.md](updated_architecture/05_TOOLS_GATEKEEPER_DESCRIPTORS.md).
 

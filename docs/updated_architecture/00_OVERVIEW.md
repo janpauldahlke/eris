@@ -97,6 +97,7 @@ sequenceDiagram
 | **LlmBackend** | `Ollama` (default) or `LlamaCpp`; set in `AppConfig` via `llm_backend` |
 | **GBNF grammar** | BNF-style grammar passed to llama-server to constrain output to valid FCP protocol JSON; compiled at session start from registered tool schemas |
 | **EmbeddingProvider** | Trait (`engine/embedding.rs`) abstracting vector generation; `OllamaEmbedding` and `LlamaCppEmbedding` implement it |
+| **40_MEDIA** | Vault subtree of `media.json` catalog cards for user-uploaded blobs; Qdrant indexes card text only when `[vision] enabled` |
 
 ## Source map (`src/`)
 
@@ -110,6 +111,7 @@ sequenceDiagram
 | `engine/grammar/` | GBNF grammar compiler: static envelope (`envelope.rs`), tool name enum (`tool_names.rs`), JSON Schema → GBNF per-tool args (`schema_to_gbnf.rs`) |
 | `orchestrator/` | `core/` loop, `state`, `context/` (assembler, LLM view, condensation, compendium), `llm_support/` (JSON envelope + post-tool copy), `tool_router`, `heartbeat/`, `alarms/`, `loop/` policies |
 | `memory/` | Ephemeral + semantic |
+| `media/` | `40_MEDIA` catalog cards (`media.json`), embed text for Qdrant |
 | `tools/` | Trait, gatekeeper, tool implementations, descriptors |
 | `ingest/` | Chunking helpers for semantic pipeline |
 | `telemetry/` | tracing init, preflight, routing log codes |

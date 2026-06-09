@@ -4,7 +4,7 @@
 [![Rust edition](https://img.shields.io/badge/Rust-Edition%202024-dea584?logo=rust&logoColor=white)](https://doc.rust-lang.org/edition-guide/rust-2024/index.html)
 [![codecov](https://codecov.io/gh/janpauldahlke/eris/graph/badge.svg)](https://codecov.io/gh/janpauldahlke/eris)
 
-**Episodic Reasoning & Inference System** — a local, vault-centric assistant: same orchestrator and tools whether you use the **full-screen terminal UI (ratatui)**, **`eris chat --web`** (localhost Axum + SSE), or an **optional Discord sidecar** that shares the live session. Two LLM backends: **Ollama** (default, easiest) or **llama.cpp** (direct GGUF inference with GBNF grammar enforcement). Optional **vision** (`vision:see`) and **voice ingress** (STT before orchestrator turn) on the llama.cpp path only — web upload/mic for audio, web drop zone and Discord image uploads for vision on supported multimodal GGUF models. Optional Qdrant holds semantic memory; notes live in a Markdown vault; tools run only through the JSON-schema gatekeeper.
+**Episodic Reasoning & Inference System** — a local, vault-centric assistant: same orchestrator and tools whether you use the **full-screen terminal UI (ratatui)**, **`eris chat --web`** (localhost Axum + SSE), or an **optional Discord sidecar** that shares the live session. Two LLM backends: **Ollama** (default, easiest) or **llama.cpp** (direct GGUF inference with GBNF grammar enforcement). Optional **vision** (`vision:see`, inline **`vision:display`**, and **`media:catalog` / `media:meta`** for remembered images) plus **voice ingress** (STT before orchestrator turn) on the llama.cpp path only — web upload/mic for audio, web drop zone and Discord image uploads for vision on supported multimodal GGUF models. Optional Qdrant holds semantic memory (Markdown vault chunks plus **`40_MEDIA`** catalog cards when vision is enabled); notes live in a Markdown vault; tools run only through the JSON-schema gatekeeper.
 
 Architecture detail: [docs/updated_architecture/README.md](docs/updated_architecture/README.md).
 
@@ -52,7 +52,7 @@ Direct inference via `llama-server`. Eris manages the server processes, compiles
 
 Full instructions: **[docs/HOW_TO/LLAMA_CPP_SETUP.md](docs/HOW_TO/LLAMA_CPP_SETUP.md)**.
 
-**Vision (optional):** Image understanding via **`vision:see`** requires **`llm_backend = "LlamaCpp"`**, `[vision] enabled = true`, a compatible **chat GGUF + mmproj**, and a recent **`llama-server`** (multimodal projector support is model-specific — e.g. Gemma 4 needs llama.cpp **b9493+**). Not available on Ollama. Setup: **[docs/HOW_TO/VISION.md](docs/HOW_TO/VISION.md)**.
+**Vision (optional):** Image understanding via **`vision:see`**, inline display via **`vision:display`**, and long-term image recall via **`media:catalog` / `media:meta`** + **`40_MEDIA/{hash}/media.json`** require **`llm_backend = "LlamaCpp"`**, `[vision] enabled = true`, a compatible **chat GGUF + mmproj**, and a recent **`llama-server`** (multimodal projector support is model-specific — e.g. Gemma 4 needs llama.cpp **b9493+**). Not available on Ollama. Setup and remember/show flows: **[docs/HOW_TO/VISION.md](docs/HOW_TO/VISION.md)**.
 
 **Voice ingress (optional):** Speech-to-text transcribes web mic audio **before** the orchestrator turn. Requires **`[audio] enabled = true`** (same mmproj as vision), **`ffmpeg`**, and llama.cpp `input_audio` support. Recordings are clipped to **`max_duration_secs`** during ffmpeg normalize (default **30**; set e.g. **`max_duration_secs = 120`** in `[audio]` for longer monologues). Setup: **[docs/HOW_TO/AUDIO.md](docs/HOW_TO/AUDIO.md)**.
 
@@ -73,7 +73,7 @@ docker run -p 6333:6333 -p 6334:6334 -v eris-qdrant-data:/qdrant/storage qdrant/
 
 **Why a Docker volume?** Boot ingest rebuilds vectors *from your Markdown vault* into Qdrant, but Qdrant still stores those vectors on *its own disk*. Without `-v eris-qdrant-data:/qdrant/storage`, stopping or recreating the container wipes the collection — every restart would re-embed all vault files (slow, redundant Ollama calls). The volume keeps the index between container lifetimes; ingest and live re-index then only touch what changed. Your vault files on the host are unchanged either way.
 
-**Live sync (`vault_reindex_on_write`)** — when `true` (default), a debounced filesystem watch on ingest roots (`10_Topology/`, `30_Synthesis/`, etc.) upserts edits into Qdrant and removes **Qdrant points** when a watched `.md` file is deleted or renamed. This does **not** delete anything on your vault filesystem — only the semantic index mirror inside Qdrant.
+**Live sync (`vault_reindex_on_write`)** — when `true` (default), a debounced filesystem watch on ingest roots (`10_Topology/`, `30_Synthesis/`, **`40_MEDIA/`** when `[vision] enabled`, etc.) upserts edits into Qdrant and removes **Qdrant points** when a watched file is deleted or renamed. This does **not** delete anything on your vault filesystem — only the semantic index mirror inside Qdrant.
 
 **Turn-start prefetch** — deterministic Rust (not an LLM tool): embed the user message, search Qdrant, inject a compact `[RELEVANT_LEARNED_MEMORY]` block into the system prompt when hits pass the score floor. Empty results omit the block entirely. `memory:query` remains for deep/filtered/recency search.
 
@@ -143,7 +143,7 @@ Registration is explicit: ask Eris to register on Moltbook with a name and descr
 | Chat model  | `model_name`                                    | Match what you `ollama pull` (default `gemma4:26b`)                       |
 | Embed model | `embed_model_name`                              | Default `nomic-embed-text` (768-d vectors → Qdrant)                       |
 | llama.cpp   | `[llama_cpp]` table                             | `home`, model paths, ports, GPU layers — see [LLAMA_CPP_SETUP.md](docs/HOW_TO/LLAMA_CPP_SETUP.md) |
-| Vision      | `[vision]` + `llama_cpp.mmproj_path`            | **LlamaCpp only**; web + Discord image → `vision:see` — see [VISION.md](docs/HOW_TO/VISION.md) |
+| Vision      | `[vision]` + `llama_cpp.mmproj_path`            | **LlamaCpp only**; web + Discord image → `vision:see`; remember → `media:catalog`; show → `vision:display` — see [VISION.md](docs/HOW_TO/VISION.md) |
 | Voice       | `[audio]` + `llama_cpp.mmproj_path` + `ffmpeg`    | **LlamaCpp only**; web file/mic → STT → normal tool routing; optional **`max_duration_secs`** (default 30) — see [AUDIO.md](docs/HOW_TO/AUDIO.md) |
 | Qdrant URL  | `qdrant_url`                                    | Default `http://localhost:6334` (gRPC)                                    |
 | Web UI      | `web_bind_addr`, `web_port`, `web_open_browser` | Loopback + port for `eris chat --web`; optional `FCP_WEB_*` env overrides |
@@ -434,6 +434,9 @@ Representative **`routing_hints`** (say things _like_ this—the model still dec
 | **moltbook:comment/post/vote** | comment on Moltbook, post to Moltbook, upvote Moltbook; only after explicit operator intent or approval      |
 | **moltbook:dm**            | Moltbook DM, direct messages, inbox, DM request, reply to Moltbook message                                       |
 | **vision:see**             | describe image, what is in this picture, look at screenshot, analyze photo, attached image, what do you see ( **llama.cpp + `[vision] enabled` only** ) |
+| **vision:display**         | show me the image, display the photo, pull up that picture, let me see it ( **web UI inline preview; llama.cpp + `[vision] enabled` only** ) |
+| **media:catalog**          | remember this image, save this photo, catalog this picture, keep in media memory ( **after `vision:see` when user asks to remember** ) |
+| **media:meta**             | update image notes, add tag to photo, correct image description, append catalog note ( **existing `40_MEDIA` card only** ) |
 
 To change operator-facing routing text, prefer **`routing_hints`** in `[src/tools/specs.rs](src/tools/specs.rs)`; for tools without TOML hints, edit **`fallback_triggers`** in `[src/tools/routing_phrases.rs](src/tools/routing_phrases.rs)`. The lexical phrase lists inside `tool_router.rs` remain for URL/page detection and short-input guards (not the full tool roster).
 

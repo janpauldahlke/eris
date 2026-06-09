@@ -1205,7 +1205,7 @@ tool_name = "vision:see"
 short_description = "Describe a normalized JPEG under the vault vision upload folder via the multimodal model."
 when_to_use = "Use when the user attached an image in web or Discord chat, or asks about a file under the configured upload_dir (e.g. 99_USER_UPLOADED/images). Call with the exact relative_path from the attachment hint before answering visual questions."
 when_not_to_use = "Do not use for text files (vault:read), URLs (web:fetch), or when vision is disabled. Do not guess paths — use the path from [Attached image at vault path: …] in the user message."
-suggested_skills = ["vision-upload-workflow"]
+suggested_skills = ["media-catalog-workflow"]
 routing_hints = ["describe image", "what is in this picture", "look at screenshot", "analyze photo", "attached image", "what do you see"]
 
 [[examples_good]]
@@ -1267,7 +1267,7 @@ rationale = "Card must exist; use media:catalog first."
     r#"descriptor_version = 1
 tool_name = "vision:display"
 short_description = "Show a vault image inline in the web UI for the operator."
-when_to_use = "Use when the user asks to show, display, or pull up a known image path (from 40_MEDIA recall, memory, or prior upload). Pair with prose from the catalog card — do not only paste the path."
+when_to_use = "Use when the user asks to show, display, or pull up a known image path (from 40_MEDIA recall, memory, or prior upload). Pair with prose from the catalog card — do not only paste the path. Gatekeeper accepts path or file_path as aliases for relative_path."
 when_not_to_use = "Do not use when vision is disabled. Do not use for visual analysis — use vision:see. Do not display without a validated upload_dir path."
 suggested_skills = ["media-catalog-workflow"]
 routing_hints = ["show me the image", "display the photo", "pull up that picture", "show the fish truck", "let me see it"]
