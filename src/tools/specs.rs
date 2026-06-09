@@ -1218,4 +1218,68 @@ name = "vault_text_file"
 args = { relative_path = "10_Topology/skills/foo.md" }
 rationale = "Not an image under upload_dir; use vault:read."
 "#,
+    r#"descriptor_version = 1
+tool_name = "media:catalog"
+short_description = "Create or update a 40_MEDIA catalog card for a user-uploaded blob (v1: images)."
+when_to_use = "Use when the user asks to remember, save, or catalog an uploaded image — even if they only say 'remember this' without a title. First run vision:see on the attachment, then catalog with description (title optional: you invent a short label from what you saw; never use the user's command phrase as title). Requires exact relative_path under the vision upload dir."
+when_not_to_use = "Do not catalog on every vision:see — only when the user explicitly wants the image remembered. Do not paste paths instead of cataloging when asked to remember. v1 supports images only."
+suggested_skills = ["media-catalog-workflow"]
+routing_hints = ["remember this image", "save this photo", "catalog this picture", "keep this image in memory", "remember the truck photo"]
+
+[[examples_good]]
+name = "remember_this_no_title"
+args = { relative_path = "99_USER_UPLOADED/images/abc.jpg", description = "Artisan fish truck with chalkboard menu at an outdoor market." }
+rationale = "User said remember this; agent vision:see'd first; title derived from description."
+
+[[examples_good]]
+name = "catalog_truck"
+args = { relative_path = "99_USER_UPLOADED/images/abc.jpg", title = "Fisch Feinkost truck", tags = ["food", "zen"], description = "Artisan food truck.", user_notes = "Highly recommended." }
+rationale = "Explicit remember request after vision:see."
+
+[[examples_bad]]
+name = "user_phrase_as_title"
+args = { relative_path = "99_USER_UPLOADED/images/abc.jpg", title = "remember this", description = "Food truck." }
+rationale = "Do not use the user's command as title; invent a descriptive short label."
+
+[[examples_bad]]
+name = "casual_mention"
+args = { relative_path = "99_USER_UPLOADED/images/abc.jpg", title = "x" }
+rationale = "Do not catalog unless the user asked to remember."
+"#,
+    r#"descriptor_version = 1
+tool_name = "media:meta"
+short_description = "Patch an existing 40_MEDIA catalog card (title, description, notes, tags)."
+when_to_use = "Use when the user adds, corrects, or removes metadata on a cataloged image after it was shown or remembered."
+when_not_to_use = "Do not use before media:catalog exists for that file. Do not use for first-time catalog — use media:catalog."
+suggested_skills = ["media-catalog-workflow"]
+routing_hints = ["update image notes", "add tag to photo", "correct image description", "append note to cataloged image"]
+
+[[examples_good]]
+name = "append_note"
+args = { relative_path = "99_USER_UPLOADED/images/abc.jpg", user_notes_append = "Near Christa's office." }
+rationale = "User adds context after display."
+
+[[examples_bad]]
+name = "no_card"
+args = { relative_path = "99_USER_UPLOADED/images/missing.jpg", title = "x" }
+rationale = "Card must exist; use media:catalog first."
+"#,
+    r#"descriptor_version = 1
+tool_name = "vision:display"
+short_description = "Show a vault image inline in the web UI for the operator."
+when_to_use = "Use when the user asks to show, display, or pull up a known image path (from 40_MEDIA recall, memory, or prior upload). Pair with prose from the catalog card — do not only paste the path."
+when_not_to_use = "Do not use when vision is disabled. Do not use for visual analysis — use vision:see. Do not display without a validated upload_dir path."
+suggested_skills = ["media-catalog-workflow"]
+routing_hints = ["show me the image", "display the photo", "pull up that picture", "show the fish truck", "let me see it"]
+
+[[examples_good]]
+name = "show_truck"
+args = { relative_path = "99_USER_UPLOADED/images/abc.jpg" }
+rationale = "User asked to see a known cataloged image."
+
+[[examples_bad]]
+name = "analyze"
+args = { relative_path = "99_USER_UPLOADED/images/abc.jpg" }
+rationale = "Visual questions need vision:see; display is for showing pixels to the human."
+"#,
 ];

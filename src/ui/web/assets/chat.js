@@ -154,6 +154,19 @@
     transcript.scrollTop = transcript.scrollHeight;
   }
 
+  function appendAssistantImage(image) {
+    if (!image || !image.preview_url) return;
+    const row = document.createElement("div");
+    row.className = "msg assistant assistant-image-row";
+    const img = document.createElement("img");
+    img.className = "assistant-image";
+    img.src = image.preview_url;
+    img.alt = "Displayed image";
+    row.appendChild(img);
+    transcript.appendChild(row);
+    transcript.scrollTop = transcript.scrollHeight;
+  }
+
   /** @param {string} source — `web` | `cli` | `discord` */
   function appendUserTranscriptLine(source, body, image, audio) {
     const row = document.createElement("div");
@@ -400,6 +413,10 @@
     }
     if (data.IncomingMessage) {
       appendAssistantTranscript(data.IncomingMessage);
+      return;
+    }
+    if (data.AssistantImage) {
+      appendAssistantImage(data.AssistantImage);
       return;
     }
     if (data.UserTranscriptLine) {

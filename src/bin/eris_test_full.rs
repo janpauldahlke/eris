@@ -52,6 +52,7 @@ const BATCHES: &[&str] = &[
     "tools::wiki::",
     "tools::system::",
     "tools::vision::",
+    "tools::media::",
     "tools::clock::",
     "tools::calendar::",
 ];

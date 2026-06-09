@@ -1,11 +1,9 @@
 use std::path::Path;
 
-use tokio::fs;
-use uuid::Uuid;
-
 use crate::config::VisionConfig;
-use crate::executive::error::{FcpError, Result};
+use crate::executive::error::Result;
 use crate::presentation::ImageAttachment;
+use crate::util::blob_store::persist_content_addressed;
 
 use super::NormalizedImage;
 
@@ -15,22 +13,21 @@ pub async fn persist_normalized_image(
     vision: &VisionConfig,
     normalized: NormalizedImage,
 ) -> Result<ImageAttachment> {
-    let filename = format!("{}.jpg", Uuid::new_v4());
-    let rel_path = format!(
-        "{}/{}",
-        vision.upload_dir.trim_end_matches('/'),
-        filename
-    );
-    let abs_path = workspace_root.join(&rel_path);
-    if let Some(parent) = abs_path.parent() {
-        fs::create_dir_all(parent).await.map_err(FcpError::Io)?;
-    }
-    fs::write(&abs_path, &normalized.bytes)
-        .await
-        .map_err(FcpError::Io)?;
-
+    let blob = persist_content_addressed(
+        workspace_root,
+        &vision.upload_dir,
+        &normalized.bytes,
+        "jpg",
+    )
+    .await?;
+    let filename = blob
+        .relative_path
+        .rsplit('/')
+        .next()
+        .unwrap_or("image.jpg")
+        .to_string();
     Ok(ImageAttachment {
-        relative_path: rel_path,
+        relative_path: blob.relative_path,
         preview_url: format!("/api/vision/preview/{filename}"),
         width: normalized.width,
         height: normalized.height,

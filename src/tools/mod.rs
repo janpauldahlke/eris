@@ -6,6 +6,7 @@ pub mod db_rest;
 pub mod descriptors;
 pub mod gatekeeper;
 pub mod mail;
+pub mod media;
 pub mod memory;
 pub mod moltbook;
 pub mod news;

@@ -568,13 +568,26 @@ pub async fn start_chat_session(
         config: config.clone(),
     }));
 
+    gatekeeper.register(Arc::new(crate::tools::media::MediaCatalogTool {
+        config: config.clone(),
+        workspace_root: workspace_root.clone(),
+    }));
+    gatekeeper.register(Arc::new(crate::tools::media::MediaMetaTool {
+        config: config.clone(),
+        workspace_root: workspace_root.clone(),
+    }));
+
     if config.vision.enabled {
         gatekeeper.register(Arc::new(crate::tools::vision::VisionSeeTool {
             config: config.clone(),
             workspace_root: workspace_root.clone(),
         }));
+        gatekeeper.register(Arc::new(crate::tools::vision::VisionDisplayTool {
+            config: config.clone(),
+            workspace_root: workspace_root.clone(),
+        }));
     } else {
-        tracing::info!("vision:see disabled by config — not registered");
+        tracing::info!("vision tools disabled by config — not registered");
     }
 
     gatekeeper.register(Arc::new(crate::tools::clock::ClockNowTool));

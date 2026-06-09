@@ -279,6 +279,37 @@ impl<E: LlmEngine> Orchestrator<E> {
                         role: "system".to_string(),
                         content: msg.clone(),
                     });
+                    if tool_name == "vision:display" {
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&result) {
+                            if v.get("display").and_then(|x| x.as_bool()) == Some(true) {
+                                if let (Some(rel), Some(url)) = (
+                                    v.get("relative_path").and_then(|x| x.as_str()),
+                                    v.get("preview_url").and_then(|x| x.as_str()),
+                                ) {
+                                    let width = v
+                                        .get("width")
+                                        .and_then(|x| x.as_u64())
+                                        .unwrap_or(0) as u32;
+                                    let height = v
+                                        .get("height")
+                                        .and_then(|x| x.as_u64())
+                                        .unwrap_or(0) as u32;
+                                    if let Some(tx) = &self.presentation_tx {
+                                        let _ = tx
+                                            .send(SessionEvent::AssistantImage(
+                                                crate::presentation::ImageAttachment {
+                                                    relative_path: rel.to_string(),
+                                                    preview_url: url.to_string(),
+                                                    width,
+                                                    height,
+                                                },
+                                            ))
+                                            .await;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     if tool_name == "web:find" {
                         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&result) {
                             if let Some(summary) =

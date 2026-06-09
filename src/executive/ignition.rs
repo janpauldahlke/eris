@@ -334,6 +334,7 @@ pub async fn run_ignition_sequence(
         workspace_root.join("20_Discourse"),
         workspace_root.join("20_Discourse/web/missions"),
         workspace_root.join("30_Synthesis"),
+        workspace_root.join("40_MEDIA"),
     ];
 
     for dir in &dirs_to_create {

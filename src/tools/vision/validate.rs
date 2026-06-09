@@ -91,6 +91,12 @@ mod tests {
         assert!(!preview_filename_allowed("not-uuid.jpg"));
     }
 
+    #[test]
+    fn preview_filename_allows_sha256_jpg() {
+        let hash = "a".repeat(64);
+        assert!(preview_filename_allowed(&format!("{hash}.jpg")));
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn validate_rejects_traversal() {
         let dir = TempDir::new().expect("tempdir");
