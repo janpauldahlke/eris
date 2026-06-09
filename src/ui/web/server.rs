@@ -61,6 +61,8 @@ pub struct WebAppState {
     pub shutdown_token: CancellationToken,
     pub config: Arc<AppConfig>,
     pub workspace_root: PathBuf,
+    /// Gatekeeper tool names at session startup (active status in Tools console).
+    pub registered_tool_names: Arc<[String]>,
 }
 
 /// Run the HTTP server with an **existing** session event broadcast (e.g. presentation multiplexer + Discord).
@@ -69,6 +71,7 @@ pub async fn run_web_chat_with_broadcast(
     user_action_tx: mpsc::Sender<UserAction>,
     config: Arc<AppConfig>,
     cancel_token: CancellationToken,
+    registered_tool_names: Arc<[String]>,
 ) -> Result<()> {
     let workspace_root = config.active_vault();
     let state = WebAppState {
@@ -77,6 +80,7 @@ pub async fn run_web_chat_with_broadcast(
         shutdown_token: cancel_token.clone(),
         config: config.clone(),
         workspace_root,
+        registered_tool_names,
     };
     let app: Router = super::router::web_chat_router(state);
 
@@ -139,6 +143,7 @@ pub async fn run_web_chat(
     user_action_tx: mpsc::Sender<UserAction>,
     config: Arc<AppConfig>,
     cancel_token: CancellationToken,
+    registered_tool_names: Arc<[String]>,
 ) -> Result<()> {
     let (events_tx, _) = broadcast::channel::<SessionEvent>(EVENT_BACKLOG);
     let bridge_user_tx = user_action_tx.clone();
@@ -149,5 +154,5 @@ pub async fn run_web_chat(
         bridge_user_tx,
     );
 
-    run_web_chat_with_broadcast(events_tx, user_action_tx, config, cancel_token).await
+    run_web_chat_with_broadcast(events_tx, user_action_tx, config, cancel_token, registered_tool_names).await
 }

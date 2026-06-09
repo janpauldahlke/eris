@@ -19,6 +19,8 @@ use crate::tools::vault::taglist_index::{
 
 use super::WebAppState;
 use super::settings_merge::{SettingsUpdatePayload, build_settings_schema, merge_settings_into_toml};
+use super::tools_config_merge::{ToolsUpdatePayload, merge_tools_into_toml};
+use super::tools_config_schema::build_tools_schema;
 
 const SKILLS_DIR: &str = "10_Topology/skills";
 
@@ -226,6 +228,27 @@ pub async fn put_settings(
 ) -> impl IntoResponse {
     if let Err(e) =
         merge_settings_into_toml(&state.workspace_root, &state.config, &payload).await
+    {
+        return api_error_response(e);
+    }
+    Json(json!({ "ok": true, "restart_required": true })).into_response()
+}
+
+pub async fn get_tools(State(state): State<WebAppState>) -> impl IntoResponse {
+    Json(build_tools_schema(
+        &state.config,
+        &state.workspace_root,
+        state.registered_tool_names.as_ref(),
+    ))
+    .into_response()
+}
+
+pub async fn put_tools(
+    State(state): State<WebAppState>,
+    Json(payload): Json<ToolsUpdatePayload>,
+) -> impl IntoResponse {
+    if let Err(e) =
+        merge_tools_into_toml(&state.workspace_root, &state.config, &payload).await
     {
         return api_error_response(e);
     }

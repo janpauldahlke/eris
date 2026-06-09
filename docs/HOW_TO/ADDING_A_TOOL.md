@@ -7,6 +7,7 @@
 5. **Arg aliases (optional):** if models often send wrong JSON keys, extend **`normalize_tool_args`** in `gatekeeper.rs` before schema validation.
 6. **ToolRouter (embedding text):** prefer rich **`routing_hints`** in the descriptor TOML (step 3). If the tool truly has no hints in the registry, add a **`fallback_triggers`** arm for your `name()` in **`src/tools/routing_phrases.rs`** — `ToolRouter::enrich_for_routing` pulls from there automatically. Only touch **`src/orchestrator/tool_router.rs`** when adding **global** lexical rules (short-input guard, URL / “visit the page” style web intent), not per-tool paraphrases.
 7. **Tests:** schema / happy path; any filesystem writes under `#[test]` must use **`tempfile`** (workspace rules).
+8. **Web Tools console:** if the tool belongs to an optional family, add or extend a **`should_register_*`** predicate in [`src/tools/registration.rs`](../../src/tools/registration.rs) and list the tool name in the matching family in [`src/ui/web/tools_config_schema.rs`](../../src/ui/web/tools_config_schema.rs). Add editable config keys to [`family_field_keys`](../../src/ui/web/tools_config_schema.rs) and the merge whitelist in [`src/ui/web/tools_config_merge.rs`](../../src/ui/web/tools_config_merge.rs) when operators should change them from the UI.
 
 For architecture context: [docs/updated_architecture/05_TOOLS_GATEKEEPER_DESCRIPTORS.md](updated_architecture/05_TOOLS_GATEKEEPER_DESCRIPTORS.md).
 

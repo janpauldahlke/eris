@@ -164,7 +164,11 @@ From the repo root:
 cargo install --path .
 ```
 
-**Tests:** `cargo test-full` (batched subprocess runner; see `target/test-full.log` if a batch fails).
+**Tests:**
+
+- **Daily:** `cargo test` (all unit tests, ~30s).
+- **Full suite locally:** prefer `./scripts/test-full-detached.sh` on hybrid-GPU desktops — interactive `cargo test-full` can drop the GNOME session (Heisenbug; see `docs/TODO/SOFTEN_TEST_FULL_OOM.md`, issue `hybrid-gpu-gnome-session-drop`).
+- **CI / Codecov:** GitHub Actions runs the same batch list on push; no local `test-full` required for coverage.
 
 ## Workspace initialization
 

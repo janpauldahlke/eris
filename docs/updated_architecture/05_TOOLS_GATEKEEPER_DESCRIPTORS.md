@@ -45,9 +45,9 @@ Shared helpers (e.g. path mutability) used by vault tools.
 | `tools/news/` | `news:today` (homepage headlines + optional deep article fetches; shared fetch pipeline) |
 | `tools/system/` | `system:health` |
 | `tools/clock/` | `clock:now`, `clock:timer`, `clock:alarm` |
-| `tools/weather/` | `weather:current`, `weather:forecast` (Open-Meteo via `ApiHttpClient`) |
-| `tools/wiki/` | `wiki:summary` (Wikipedia REST) |
-| `tools/db_rest/` | `db:find_connections` (Deutsche Bahn–style journey search via configured REST profile) |
+| `tools/weather/` | `weather:current`, `weather:forecast` (Open-Meteo via `ApiHttpClient`; register when `weather_enabled`) |
+| `tools/wiki/` | `wiki:summary` (Wikipedia REST; register when `wiki_enabled`) |
+| `tools/db_rest/` | `db:find_connections` (Deutsche Bahn–style journey search; register when `db_rest_enabled`) |
 | `tools/mail/` | `mail:check`, `mail:read`, `mail:write`, `mail:digest`, `mail:delete`, `mail:move` (Gmail via Google Workspace client; tools register only when `google.enabled` and credentials resolve) |
 | `tools/calendar/` | `calendar:list`, `calendar:get`, `calendar:create`, `calendar:update`, `calendar:delete` (Google Calendar API; same `[google]` registration gate as mail) |
 | `tools/vision/` | `vision:see` — multimodal describe via llama.cpp chat server (`file://` + `--mmproj`); `vision:display` — validated upload path + preview URL for web UI. Register only when `[vision] enabled` and `llm_backend = LlamaCpp` |

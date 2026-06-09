@@ -35,6 +35,10 @@ pub fn web_chat_router(state: WebAppState) -> Router {
             "/api/console/settings",
             get(console_handlers::get_settings).put(console_handlers::put_settings),
         )
+        .route(
+            "/api/console/tools",
+            get(console_handlers::get_tools).put(console_handlers::put_tools),
+        )
         .route("/api/console/skills", get(console_handlers::get_skills))
         .route(
             "/api/console/skills/{name}",

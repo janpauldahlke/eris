@@ -30,6 +30,7 @@ The orchestrator holds **`presentation_tx: Option<mpsc::Sender<SessionEvent>>`**
 - **Vision (when `[vision] enabled`):** `POST /api/vision/upload`, `GET /api/vision/preview/{filename}`, `GET /api/vision/status`; compose-area drop zone sets `UserIngress.image` on submit. **`vision:display`** tool success emits **`SessionEvent::AssistantImage`**; `assets/chat.js` renders the preview inline. **LlamaCpp backend only** — see [HOW_TO/VISION.md](../HOW_TO/VISION.md).
 - **Shutdown:** shares `CancellationToken` with the rest of chat. The bundled JS calls **`POST /api/shutdown`** from the explicit exit control (clean stop, same intent as Ctrl+C in the TUI); simply closing a tab without that hook leaves the server running until the operator stops the `eris` process.
 - **`web_open_browser`:** optional `open` / `xdg-open` / `cmd start` on listen URL.
+- **Tools console (sidebar):** `GET/PUT /api/console/tools` — family-grouped tool catalog with status badges (`active` / `off` / `unavailable` / `core`), operator-facing field descriptions from `ui/web/tools_config_schema.rs`, and whitelisted merge into `.fcp/config.toml` via `tools_config_merge.rs`. Active status uses `registered_tool_names` captured at chat startup. Restart required after save.
 
 ## Discord (`ui/discord/`)
 

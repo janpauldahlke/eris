@@ -1055,6 +1055,91 @@
         flex-wrap: wrap;
         gap: 0.45rem;
       }
+      .tool-family-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+      .tool-family-row {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 0.75rem;
+        width: 100%;
+        text-align: left;
+        background: var(--chip-bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 0.65rem 0.75rem;
+        cursor: pointer;
+        color: var(--text);
+        font: inherit;
+      }
+      .tool-family-row:hover {
+        border-color: var(--accent);
+      }
+      .tool-family-main {
+        flex: 1;
+        min-width: 0;
+      }
+      .tool-family-label {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-strong);
+      }
+      .tool-family-summary {
+        font-size: 11px;
+        color: var(--muted);
+        margin-top: 0.2rem;
+        line-height: 1.35;
+      }
+      .tool-family-tools {
+        font-size: 10px;
+        color: var(--muted);
+        margin-top: 0.35rem;
+        font-family: ui-monospace, monospace;
+        word-break: break-word;
+      }
+      .tool-status-pill {
+        flex-shrink: 0;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        padding: 0.2rem 0.45rem;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        color: var(--muted);
+      }
+      .tool-status-pill.active {
+        border-color: var(--state-chat);
+        color: var(--state-chat);
+      }
+      .tool-status-pill.off {
+        border-color: var(--state-idle);
+        color: var(--state-idle);
+      }
+      .tool-status-pill.unavailable {
+        border-color: var(--state-recover);
+        color: var(--state-recover);
+      }
+      .tool-status-pill.core {
+        border-color: var(--border);
+        color: var(--text);
+      }
+      .tool-detail-head {
+        margin-bottom: 0.75rem;
+      }
+      .tool-detail-head .hint {
+        margin-top: 0.35rem;
+      }
+      .tool-agent-hint {
+        font-size: 11px;
+        color: var(--muted);
+        font-style: italic;
+        margin-top: 0.5rem;
+        padding-left: 0.5rem;
+        border-left: 2px solid var(--border);
+      }
       .memory-chip,
       .skill-chip,
       .tag-filter {
@@ -1276,6 +1361,10 @@
         <button type="button" class="rail-btn" data-panel="skills" title="Skills">
           <span class="rail-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></span>
           <span class="rail-label">Skills</span>
+        </button>
+        <button type="button" class="rail-btn" data-panel="tools" title="Tools">
+          <span class="rail-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>
+          <span class="rail-label">Tools</span>
         </button>
         <button type="button" class="rail-btn" data-panel="memory" title="Memory">
           <span class="rail-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></span>

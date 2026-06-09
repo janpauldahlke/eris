@@ -356,6 +356,18 @@ fn default_news_today_enabled() -> bool {
     true
 }
 
+fn default_weather_enabled() -> bool {
+    true
+}
+
+fn default_wiki_enabled() -> bool {
+    true
+}
+
+fn default_db_rest_enabled() -> bool {
+    true
+}
+
 fn default_news_today_max_headlines() -> usize {
     12
 }
@@ -731,6 +743,15 @@ pub struct AppConfig {
     /// When false, `news:today` is not registered.
     #[serde(default = "default_news_today_enabled")]
     pub news_today_enabled: bool,
+    /// When false, `weather:current` and `weather:forecast` are not registered.
+    #[serde(default = "default_weather_enabled")]
+    pub weather_enabled: bool,
+    /// When false, `wiki:summary` is not registered.
+    #[serde(default = "default_wiki_enabled")]
+    pub wiki_enabled: bool,
+    /// When false, `db:find_connections` is not registered.
+    #[serde(default = "default_db_rest_enabled")]
+    pub db_rest_enabled: bool,
     /// Qdrant gRPC endpoint URL (semantic memory / `memory:query`).
     pub qdrant_url: String,
     /// Qdrant collection name. Computed at runtime: `fcp_vault_v2_{workspace}`.
@@ -1510,6 +1531,9 @@ impl Default for AppConfig {
             turn_end_mention_enabled: default_turn_end_mention_enabled(),
             staged_memory_prompt_max_chars: default_staged_memory_prompt_max_chars(),
             news_today_enabled: default_news_today_enabled(),
+            weather_enabled: default_weather_enabled(),
+            wiki_enabled: default_wiki_enabled(),
+            db_rest_enabled: default_db_rest_enabled(),
             qdrant_url: "http://localhost:6334".into(),
             qdrant_collection_v2: "fcp_vault_v2_default".into(),
             snapshot_interval_secs: 300,

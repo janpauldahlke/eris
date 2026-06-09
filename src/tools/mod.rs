@@ -10,6 +10,7 @@ pub mod media;
 pub mod memory;
 pub mod moltbook;
 pub mod news;
+pub mod registration;
 pub mod routing_phrases;
 pub mod skills;
 pub mod specs;

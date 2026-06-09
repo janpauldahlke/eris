@@ -224,6 +224,7 @@ pub async fn execute_command(
                             session.user_action_tx.clone(),
                             config.clone(),
                             cancel_token.clone(),
+                            session.registered_tool_names.clone(),
                         )
                         .await;
                         log_peripheral_shutdown(&mut session, config.as_ref()).await;
@@ -253,6 +254,7 @@ pub async fn execute_command(
                             session.user_action_tx.clone(),
                             config.clone(),
                             cancel_token.clone(),
+                            session.registered_tool_names.clone(),
                         )
                         .await;
                         log_peripheral_shutdown(&mut session, config.as_ref()).await;

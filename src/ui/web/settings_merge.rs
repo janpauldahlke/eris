@@ -106,22 +106,6 @@ pub fn build_settings_schema(config: &AppConfig) -> SettingsSchemaResponse {
                 "Higher values reduce noise but may miss relevant memory.",
                 true,
             ),
-            field_bool_nested(
-                "vision.enabled",
-                config.vision.enabled,
-                "Vision enabled",
-                "Allow image uploads and the vision:see tool.",
-                "Requires mmproj and llama.cpp backend; restart to apply.",
-                true,
-            ),
-            field_bool_nested(
-                "audio.enabled",
-                config.audio.enabled,
-                "Audio enabled",
-                "Allow voice upload/mic and speech transcription.",
-                "Restart to apply audio pipeline wiring.",
-                true,
-            ),
             field_string_readonly(
                 "llm_backend",
                 config.llm_backend.to_string(),
@@ -234,17 +218,6 @@ fn field_f64(key: &str, value: f64, label: &str, description: &str, impact: &str
         max_value: None,
         warn_above: None,
     }
-}
-
-fn field_bool_nested(
-    key: &str,
-    value: bool,
-    label: &str,
-    description: &str,
-    impact: &str,
-    editable: bool,
-) -> SettingsFieldSchema {
-    field_bool(key, value, label, description, impact, editable)
 }
 
 fn field_string_readonly(key: &str, value: String, label: &str, description: &str, impact: &str) -> SettingsFieldSchema {
@@ -367,12 +340,6 @@ pub async fn merge_settings_into_toml(
                     toml::Value::Float(f),
                 );
             }
-            "vision.enabled" => {
-                set_nested_bool(&mut doc, &["vision"], "enabled", json_bool(val)?);
-            }
-            "audio.enabled" => {
-                set_nested_bool(&mut doc, &["audio"], "enabled", json_bool(val)?);
-            }
             other => {
                 tracing::warn!(
                     key = %other,
@@ -388,29 +355,6 @@ pub async fn merge_settings_into_toml(
         .await
         .map_err(FcpError::Io)?;
     Ok(())
-}
-
-fn set_nested_bool(doc: &mut toml::Table, section: &[&str], key: &str, value: bool) {
-    let mut current = doc;
-    for (i, part) in section.iter().enumerate() {
-        if i == section.len() - 1 {
-            let table = current
-                .entry((*part).to_string())
-                .or_insert_with(|| toml::Value::Table(toml::Table::new()));
-            if let toml::Value::Table(t) = table {
-                t.insert(key.to_string(), toml::Value::Boolean(value));
-            }
-            return;
-        }
-        let entry = current
-            .entry((*part).to_string())
-            .or_insert_with(|| toml::Value::Table(toml::Table::new()));
-        if let toml::Value::Table(t) = entry {
-            current = t;
-        } else {
-            return;
-        }
-    }
 }
 
 fn json_usize(v: &JsonValue) -> Result<usize> {

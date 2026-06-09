@@ -763,6 +763,144 @@
     }
   }
 
+  async function renderTools() {
+    openModal("Tools", "<p class='hint'>Loading…</p>");
+    try {
+      const data = await fetchJson("/api/console/tools");
+      let html =
+        "<p class='hint'>Tool families registered at startup. Changes require restart.</p><div class='tool-family-list'>";
+      data.families.forEach(function (f) {
+        html +=
+          "<button type='button' class='tool-family-row' data-family='" +
+          escapeHtml(f.id) +
+          "'>" +
+          "<div class='tool-family-main'>" +
+          "<div class='tool-family-label'>" +
+          escapeHtml(f.label) +
+          "</div>" +
+          "<div class='tool-family-summary'>" +
+          escapeHtml(f.summary) +
+          "</div>";
+        if (f.tool_names && f.tool_names.length) {
+          html +=
+            "<div class='tool-family-tools'>" +
+            escapeHtml(f.tool_names.join(", ")) +
+            "</div>";
+        }
+        html +=
+          "</div>" +
+          "<span class='tool-status-pill " +
+          escapeHtml(f.status) +
+          "'>" +
+          escapeHtml(f.status) +
+          "</span>" +
+          "</button>";
+      });
+      html += "</div>";
+      openModal("Tools", html);
+      modalBody.querySelectorAll(".tool-family-row").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          renderToolsDetail(btn.getAttribute("data-family"), data.families);
+        });
+      });
+    } catch (e) {
+      modalBody.innerHTML =
+        "<p class='console-warn'>" + escapeHtml(String(e.message || e)) + "</p>";
+    }
+  }
+
+  function collectFieldValues() {
+    const values = {};
+    modalBody.querySelectorAll(".console-field[data-editable='1']").forEach(function (el) {
+      const key = el.getAttribute("data-key");
+      const input = el.querySelector("input, select");
+      if (!input || !key) return;
+      if (input.tagName === "SELECT") {
+        values[key] = input.value === "true";
+      } else if (input.type === "number") {
+        values[key] = Number(input.value);
+      } else {
+        values[key] = input.value;
+      }
+    });
+    return values;
+  }
+
+  function renderToolsDetail(familyId, familiesCache) {
+    const family = (familiesCache || []).find(function (f) {
+      return f.id === familyId;
+    });
+    if (!family) {
+      renderTools();
+      return;
+    }
+    let html =
+      "<div id='tools-restart-banner' class='console-banner hidden'>Saved. Restart Eris to apply changes.</div>" +
+      "<div class='tool-detail-head'>" +
+      "<span class='tool-status-pill " +
+      escapeHtml(family.status) +
+      "'>" +
+      escapeHtml(family.status) +
+      "</span>" +
+      "<p class='hint'>" +
+      escapeHtml(family.summary) +
+      "</p>";
+    if (family.status_reason) {
+      html +=
+        "<p class='console-warn'>" + escapeHtml(family.status_reason) + "</p>";
+    }
+    if (family.tool_names && family.tool_names.length) {
+      html +=
+        "<div class='tool-family-tools'>" +
+        escapeHtml(family.tool_names.join(", ")) +
+        "</div>";
+    }
+    if (family.agent_hint) {
+      html +=
+        "<div class='tool-agent-hint'>Agent sees: " +
+        escapeHtml(family.agent_hint) +
+        "</div>";
+    }
+    html += "</div>";
+    family.fields.forEach(function (f) {
+      html += renderSettingsField(f, {});
+    });
+    if (family.fields.length) {
+      html +=
+        "<div class='console-actions'>" +
+        "<button type='button' class='console-btn' id='tools-save'>Save</button>" +
+        "<button type='button' class='console-btn secondary' id='tools-back'>Back</button>" +
+        "</div>";
+    } else {
+      html +=
+        "<div class='console-actions'>" +
+        "<button type='button' class='console-btn secondary' id='tools-back'>Back</button>" +
+        "</div>";
+    }
+    openModal(family.label, html);
+    document.getElementById("tools-back").addEventListener("click", renderTools);
+    const saveBtn = document.getElementById("tools-save");
+    if (saveBtn) {
+      saveBtn.addEventListener("click", async function () {
+        try {
+          await fetchJson("/api/console/tools", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              family_id: familyId,
+              values: collectFieldValues(),
+            }),
+          });
+          const banner = document.getElementById("tools-restart-banner");
+          if (banner) banner.classList.remove("hidden");
+          showToast("Tools config saved — restart required.");
+        } catch (e) {
+          showToast(String(e.message || e));
+        }
+      });
+    }
+  }
+
   function renderTheme() {
     let current = "dark";
     try {
@@ -810,6 +948,7 @@
     if (name === "identity") renderIdentity();
     else if (name === "settings") renderSettings();
     else if (name === "skills") renderSkills();
+    else if (name === "tools") renderTools();
     else if (name === "memory") renderMemory();
     else if (name === "uploads") renderUploads();
     else if (name === "theme") renderTheme();
