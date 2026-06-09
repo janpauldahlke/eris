@@ -9,7 +9,12 @@
 
   let toastTimer = null;
   let activePanel = null;
+  const MEMORY_TOP_TAGS = 10;
   let memoryCards = [];
+  let memoryTagRankings = [];
+  let memoryTagSearchBound = false;
+  let tagSuggestMatches = [];
+  let tagSuggestIndex = -1;
   let activeTagFilter = null;
   let uploadsPollTimer = null;
 
@@ -323,70 +328,272 @@
     }
   }
 
-  function renderMemoryChips() {
+  function clearTagFilter() {
+    activeTagFilter = null;
+    const search = document.getElementById("memory-tag-search");
+    if (search) search.value = "";
+    hideTagSuggest();
+    updateMemoryView();
+  }
+
+  function setTagFilter(tag) {
+    activeTagFilter = tag || null;
+    const search = document.getElementById("memory-tag-search");
+    if (search && tag) search.value = tag;
+    hideTagSuggest();
+    updateMemoryView();
+  }
+
+  function hideTagSuggest() {
+    tagSuggestMatches = [];
+    tagSuggestIndex = -1;
+    const list = document.getElementById("memory-tag-suggest");
+    if (list) {
+      list.classList.add("hidden");
+      list.innerHTML = "";
+    }
+  }
+
+  function renderTagSuggest(query) {
+    const list = document.getElementById("memory-tag-suggest");
+    if (!list) return;
+    const q = query.trim().toLowerCase();
+    if (!q) {
+      hideTagSuggest();
+      return;
+    }
+    tagSuggestMatches = memoryTagRankings
+      .filter(function (e) {
+        return e.tag.indexOf(q) >= 0;
+      })
+      .slice(0, 10);
+    tagSuggestIndex = tagSuggestMatches.length ? 0 : -1;
+    if (!tagSuggestMatches.length) {
+      list.classList.add("hidden");
+      list.innerHTML = "";
+      return;
+    }
+    let html = "";
+    tagSuggestMatches.forEach(function (e, i) {
+      html +=
+        "<li role='option' data-index='" +
+        i +
+        "' class='" +
+        (i === tagSuggestIndex ? "active" : "") +
+        "'>" +
+        escapeHtml(e.tag) +
+        "<span class='tag-count'>" +
+        e.count +
+        "</span></li>";
+    });
+    list.innerHTML = html;
+    list.classList.remove("hidden");
+    list.querySelectorAll("li").forEach(function (li) {
+      li.addEventListener("mousedown", function (e) {
+        e.preventDefault();
+        const idx = Number(li.getAttribute("data-index"));
+        if (tagSuggestMatches[idx]) {
+          setTagFilter(tagSuggestMatches[idx].tag);
+        }
+      });
+    });
+  }
+
+  function highlightTagSuggest() {
+    const list = document.getElementById("memory-tag-suggest");
+    if (!list) return;
+    list.querySelectorAll("li").forEach(function (li, i) {
+      li.classList.toggle("active", i === tagSuggestIndex);
+    });
+    const active = list.querySelector("li.active");
+    if (active) active.scrollIntoView({ block: "nearest" });
+  }
+
+  function bindMemoryTagSearch() {
+    if (memoryTagSearchBound) return;
+    memoryTagSearchBound = true;
+    const search = document.getElementById("memory-tag-search");
+    const clearBtn = document.getElementById("memory-tag-clear");
+    if (!search) return;
+
+    search.addEventListener("input", function () {
+      if (activeTagFilter && search.value !== activeTagFilter) {
+        activeTagFilter = null;
+        updateMemoryView();
+      }
+      renderTagSuggest(search.value);
+    });
+
+    search.addEventListener("keydown", function (e) {
+      const list = document.getElementById("memory-tag-suggest");
+      const open = list && !list.classList.contains("hidden");
+      if (e.key === "ArrowDown") {
+        if (open && tagSuggestMatches.length) {
+          e.preventDefault();
+          tagSuggestIndex = Math.min(tagSuggestIndex + 1, tagSuggestMatches.length - 1);
+          highlightTagSuggest();
+        }
+      } else if (e.key === "ArrowUp") {
+        if (open && tagSuggestMatches.length) {
+          e.preventDefault();
+          tagSuggestIndex = Math.max(tagSuggestIndex - 1, 0);
+          highlightTagSuggest();
+        }
+      } else if (e.key === "Enter") {
+        if (open && tagSuggestIndex >= 0 && tagSuggestMatches[tagSuggestIndex]) {
+          e.preventDefault();
+          setTagFilter(tagSuggestMatches[tagSuggestIndex].tag);
+        } else if (search.value.trim()) {
+          e.preventDefault();
+          const q = search.value.trim().toLowerCase();
+          const exact = memoryTagRankings.find(function (e) {
+            return e.tag === q;
+          });
+          if (exact) {
+            setTagFilter(exact.tag);
+          } else if (tagSuggestMatches.length === 1) {
+            setTagFilter(tagSuggestMatches[0].tag);
+          }
+        }
+      } else if (e.key === "Escape") {
+        if (open) {
+          e.preventDefault();
+          e.stopPropagation();
+          hideTagSuggest();
+        }
+      }
+    });
+
+    search.addEventListener("blur", function () {
+      window.setTimeout(hideTagSuggest, 150);
+    });
+
+    if (clearBtn) {
+      clearBtn.addEventListener("click", clearTagFilter);
+    }
+  }
+
+  function updateMemoryView() {
+    const topBar = document.getElementById("memory-top-tags");
+    const grid = document.getElementById("memory-note-grid");
+    const clearBtn = document.getElementById("memory-tag-clear");
+    const activeEl = document.getElementById("memory-active-filter");
+    const search = document.getElementById("memory-tag-search");
+    if (!topBar || !grid) return;
+
+    let topHtml = "";
+    memoryTagRankings.slice(0, MEMORY_TOP_TAGS).forEach(function (e) {
+      topHtml +=
+        "<button type='button' class='tag-filter" +
+        (activeTagFilter === e.tag ? " active" : "") +
+        "' data-tag='" +
+        escapeHtml(e.tag) +
+        "'>" +
+        escapeHtml(e.tag) +
+        "<span class='tag-count'>" +
+        e.count +
+        "</span></button>";
+    });
+    if (memoryTagRankings.length > MEMORY_TOP_TAGS) {
+      topHtml +=
+        "<span class='hint tag-more-hint'>+" +
+        (memoryTagRankings.length - MEMORY_TOP_TAGS) +
+        " more — search above</span>";
+    }
+    topBar.innerHTML = topHtml;
+    topBar.querySelectorAll(".tag-filter").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        setTagFilter(btn.getAttribute("data-tag"));
+      });
+    });
+
+    if (clearBtn) {
+      clearBtn.classList.toggle("hidden", !activeTagFilter);
+    }
+    if (search && activeTagFilter) {
+      search.value = activeTagFilter;
+    }
+
+    if (activeEl) {
+      if (activeTagFilter) {
+        const entry = memoryTagRankings.find(function (e) {
+          return e.tag === activeTagFilter;
+        });
+        const count = entry
+          ? entry.count
+          : memoryCards.filter(function (c) {
+              return c.tags && c.tags.indexOf(activeTagFilter) >= 0;
+            }).length;
+        activeEl.innerHTML =
+          "Filtered by <strong>" +
+          escapeHtml(activeTagFilter) +
+          "</strong> · " +
+          count +
+          " note" +
+          (count === 1 ? "" : "s");
+        activeEl.classList.remove("hidden");
+      } else {
+        activeEl.classList.add("hidden");
+        activeEl.innerHTML = "";
+      }
+    }
+
     const filtered = activeTagFilter
       ? memoryCards.filter(function (c) {
           return c.tags && c.tags.indexOf(activeTagFilter) >= 0;
         })
       : memoryCards;
-    let html = "<div class='tag-filter-bar'><button type='button' class='tag-filter" +
-      (activeTagFilter ? "" : " active") +
-      "' data-tag=''>All</button>";
-    const tags = {};
-    memoryCards.forEach(function (c) {
-      (c.tags || []).forEach(function (t) {
-        tags[t] = true;
-      });
-    });
-    Object.keys(tags)
-      .sort()
-      .forEach(function (t) {
-        html +=
-          "<button type='button' class='tag-filter" +
-          (activeTagFilter === t ? " active" : "") +
-          "' data-tag='" +
-          escapeHtml(t) +
+
+    let gridHtml = "";
+    if (!filtered.length) {
+      gridHtml = activeTagFilter
+        ? "<span class='hint'>No notes with this tag.</span>"
+        : "<span class='hint'>No synthesis notes yet.</span>";
+    } else {
+      filtered.forEach(function (c) {
+        gridHtml +=
+          "<button type='button' class='memory-chip' data-path='" +
+          escapeHtml(c.head_path) +
           "'>" +
-          escapeHtml(t) +
+          escapeHtml(c.title) +
           "</button>";
       });
-    html += "</div><div class='chip-grid'>";
-    if (!filtered.length) {
-      html += "<span class='hint'>No synthesis notes yet.</span>";
     }
-    filtered.forEach(function (c) {
-      html +=
-        "<button type='button' class='memory-chip' data-path='" +
-        escapeHtml(c.head_path) +
-        "'>" +
-        escapeHtml(c.title) +
-        "</button>";
-    });
-    html += "</div>";
-    modalBody.innerHTML =
-      "<p class='hint'>Synthesis memory — titles only (UUID folders hidden). Read-only.</p>" +
-      html;
-    modalBody.querySelectorAll(".tag-filter").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        activeTagFilter = btn.getAttribute("data-tag") || null;
-        renderMemoryChips();
-      });
-    });
-    modalBody.querySelectorAll(".memory-chip").forEach(function (btn) {
+    grid.innerHTML = gridHtml;
+    grid.querySelectorAll(".memory-chip").forEach(function (btn) {
       btn.addEventListener("click", function () {
         openMemoryNote(btn.getAttribute("data-path"));
       });
     });
   }
 
+  function renderMemoryShell() {
+    modalBody.innerHTML =
+      "<div class='memory-tag-section'>" +
+      "<label class='memory-tag-label' for='memory-tag-search'>Filter by tag</label>" +
+      "<div class='memory-tag-search-wrap'>" +
+      "<input type='text' id='memory-tag-search' placeholder='Search tags…' autocomplete='off' spellcheck='false' />" +
+      "<button type='button' id='memory-tag-clear' class='memory-tag-clear hidden' title='Clear tag filter' aria-label='Clear tag filter'>×</button>" +
+      "<ul id='memory-tag-suggest' class='memory-tag-suggest hidden' role='listbox' aria-label='Tag suggestions'></ul>" +
+      "</div>" +
+      "<div class='tag-filter-bar tag-filter-bar-top' id='memory-top-tags'></div>" +
+      "<div id='memory-active-filter' class='memory-active-filter hidden'></div>" +
+      "</div>" +
+      "<div class='chip-grid' id='memory-note-grid'></div>";
+    bindMemoryTagSearch();
+    updateMemoryView();
+  }
+
   async function renderMemory() {
-    openModal("Memory", "<p class='hint'>Loading…</p>");
+    openModal("Synthesis memory", "<p class='hint'>Loading…</p>");
     try {
       const data = await fetchJson("/api/console/memory");
       memoryCards = data.cards || [];
+      memoryTagRankings = data.tags || [];
       activeTagFilter = null;
-      openModal("Memory", "");
-      renderMemoryChips();
+      memoryTagSearchBound = false;
+      openModal("Synthesis memory", "");
+      renderMemoryShell();
     } catch (e) {
       modalBody.innerHTML =
         "<p class='console-warn'>" + escapeHtml(String(e.message || e)) + "</p>";

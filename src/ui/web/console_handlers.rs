@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::executive::error::{FcpError, Result};
 use crate::tools::vault::taglist_index::{
-    SynthesisNoteCard, build_synthesis_note_cards, parse_frontmatter_string_field,
+    SynthesisNoteCard, build_synthesis_note_cards, load_persisted, parse_frontmatter_string_field,
 };
 
 use super::WebAppState;
@@ -62,10 +62,51 @@ pub struct MemoryNoteQuery {
     pub path: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct MemoryTagEntry {
+    pub tag: String,
+    pub count: u32,
+}
+
 #[derive(Debug, Serialize)]
 pub struct MemoryListResponse {
     pub cards: Vec<SynthesisNoteCard>,
-    pub tags: Vec<String>,
+    /// Sorted by usage count descending (from persisted `vault:taglist` when available).
+    pub tags: Vec<MemoryTagEntry>,
+}
+
+fn memory_tag_entries_from_cards(cards: &[SynthesisNoteCard]) -> Vec<MemoryTagEntry> {
+    let mut counts: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
+    for card in cards {
+        for t in &card.tags {
+            *counts.entry(t.clone()).or_default() += 1;
+        }
+    }
+    let mut entries: Vec<MemoryTagEntry> = counts
+        .into_iter()
+        .map(|(tag, count)| MemoryTagEntry { tag, count })
+        .collect();
+    entries.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.tag.cmp(&b.tag)));
+    entries
+}
+
+async fn memory_tag_entries(
+    workspace_root: &Path,
+    cards: &[SynthesisNoteCard],
+) -> Result<Vec<MemoryTagEntry>> {
+    if let Some(snap) = load_persisted(workspace_root).await? {
+        if !snap.tags.is_empty() {
+            return Ok(snap
+                .tags
+                .into_iter()
+                .map(|e| MemoryTagEntry {
+                    tag: e.tag,
+                    count: e.count,
+                })
+                .collect());
+        }
+    }
+    Ok(memory_tag_entries_from_cards(cards))
 }
 
 #[derive(Debug, Serialize)]
@@ -273,15 +314,10 @@ pub async fn get_memory(State(state): State<WebAppState>) -> impl IntoResponse {
         Ok(c) => c,
         Err(e) => return api_error_response(e),
     };
-    let mut tags: Vec<String> = Vec::new();
-    for card in &cards {
-        for t in &card.tags {
-            if !tags.contains(t) {
-                tags.push(t.clone());
-            }
-        }
-    }
-    tags.sort();
+    let tags = match memory_tag_entries(&state.workspace_root, &cards).await {
+        Ok(t) => t,
+        Err(e) => return api_error_response(e),
+    };
     Json(MemoryListResponse { cards, tags }).into_response()
 }
 
@@ -526,5 +562,38 @@ pub async fn console_js() -> Response {
             tracing::error!(error = %e, "failed to build console.js response");
             Response::new(Body::from("/* asset error */"))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn memory_tag_entries_from_cards_ranks_by_count() {
+        let cards = vec![
+            SynthesisNoteCard {
+                node_id: "a".into(),
+                title: "A".into(),
+                tags: vec!["agent".into(), "sandbox".into()],
+                epistemic_status: None,
+                head_path: "30_Synthesis/a/r0001.md".into(),
+                committed_at: None,
+            },
+            SynthesisNoteCard {
+                node_id: "b".into(),
+                title: "B".into(),
+                tags: vec!["agent".into()],
+                epistemic_status: None,
+                head_path: "30_Synthesis/b/r0001.md".into(),
+                committed_at: None,
+            },
+        ];
+        let entries = memory_tag_entries_from_cards(&cards);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].tag, "agent");
+        assert_eq!(entries[0].count, 2);
+        assert_eq!(entries[1].tag, "sandbox");
+        assert_eq!(entries[1].count, 1);
     }
 }

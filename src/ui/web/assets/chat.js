@@ -21,6 +21,7 @@
   const THOUGHT_MAX = 4;
   const thoughtHistory = [];
   let shuttingDown = false;
+  let composeWasBusy = false;
 
   function showShutdownOverlay(detail) {
     if (!shutdownOverlay) return;
@@ -99,13 +100,31 @@
     transcript.scrollTop = transcript.scrollHeight;
   }
 
+  function focusMessageInput() {
+    if (!input || input.disabled || shuttingDown) return;
+    if (window.erisConsole && window.erisConsole.isModalOpen()) return;
+    window.requestAnimationFrame(function () {
+      if (!input || input.disabled || shuttingDown) return;
+      if (window.erisConsole && window.erisConsole.isModalOpen()) return;
+      input.focus();
+    });
+  }
+
   function setComposeBusy(busy) {
-    if (composeStack) composeStack.classList.toggle("compose-busy", !!busy);
-    if (shuttingDown) return;
-    if (input) input.disabled = !!busy;
-    if (btnSend) btnSend.disabled = !!busy;
+    const nextBusy = !!busy;
+    if (composeStack) composeStack.classList.toggle("compose-busy", nextBusy);
+    if (shuttingDown) {
+      composeWasBusy = nextBusy;
+      return;
+    }
+    if (input) input.disabled = nextBusy;
+    if (btnSend) btnSend.disabled = nextBusy;
     const micBtn = document.getElementById("audio-mic-btn");
-    if (micBtn) micBtn.disabled = !!busy;
+    if (micBtn) micBtn.disabled = nextBusy;
+    if (composeWasBusy && !nextBusy) {
+      focusMessageInput();
+    }
+    composeWasBusy = nextBusy;
   }
 
   function appendAssistantTranscript(raw) {
@@ -813,6 +832,7 @@
       clearPendingAudioAttachment();
     }
     await submitIngress(ingress);
+    focusMessageInput();
   });
 
   window.erisAttach = {
