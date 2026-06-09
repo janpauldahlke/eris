@@ -425,7 +425,26 @@ fn normalize_tool_args(tool_name: &str, mut args: Value) -> Value {
         }
         obj.retain(|k, _| WEB_FIND_KEYS.contains(&k.as_str()));
     }
+    if matches!(
+        tool_name,
+        "vision:see" | "vision:display" | "media:catalog" | "media:meta"
+    ) {
+        coerce_relative_path_aliases(obj);
+    }
     args
+}
+
+/// Map common LLM arg names (`path`, `file_path`) to `relative_path` before schema validation.
+fn coerce_relative_path_aliases(obj: &mut serde_json::Map<String, Value>) {
+    if obj.contains_key("relative_path") {
+        return;
+    }
+    for alias in ["path", "file_path"] {
+        if let Some(val) = obj.remove(alias) {
+            obj.insert("relative_path".to_string(), val);
+            break;
+        }
+    }
 }
 
 const WEB_FETCH_KEYS: &[&str] = &[
@@ -850,6 +869,38 @@ mod tests {
         assert_eq!(
             args.get("homepage_url").and_then(|v| v.as_str()),
             Some("https://www.bbc.com/news")
+        );
+    }
+
+    #[test]
+    fn normalize_vision_display_maps_path_to_relative_path() {
+        let rel = "99_USER_UPLOADED/images/abc.jpg";
+        let args = normalize_tool_args("vision:display", json!({"path": rel}));
+        assert_eq!(
+            args.get("relative_path").and_then(|v| v.as_str()),
+            Some(rel)
+        );
+        assert!(args.get("path").is_none());
+    }
+
+    #[test]
+    fn normalize_media_catalog_maps_file_path_to_relative_path() {
+        let rel = "99_USER_UPLOADED/images/def.jpg";
+        let args = normalize_tool_args("media:catalog", json!({"file_path": rel, "description": "x"}));
+        assert_eq!(
+            args.get("relative_path").and_then(|v| v.as_str()),
+            Some(rel)
+        );
+        assert!(args.get("file_path").is_none());
+    }
+
+    #[test]
+    fn normalize_vision_see_maps_path_to_relative_path() {
+        let rel = "99_USER_UPLOADED/images/ghi.jpg";
+        let args = normalize_tool_args("vision:see", json!({"path": rel}));
+        assert_eq!(
+            args.get("relative_path").and_then(|v| v.as_str()),
+            Some(rel)
         );
     }
 
