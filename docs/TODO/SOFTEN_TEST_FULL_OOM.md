@@ -2,9 +2,9 @@
 
 **Also known as (old misname):** “test-full OOM” — see [Why the old name was wrong](#why-the-old-name-was-wrong).
 
-**Status:** understood + workarounds in place · **Priority:** monitor  
+**Status:** understood + workarounds in place · **likely fix: GNOME on Wayland** (monitoring) · **Priority:** monitor  
 **Issue label:** `hybrid-gpu-gnome-session-drop`  
-**Host:** FUCKUP — Ubuntu 24.04, kernel 6.17, AMD Raphael iGPU (displays) + RTX 4080 SUPER (`prime-select on-demand`), Xorg session.
+**Host:** FUCKUP — Ubuntu 24.04, kernel 6.17, AMD Raphael iGPU (displays) + RTX 4080 SUPER (`prime-select on-demand`). **Was X11** (session drops); **now Wayland** (GDM gear → “Ubuntu”, not “Ubuntu on Xorg”). GDM remembers last session choice.
 
 ---
 
@@ -38,9 +38,40 @@ git push
 ./scripts/test-full-detached.sh
 tail -f target/test-full.log
 
-# Avoid in Cursor/GNOME terminal (Heisenbug — session roulette)
+# On X11 only — session roulette in GUI terminals (see Wayland section)
 cargo test-full
 ```
+
+**FUCKUP (2026-06-10):** switched to **Wayland** after r/ubuntu report (Intel+NVIDIA, same symptom). First `cargo test` in GUI terminal: **682 passed, ~26s, no session drop**. Re-validate with `cargo test-full` over a few days before trusting interactive GUI runs again.
+
+---
+
+## Wayland workaround (2026-06-10)
+
+**Symptom on X11:** intermittent forced logout (`exit.target` → GDM) during terminal workloads — `cargo test`, `cargo test-full`, GNOME Terminal or Cursor. Journal: `gnome-shell: X connection to :1 broken` + `amdgpu` LTTPR DRM errors. Not RAM OOM.
+
+**Switch (no packages, no leaving GNOME):**
+
+1. Log out to GDM.
+2. Click username → gear icon → **Ubuntu** (Wayland), not **Ubuntu on Xorg**.
+3. Confirm: `echo $XDG_SESSION_TYPE` → `wayland`.
+
+**Why it might help:** Wayland uses mutter’s compositor path directly instead of Xorg; hybrid-GPU session-death reports on Intel+NVIDIA often clear after this switch. AMD iGPU + NVIDIA `on-demand` is a different stack but same class of bug.
+
+**Evidence so far (FUCKUP):**
+
+| Session | Run | Outcome |
+|---------|-----|---------|
+| X11 | `cargo test` in GNOME Terminal | **Session drop** (2026-06-10, journal: `exit.target` + LTTPR) |
+| X11 | `cargo test-full` (historical) | Drops ~batch 9–13 after ~5–15 min |
+| Wayland | `cargo test` in GUI terminal | **682 passed ~26s**, no drop (2026-06-10) |
+| Either | `./scripts/test-full-detached.sh` | All 47 batches pass (outside graphical session) |
+
+**Still use detached `test-full` until Wayland is proven stable** over several days / an interactive `test-full` run.
+
+**Revert:** log out → gear → **Ubuntu on Xorg**.
+
+**Community:** [r/gnome hybrid NVIDIA thread](https://www.reddit.com/r/gnome/comments/1s5tldz/any_having_trouble_hybrid_nvidia_gpu/); r/ubuntu 2026-06 — “switch to Wayland fixed random session deaths” (Intel+NVIDIA).
 
 ---
 
@@ -108,7 +139,8 @@ On FUCKUP (2026-06-09 evidence):
 | + `tools::media::` | 42 | Dies at `[9/42] START: executive::` — no `DONE` |
 | Executive split | 47 | Dies at `[13/47] START: executive::peripherals::` — no `FAILED` |
 | Quiet mode (GUI) | 47 | Same cliff ~batch 13 — disproved “terminal redraw only” |
-| `cargo test` (GUI) | 682 in one process | **Passed ~26s** — twice |
+| `cargo test` (GUI, X11) | 682 in one process | **Passed ~26s** when session stayed up; also **session drop** 2026-06-10 |
+| `cargo test` (GUI, Wayland) | 682 in one process | **Passed ~26s** (2026-06-10) — monitoring |
 | `./scripts/test-full-detached.sh` (cron) | 47 | **`=== all batches passed ===`**, exit 0 |
 
 **Misleading correlation:** cliff often lands on `executive::` / `peripherals::` because that is ~batch 9–13 after ~5–10 minutes — **duration + batch index**, not proof those tests are broken.
@@ -192,7 +224,7 @@ cargo test --bin eris executive::router:: -- --test-threads=1
 
 ## Open / optional (do not block dev)
 
-- [ ] `cargo test-full` completes interactively in GNOME without drop (may require display-stack fix outside repo)
+- [ ] `cargo test-full` completes interactively in GNOME on **Wayland** without drop (X11 fix: switch session — see above)
 - [ ] Rename this file to `HYBRID_GPU_GNOME_SESSION_DROP.md` once link rot is acceptable
 - [ ] Lighten `relay_submit_then_system_inject_orders_after_tool` if profiling shows benefit (not proven on FUCKUP)
 
@@ -203,13 +235,14 @@ cargo test --bin eris executive::router:: -- --test-threads=1
 ```
 Read docs/TODO/SOFTEN_TEST_FULL_OOM.md (issue: hybrid-gpu-gnome-session-drop).
 
-Context: GNOME session drops to login during long interactive cargo test-full on
-FUCKUP (AMD iGPU displays + NVIDIA, kernel 6.17). NOT RAM OOM. cargo test passes.
-Detached test-full passed all 47 batches.
+Context: GNOME session drops to login during terminal workloads on FUCKUP when on
+**X11** (AMD iGPU displays + NVIDIA on-demand, kernel 6.17). NOT RAM OOM.
+**Wayland session (2026-06-10) looks like the fix** — cargo test OK in GUI; still
+monitoring. Detached test-full always passed all 47 batches.
 
 Do NOT assume test failure. Check target/test-full.log and journalctl for
-exit.target / LTTPR / oomd.
+exit.target / LTTPR / oomd. On X11: exit.target + gnome-shell X connection broken.
 
-Local workflow: cargo test daily; ./scripts/test-full-detached.sh for full suite;
-CI+Codecov on push. Do not run interactive test-full without user OK.
+Local workflow: cargo test daily on Wayland; ./scripts/test-full-detached.sh for
+full suite if unsure; CI+Codecov on push. X11 + interactive test-full = roulette.
 ```
