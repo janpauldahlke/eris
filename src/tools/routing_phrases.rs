@@ -113,6 +113,15 @@ pub fn fallback_triggers(tool_name: &str) -> &'static str {
         "calendar:delete" => {
             "cancel calendar event, remove from google calendar, delete meeting, clear calendar block"
         }
+        "vision:display" => {
+            "show me the image, display the photo, pull up that picture, let me see it, show the truck"
+        }
+        "media:catalog" => {
+            "remember this image, save this photo, catalog this picture, keep in media memory"
+        }
+        "media:meta" => {
+            "update image notes, add tag to photo, correct image description, append catalog note"
+        }
         _ => "",
     }
 }

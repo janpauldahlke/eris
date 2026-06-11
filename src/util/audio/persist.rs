@@ -1,11 +1,9 @@
 use std::path::Path;
 
-use tokio::fs;
-use uuid::Uuid;
-
 use crate::config::AudioConfig;
-use crate::executive::error::{FcpError, Result};
+use crate::executive::error::Result;
 use crate::presentation::AudioAttachment;
+use crate::util::blob_store::persist_content_addressed;
 
 use super::NormalizedAudio;
 
@@ -15,22 +13,21 @@ pub async fn persist_normalized_audio(
     audio: &AudioConfig,
     normalized: NormalizedAudio,
 ) -> Result<AudioAttachment> {
-    let filename = format!("{}.wav", Uuid::new_v4());
-    let rel_path = format!(
-        "{}/{}",
-        audio.upload_dir.trim_end_matches('/'),
-        filename
-    );
-    let abs_path = workspace_root.join(&rel_path);
-    if let Some(parent) = abs_path.parent() {
-        fs::create_dir_all(parent).await.map_err(FcpError::Io)?;
-    }
-    fs::write(&abs_path, &normalized.bytes)
-        .await
-        .map_err(FcpError::Io)?;
-
+    let blob = persist_content_addressed(
+        workspace_root,
+        &audio.upload_dir,
+        &normalized.bytes,
+        "wav",
+    )
+    .await?;
+    let filename = blob
+        .relative_path
+        .rsplit('/')
+        .next()
+        .unwrap_or("audio.wav")
+        .to_string();
     Ok(AudioAttachment {
-        relative_path: rel_path,
+        relative_path: blob.relative_path,
         preview_url: format!("/api/audio/preview/{filename}"),
         duration_secs: normalized.duration_secs,
     })

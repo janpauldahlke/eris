@@ -139,6 +139,8 @@ pub enum SessionEvent {
         audio: Option<AudioAttachment>,
     },
     IncomingMessage(String),
+    /// Assistant turn inline image (from `vision:display`).
+    AssistantImage(ImageAttachment),
     /// JSON protocol `thought` string from the assistant reply (internal reasoning; not `message_to_user`).
     ModelThought(String),
     SystemError(String),

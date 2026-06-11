@@ -32,6 +32,13 @@ This section records a **second pass** over the doc set for consistency, known g
 - Documented **tool-round UI split**: `message_to_user` on deck, `Tools: ...` on status, duplicate deck suppression.
 - Documented **`presentation/`** module, **`eris chat --web`**, optional **Discord sidecar**, **`routing_phrases`**, **`idle_heartbeat_enabled`**, and **setup welder** vs ignition ordering.
 
+### Media catalog pass (2026-06-09)
+
+- Documented **`40_MEDIA`**, **`99_USER_UPLOADED`**, and **`src/media/`** (04, 00 glossary).
+- Documented **`media:catalog`**, **`media:meta`**, **`vision:display`**, gatekeeper arg aliases, remember nudge (05, 02).
+- Expanded [HOW_TO/VISION.md](../HOW_TO/VISION.md) with remember/recall/display flows and README phrase compendium rows.
+- **`vision:see` descriptor** `suggested_skills` aligned to `media-catalog-workflow` (was stale `vision-upload-workflow`).
+
 ### llama.cpp integration pass (2026-05-12)
 
 - Documented **`LlmBackend`** enum and **`LlamaCppConfig`** in config (01).

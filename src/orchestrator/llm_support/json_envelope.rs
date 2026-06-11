@@ -373,6 +373,18 @@ pub fn infer_tools_from_user_message(user: &str) -> Vec<String> {
     if lower.contains("timer") || lower.contains("countdown") || lower.contains("clock:timer") {
         push_unique_tool_name(&mut out, "clock:timer");
     }
+    if crate::orchestrator::llm_support::post_tool_guidance::user_wants_media_catalog(user) {
+        push_unique_tool_name(&mut out, "media:catalog");
+        push_unique_tool_name(&mut out, "vision:see");
+    }
+    if lower.contains("show me the image")
+        || lower.contains("display the photo")
+        || lower.contains("let me see it")
+        || lower.contains("pull up that picture")
+        || lower.contains("vision:display")
+    {
+        push_unique_tool_name(&mut out, "vision:display");
+    }
     out
 }
 
@@ -786,6 +798,13 @@ mod tests {
     fn infer_tools_from_user_message_vault_search() {
         let names = infer_tools_from_user_message("Search the vault for mentions of synthesis");
         assert!(names.contains(&"vault:search".to_string()));
+    }
+
+    #[test]
+    fn infer_tools_from_user_message_remember_image() {
+        let names = infer_tools_from_user_message("remember this");
+        assert!(names.contains(&"vision:see".to_string()));
+        assert!(names.contains(&"media:catalog".to_string()));
     }
 
     #[test]

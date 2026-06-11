@@ -7,5 +7,9 @@ RUST_TEST_THREADS = "1"
 jobs = 2
 
 [alias]
-test-full = ["run", "--quiet", "--bin", "eris-test-full"]
-t = ["run", "--quiet", "--bin", "eris-test-full"]
+# Quiet: test output → target/test-full.log only (avoids GNOME terminal compositor stress).
+test-full-quiet = ["run", "--quiet", "--bin", "eris-test-full", "--", "--quiet"]
+test-full = ["run", "--quiet", "--bin", "eris-test-full", "--", "--quiet"]
+t = ["run", "--quiet", "--bin", "eris-test-full", "--", "--quiet"]
+# Verbose (CI-style): streams each batch to the terminal.
+test-full-verbose = ["run", "--quiet", "--bin", "eris-test-full"]

@@ -116,6 +116,8 @@ pub struct StartedChatSession {
     pub user_action_tx: mpsc::Sender<UserAction>,
     pub token_metrics_rx: watch::Receiver<LlmTokenSnapshot>,
     pub peripheral_lifecycle: PeripheralLifecycle,
+    /// Snapshot of gatekeeper tool names at startup (for web Tools console active status).
+    pub registered_tool_names: Arc<[String]>,
 }
 
 /// Bootstrap engine, tools, orchestrator, and background tasks. Caller keeps `presentation_rx` for the view.
@@ -346,7 +348,7 @@ pub async fn start_chat_session(
         .min(web_fetch_chunk_chars.saturating_mul(6))
         .max(web_fetch_chunk_chars);
 
-    if config.moltbook.enabled {
+    if crate::tools::registration::should_register_moltbook(&config) {
         match crate::tools::moltbook::MoltbookClient::unauthenticated(
             &config.moltbook,
             config.moltbook.timeout_secs,
@@ -539,7 +541,7 @@ pub async fn start_chat_session(
     gatekeeper.register(Arc::new(crate::tools::web::WebFetchTool {
         ctx: web_ctx.clone(),
     }));
-    if config.web.search_enabled {
+    if crate::tools::registration::should_register_web_search(&config) {
         gatekeeper.register(Arc::new(crate::tools::web::WebSearchTool {
             ctx: web_ctx.clone(),
         }));
@@ -551,7 +553,7 @@ pub async fn start_chat_session(
         max_snippet_chars: (read_limit.max(512) / 3).clamp(300, 900),
         max_total_chars: (read_limit.max(512) / 2).clamp(1000, 2500),
     }));
-    if config.news_today_enabled {
+    if crate::tools::registration::should_register_news_today(&config) {
         gatekeeper.register(Arc::new(crate::tools::news::NewsTodayTool::new(
             web_ctx,
             crate::tools::news::NewsTodayConfigSnapshot {
@@ -568,13 +570,26 @@ pub async fn start_chat_session(
         config: config.clone(),
     }));
 
-    if config.vision.enabled {
+    gatekeeper.register(Arc::new(crate::tools::media::MediaCatalogTool {
+        config: config.clone(),
+        workspace_root: workspace_root.clone(),
+    }));
+    gatekeeper.register(Arc::new(crate::tools::media::MediaMetaTool {
+        config: config.clone(),
+        workspace_root: workspace_root.clone(),
+    }));
+
+    if crate::tools::registration::should_register_vision(&config) {
         gatekeeper.register(Arc::new(crate::tools::vision::VisionSeeTool {
             config: config.clone(),
             workspace_root: workspace_root.clone(),
         }));
+        gatekeeper.register(Arc::new(crate::tools::vision::VisionDisplayTool {
+            config: config.clone(),
+            workspace_root: workspace_root.clone(),
+        }));
     } else {
-        tracing::info!("vision:see disabled by config — not registered");
+        tracing::info!("vision tools disabled by config — not registered");
     }
 
     gatekeeper.register(Arc::new(crate::tools::clock::ClockNowTool));
@@ -587,18 +602,30 @@ pub async fn start_chat_session(
         reschedule_tx: alarm_reschedule_tx,
     }));
 
-    gatekeeper.register(Arc::new(crate::tools::weather::WeatherCurrentTool {
-        api: api_http.clone(),
-    }));
-    gatekeeper.register(Arc::new(crate::tools::weather::WeatherForecastTool {
-        api: api_http.clone(),
-    }));
-    gatekeeper.register(Arc::new(crate::tools::db_rest::DbFindConnectionsTool {
-        api: api_http.clone(),
-    }));
-    gatekeeper.register(Arc::new(crate::tools::wiki::WikiSummaryTool {
-        api: api_http,
-    }));
+    if crate::tools::registration::should_register_weather(&config) {
+        gatekeeper.register(Arc::new(crate::tools::weather::WeatherCurrentTool {
+            api: api_http.clone(),
+        }));
+        gatekeeper.register(Arc::new(crate::tools::weather::WeatherForecastTool {
+            api: api_http.clone(),
+        }));
+    } else {
+        tracing::info!("weather tools disabled by config — not registered");
+    }
+    if crate::tools::registration::should_register_db_rest(&config) {
+        gatekeeper.register(Arc::new(crate::tools::db_rest::DbFindConnectionsTool {
+            api: api_http.clone(),
+        }));
+    } else {
+        tracing::info!("db:find_connections disabled by config — not registered");
+    }
+    if crate::tools::registration::should_register_wiki(&config) {
+        gatekeeper.register(Arc::new(crate::tools::wiki::WikiSummaryTool {
+            api: api_http.clone(),
+        }));
+    } else {
+        tracing::info!("wiki:summary disabled by config — not registered");
+    }
 
     if let Some(auth) = crate::util::google_workspace::workspace_auth(&config.google).await? {
         let gmail = Arc::new(crate::util::GmailClient::from_auth(auth.clone())?);
@@ -672,6 +699,9 @@ pub async fn start_chat_session(
             qdrant_oversample_min: config.memory_query_oversample_min,
         }));
     }
+
+    let registered_tool_names: Arc<[String]> =
+        gatekeeper.registered_tool_names().into();
 
     let descriptor_registry = {
         let registry = crate::tools::ToolDescriptorRegistry::load_embedded()?;
@@ -1260,5 +1290,6 @@ pub async fn start_chat_session(
         user_action_tx,
         token_metrics_rx,
         peripheral_lifecycle,
+        registered_tool_names,
     })
 }

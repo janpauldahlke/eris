@@ -137,9 +137,15 @@ Context length for the managed `llama-server` comes from the top-level `num_ctx`
 
 ---
 
-## 4b. Vision (optional multimodal)
+## 4b. Vision and media catalog (optional multimodal)
 
-Image understanding is **only** on the llama.cpp path (`vision:see`). Ollama backend does not register the tool or spawn mmproj.
+Image tools are **only** on the llama.cpp path. Ollama backend does not register vision tools or spawn mmproj.
+
+| Tool | Role |
+| ---- | ---- |
+| `vision:see` | Describe uploaded JPEGs via multimodal chat |
+| `media:catalog` / `media:meta` | Remember and patch `40_MEDIA/{hash}/media.json` cards (Qdrant text) |
+| `vision:display` | Inline preview in web chat |
 
 1. Use a **multimodal chat GGUF** and matching **mmproj** (tested: Gemma 4 12B + Unsloth `mmproj-F16.gguf`).
 2. Build **recent llama.cpp** — Gemma 4’s `gemma4uv` projector needs **b9493+**; older `llama-server` builds fail at mmproj load.

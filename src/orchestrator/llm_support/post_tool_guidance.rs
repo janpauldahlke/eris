@@ -79,6 +79,42 @@ pub const DUPLICATE_SUPPRESS_IDLE_GUIDANCE: &str = r#"[FCP DUPLICATE TOOL — US
 All tool_calls in your last batch were skipped as duplicates of calls already made this turn. Do not repeat them. Reply with status Idle, a non-empty message_to_user summarizing prior tool results, and tool_calls [].
 [/FCP DUPLICATE TOOL — USER REPLY]"#;
 
+/// True when the latest user turn asks to remember, save, or catalog an uploaded image.
+pub fn user_wants_media_catalog(user: &str) -> bool {
+    let lower = user.to_lowercase();
+    let image_hint = lower.contains("image")
+        || lower.contains("photo")
+        || lower.contains("picture")
+        || lower.contains("pic")
+        || lower.contains("upload")
+        || lower.contains("attached")
+        || lower.contains("this");
+    lower.contains("remember this")
+        || lower.contains("save this")
+        || lower.contains("catalog this")
+        || lower.contains("keep in media")
+        || lower.contains("keep this image")
+        || lower.contains("keep this photo")
+        || (lower.contains("remember") && image_hint)
+        || (lower.contains("save") && image_hint)
+        || (lower.contains("catalog") && image_hint)
+}
+
+/// System line after successful `vision:see` when the user asked to remember the image.
+pub fn vision_see_catalog_nudge(relative_path: &str, description: &str) -> String {
+    format!(
+        r#"[FCP MEDIA — CATALOG NEXT]
+vision:see succeeded for `{relative_path}`. The user asked to remember this image.
+Your next tool batch must call media:catalog with:
+- relative_path: "{relative_path}"
+- description: use the vision description below (trim if very long)
+Description from vision:see:
+{description}
+Invent a short title from what you saw; do not use the user's command phrase as title.
+[/FCP MEDIA — CATALOG NEXT]"#
+    )
+}
+
 /// After any `web:*` tool is armed for protocol Recover, offer the full browser stack when allowed.
 pub fn expand_web_tools_for_protocol_recover(
     targeted_tools: &mut std::collections::HashSet<String>,
@@ -109,6 +145,24 @@ mod tests {
         assert!(msg.contains(
             crate::orchestrator::context::resolved_tool_recovery::PROTOCOL_FAULT_PREFIX
         ));
+    }
+
+    #[test]
+    fn user_wants_media_catalog_detects_remember_this() {
+        assert!(user_wants_media_catalog("remember this"));
+        assert!(user_wants_media_catalog("Please remember this photo"));
+        assert!(!user_wants_media_catalog("what is in this image?"));
+    }
+
+    #[test]
+    fn vision_see_catalog_nudge_includes_path_and_description() {
+        let msg = vision_see_catalog_nudge(
+            "99_USER_UPLOADED/images/abc.jpg",
+            "A red truck.",
+        );
+        assert!(msg.contains("media:catalog"));
+        assert!(msg.contains("99_USER_UPLOADED/images/abc.jpg"));
+        assert!(msg.contains("A red truck."));
     }
 
     #[test]

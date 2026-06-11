@@ -21,6 +21,7 @@
   const THOUGHT_MAX = 4;
   const thoughtHistory = [];
   let shuttingDown = false;
+  let composeWasBusy = false;
 
   function showShutdownOverlay(detail) {
     if (!shutdownOverlay) return;
@@ -99,13 +100,31 @@
     transcript.scrollTop = transcript.scrollHeight;
   }
 
+  function focusMessageInput() {
+    if (!input || input.disabled || shuttingDown) return;
+    if (window.erisConsole && window.erisConsole.isModalOpen()) return;
+    window.requestAnimationFrame(function () {
+      if (!input || input.disabled || shuttingDown) return;
+      if (window.erisConsole && window.erisConsole.isModalOpen()) return;
+      input.focus();
+    });
+  }
+
   function setComposeBusy(busy) {
-    if (composeStack) composeStack.classList.toggle("compose-busy", !!busy);
-    if (shuttingDown) return;
-    if (input) input.disabled = !!busy;
-    if (btnSend) btnSend.disabled = !!busy;
+    const nextBusy = !!busy;
+    if (composeStack) composeStack.classList.toggle("compose-busy", nextBusy);
+    if (shuttingDown) {
+      composeWasBusy = nextBusy;
+      return;
+    }
+    if (input) input.disabled = nextBusy;
+    if (btnSend) btnSend.disabled = nextBusy;
     const micBtn = document.getElementById("audio-mic-btn");
-    if (micBtn) micBtn.disabled = !!busy;
+    if (micBtn) micBtn.disabled = nextBusy;
+    if (composeWasBusy && !nextBusy) {
+      focusMessageInput();
+    }
+    composeWasBusy = nextBusy;
   }
 
   function appendAssistantTranscript(raw) {
@@ -131,6 +150,19 @@
       body.innerHTML = renderAssistantMarkdown(norm);
       row.appendChild(body);
     }
+    transcript.appendChild(row);
+    transcript.scrollTop = transcript.scrollHeight;
+  }
+
+  function appendAssistantImage(image) {
+    if (!image || !image.preview_url) return;
+    const row = document.createElement("div");
+    row.className = "msg assistant assistant-image-row";
+    const img = document.createElement("img");
+    img.className = "assistant-image";
+    img.src = image.preview_url;
+    img.alt = "Displayed image";
+    row.appendChild(img);
     transcript.appendChild(row);
     transcript.scrollTop = transcript.scrollHeight;
   }
@@ -381,6 +413,10 @@
     }
     if (data.IncomingMessage) {
       appendAssistantTranscript(data.IncomingMessage);
+      return;
+    }
+    if (data.AssistantImage) {
+      appendAssistantImage(data.AssistantImage);
       return;
     }
     if (data.UserTranscriptLine) {
@@ -642,6 +678,23 @@
     return attachment;
   }
 
+  function setMicIdleState(btn) {
+    if (!btn) return;
+    btn.classList.remove("recording");
+    btn.setAttribute("aria-label", "Record voice");
+    btn.setAttribute(
+      "title",
+      "Record voice (click to start, click again to send)"
+    );
+  }
+
+  function setMicRecordingState(btn) {
+    if (!btn) return;
+    btn.classList.add("recording");
+    btn.setAttribute("aria-label", "Stop recording and send");
+    btn.setAttribute("title", "Recording — click to stop and send");
+  }
+
   function stopMediaCapture() {
     if (mediaRecorder && mediaRecorder.state !== "inactive") {
       mediaRecorder.stop();
@@ -677,8 +730,7 @@
       micBtn.addEventListener("click", async function () {
         if (mediaRecorder && mediaRecorder.state === "recording") {
           stopMediaCapture();
-          micBtn.classList.remove("recording");
-          micBtn.setAttribute("aria-label", "Record voice");
+          setMicIdleState(micBtn);
           return;
         }
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -693,6 +745,7 @@
             if (e.data && e.data.size > 0) recordedChunks.push(e.data);
           };
           mediaRecorder.onstop = async function () {
+            setMicIdleState(micBtn);
             const mimeType =
               (mediaRecorder && mediaRecorder.mimeType) || "audio/webm";
             const blob = new Blob(recordedChunks, { type: mimeType });
@@ -718,9 +771,9 @@
             }
           };
           mediaRecorder.start();
-          micBtn.classList.add("recording");
-          micBtn.setAttribute("aria-label", "Stop recording and send");
+          setMicRecordingState(micBtn);
         } catch (_err) {
+          setMicIdleState(micBtn);
           appendLine("[ui] microphone permission denied or unavailable", "system");
         }
       });
@@ -796,10 +849,20 @@
       clearPendingAudioAttachment();
     }
     await submitIngress(ingress);
+    focusMessageInput();
   });
+
+  window.erisAttach = {
+    setPendingAttachment: setPendingAttachment,
+    clearPendingAttachment: clearPendingAttachment,
+  };
 
   window.addEventListener("keydown", function (e) {
     if (e.key === "Escape") {
+      if (window.erisConsole && window.erisConsole.isModalOpen()) {
+        window.erisConsole.closeModal();
+        return;
+      }
       fetch("/api/action", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

@@ -67,7 +67,18 @@ pub(crate) const VAULT_INGEST_SUBDIRS_V2: &[&str] = &[
     "10_Topology",
     "20_Discourse",
     "30_Synthesis",
+    "40_MEDIA",
 ];
+
+/// Boot/watch ingest roots for the current config. `40_MEDIA` is included only when
+/// `[vision] enabled` — image catalog cards are a vision workflow (v1: images only).
+pub fn vault_ingest_subdirs_for_config(config: &AppConfig) -> Vec<&'static str> {
+    VAULT_INGEST_SUBDIRS_V2
+        .iter()
+        .copied()
+        .filter(|subdir| *subdir != "40_MEDIA" || config.vision.enabled)
+        .collect()
+}
 
 /// Extract dense vector size from Qdrant collection info (named or single vector).
 #[must_use]
@@ -150,6 +161,10 @@ pub struct SemanticBrain {
 }
 
 impl SemanticBrain {
+    pub fn config(&self) -> &AppConfig {
+        &self.config
+    }
+
     pub async fn new(config: Arc<AppConfig>, embed: Arc<dyn EmbeddingProvider>) -> Result<Self> {
         let client = Qdrant::from_url(&config.qdrant_url)
             .build()
@@ -410,6 +425,10 @@ impl SemanticBrain {
 
         if self.index_tree_md_file(vault_root, &abs).await? {
             tracing::debug!(vault_key = %key, "semantic reindex: indexed vault file");
+            return Ok(());
+        }
+        if self.index_tree_json_file(vault_root, &abs).await? {
+            tracing::debug!(vault_key = %key, "semantic reindex: indexed media json");
         }
         Ok(())
     }
@@ -427,13 +446,20 @@ impl SemanticBrain {
 
         let mut count = 0usize;
 
-        for subdir in VAULT_INGEST_SUBDIRS_V2 {
+        let subdirs = vault_ingest_subdirs_for_config(&self.config);
+        if !self.config.vision.enabled {
+            tracing::debug!(
+                "v2 ingest: skipping 40_MEDIA (vision disabled in config)"
+            );
+        }
+
+        for subdir in subdirs {
             let dir = vault_root.join(subdir);
             if !dir.exists() {
                 continue;
             }
 
-            if *subdir == "30_Synthesis" {
+            if subdir == "30_Synthesis" {
                 count += self.ingest_synthesis_recursive(vault_root, &dir).await;
             } else {
                 count += self.ingest_tree_v2(&dir, vault_root).await;
@@ -464,10 +490,47 @@ impl SemanticBrain {
                 }
                 if self.index_tree_md_file(vault_root, &path).await.unwrap_or(false) {
                     count += 1;
+                } else if self.index_tree_json_file(vault_root, &path).await.unwrap_or(false) {
+                    count += 1;
                 }
             }
         }
         count
+    }
+
+    async fn index_tree_json_file(
+        &self,
+        vault_root: &std::path::Path,
+        path: &std::path::Path,
+    ) -> Result<bool> {
+        if path.extension().is_none_or(|e| e != "json") {
+            return Ok(false);
+        }
+        let vault_key = match vault_key_from_abs_path(vault_root, path) {
+            Some(k) if vault_key_is_ingest_eligible(&k) && k.starts_with("40_MEDIA/") => k,
+            _ => return Ok(false),
+        };
+
+        let raw = tokio::fs::read_to_string(path).await.map_err(FcpError::Io)?;
+        let card = crate::media::parse_media_json(&raw)?;
+        let embed_text = crate::media::build_embed_text(&card);
+        if embed_text.trim().is_empty() {
+            return Ok(false);
+        }
+        let recency_ts_ms = card.updated_at.saturating_mul(1000);
+        self.upsert_vault_document_v2(
+            &vault_key,
+            &embed_text,
+            card.tags.clone(),
+            None,
+            None,
+            true,
+            None,
+            recency_ts_ms,
+        )
+        .await?;
+        tracing::debug!(vault_key = %vault_key, "v2 ingest: indexed media json");
+        Ok(true)
     }
 
     async fn index_tree_md_file(
@@ -1414,11 +1477,33 @@ Hello there."#;
     }
 
     #[test]
+    fn vault_ingest_subdirs_omit_40_media_when_vision_disabled() {
+        let mut config = AppConfig::default();
+        config.vision.enabled = false;
+        let subdirs = vault_ingest_subdirs_for_config(&config);
+        assert!(!subdirs.contains(&"40_MEDIA"));
+        assert!(subdirs.contains(&"30_Synthesis"));
+
+        config.vision.enabled = true;
+        let subdirs = vault_ingest_subdirs_for_config(&config);
+        assert!(subdirs.contains(&"40_MEDIA"));
+    }
+
+    #[test]
+    fn vault_key_from_abs_path_finds_40_media_json() {
+        let root = std::path::Path::new("/vault/gem");
+        let abs = root.join("40_MEDIA/abc123/media.json");
+        let key = vault_key_from_abs_path(root, &abs).expect("key");
+        assert_eq!(key, "40_MEDIA/abc123/media.json");
+    }
+
+    #[test]
     fn v2_ingest_subdirs_include_all_roots() {
         assert!(VAULT_INGEST_SUBDIRS_V2.contains(&"00_Invariants"));
         assert!(VAULT_INGEST_SUBDIRS_V2.contains(&"10_Topology"));
         assert!(VAULT_INGEST_SUBDIRS_V2.contains(&"20_Discourse"));
         assert!(VAULT_INGEST_SUBDIRS_V2.contains(&"30_Synthesis"));
+        assert!(VAULT_INGEST_SUBDIRS_V2.contains(&"40_MEDIA"));
     }
 
     #[test]

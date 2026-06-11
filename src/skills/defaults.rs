@@ -10,6 +10,8 @@ pub const VAULT_ORIENTATION_RAW: &str =
     include_str!("defaults/vault-orientation.md");
 pub const WEB_FETCH_WORKFLOW_RAW: &str =
     include_str!("defaults/web-fetch-workflow.md");
+pub const MEDIA_CATALOG_WORKFLOW_RAW: &str =
+    include_str!("defaults/media-catalog-workflow.md");
 
 #[derive(Debug, Clone)]
 pub struct EmbeddedSkill {
@@ -17,7 +19,7 @@ pub struct EmbeddedSkill {
     pub raw: &'static str,
 }
 
-pub fn embedded_defaults() -> [EmbeddedSkill; 6] {
+pub fn embedded_defaults() -> [EmbeddedSkill; 7] {
     [
         EmbeddedSkill {
             file_name: "mail-recipient-verify.md",
@@ -42,6 +44,10 @@ pub fn embedded_defaults() -> [EmbeddedSkill; 6] {
         EmbeddedSkill {
             file_name: "web-fetch-workflow.md",
             raw: WEB_FETCH_WORKFLOW_RAW,
+        },
+        EmbeddedSkill {
+            file_name: "media-catalog-workflow.md",
+            raw: MEDIA_CATALOG_WORKFLOW_RAW,
         },
     ]
 }

@@ -4,7 +4,8 @@ use crate::orchestrator::context::resolved_tool_recovery::SYSTEM_RECOVERY_PREFIX
 use crate::orchestrator::llm_support::json_envelope::natural_language_schema_description;
 use crate::orchestrator::llm_support::post_tool_guidance::{
     POST_TOOL_USER_REPLY_GUIDANCE, ensure_web_find_paired_with_fetch_tools,
-    recover_override_message_for_tool_failure,
+    recover_override_message_for_tool_failure, user_wants_media_catalog,
+    vision_see_catalog_nudge,
 };
 use crate::tools::web::ledger::policy::WEB_FIND_BEFORE_REFETCH;
 use crate::orchestrator::r#loop::recovery_policy::{ToolFailureAction, classify_tool_failure};
@@ -69,6 +70,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             );
         }
         let tools = stable_prioritize_clock_now_before_db(tools);
+        let batch_includes_catalog = tools.iter().any(|t| t.name == "media:catalog");
         tracing::info!(
             event = "orchestrator.tools.batch",
             tool_count = tools.len(),
@@ -279,6 +281,67 @@ impl<E: LlmEngine> Orchestrator<E> {
                         role: "system".to_string(),
                         content: msg.clone(),
                     });
+                    if tool_name == "vision:see"
+                        && user_wants_media_catalog(self.last_user_content())
+                        && !batch_includes_catalog
+                        && !execution_ledger.values().any(|t| {
+                            t.tool_name == "media:catalog"
+                                && matches!(t.status, ToolIntentStatus::Success)
+                        })
+                    {
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&result) {
+                            let rel = v
+                                .get("path")
+                                .or_else(|| v.get("relative_path"))
+                                .and_then(|x| x.as_str());
+                            if let (Some(rel), Some(desc)) = (
+                                rel,
+                                v.get("description").and_then(|x| x.as_str()),
+                            ) {
+                                self.chat_stack.push(crate::engine::Message {
+                                    role: "system".to_string(),
+                                    content: vision_see_catalog_nudge(rel, desc),
+                                });
+                                tracing::debug!(
+                                    target: "fcp.context_view",
+                                    event = "vision_see_catalog_nudge_injected",
+                                    relative_path = %rel,
+                                    "Post vision:see catalog nudge for remember intent"
+                                );
+                            }
+                        }
+                    }
+                    if tool_name == "vision:display" {
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&result) {
+                            if v.get("display").and_then(|x| x.as_bool()) == Some(true) {
+                                if let (Some(rel), Some(url)) = (
+                                    v.get("relative_path").and_then(|x| x.as_str()),
+                                    v.get("preview_url").and_then(|x| x.as_str()),
+                                ) {
+                                    let width = v
+                                        .get("width")
+                                        .and_then(|x| x.as_u64())
+                                        .unwrap_or(0) as u32;
+                                    let height = v
+                                        .get("height")
+                                        .and_then(|x| x.as_u64())
+                                        .unwrap_or(0) as u32;
+                                    if let Some(tx) = &self.presentation_tx {
+                                        let _ = tx
+                                            .send(SessionEvent::AssistantImage(
+                                                crate::presentation::ImageAttachment {
+                                                    relative_path: rel.to_string(),
+                                                    preview_url: url.to_string(),
+                                                    width,
+                                                    height,
+                                                },
+                                            ))
+                                            .await;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     if tool_name == "web:find" {
                         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&result) {
                             if let Some(summary) =

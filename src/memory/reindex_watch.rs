@@ -8,7 +8,7 @@ use std::time::Duration;
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio_util::sync::CancellationToken;
 
-use crate::memory::semantic::{SemanticBrain, VAULT_INGEST_SUBDIRS_V2};
+use crate::memory::semantic::{SemanticBrain, vault_ingest_subdirs_for_config};
 
 /// Watches v2 ingest roots and syncs markdown changes into Qdrant.
 pub fn spawn_vault_semantic_reindex_watch(
@@ -17,8 +17,12 @@ pub fn spawn_vault_semantic_reindex_watch(
     vault_root: PathBuf,
     semantic: std::sync::Arc<SemanticBrain>,
 ) {
-    let watch_roots: Vec<PathBuf> = VAULT_INGEST_SUBDIRS_V2
-        .iter()
+    let ingest_prefixes: Vec<String> = vault_ingest_subdirs_for_config(semantic.config())
+        .into_iter()
+        .map(|subdir| format!("{subdir}/"))
+        .collect();
+    let watch_roots: Vec<PathBuf> = vault_ingest_subdirs_for_config(semantic.config())
+        .into_iter()
         .map(|subdir| vault_root.join(subdir))
         .filter(|p| p.is_dir())
         .collect();
@@ -90,7 +94,9 @@ pub fn spawn_vault_semantic_reindex_watch(
 
                     let mut rel_paths: HashSet<String> = HashSet::new();
                     for path in event.paths {
-                        if let Some(rel) = rel_path_for_reindex(&vault_root, &path) {
+                        if let Some(rel) =
+                            rel_path_for_reindex(&vault_root, &path, &ingest_prefixes)
+                        {
                             rel_paths.insert(rel);
                         }
                     }
@@ -103,7 +109,9 @@ pub fn spawn_vault_semantic_reindex_watch(
                     while let Ok(more) = event_in.try_recv() {
                         if let Ok(e) = more {
                             for path in e.paths {
-                                if let Some(rel) = rel_path_for_reindex(&vault_root, &path) {
+                                if let Some(rel) =
+                                    rel_path_for_reindex(&vault_root, &path, &ingest_prefixes)
+                                {
                                     rel_paths.insert(rel);
                                 }
                             }
@@ -148,19 +156,22 @@ pub fn spawn_vault_semantic_reindex_watch(
     });
 }
 
-fn rel_path_for_reindex(vault_root: &Path, path: &Path) -> Option<String> {
+fn rel_path_for_reindex(
+    vault_root: &Path,
+    path: &Path,
+    ingest_prefixes: &[String],
+) -> Option<String> {
     let rel = path.strip_prefix(vault_root).ok()?;
     let key = rel.to_string_lossy().replace('\\', "/");
-    if !key.ends_with(".md") {
+    let eligible_ext = key.ends_with(".md")
+        || (key.starts_with("40_MEDIA/") && key.ends_with(".json"));
+    if !eligible_ext {
         return None;
     }
     if key.contains("/web/missions/") {
         return None;
     }
-    if VAULT_INGEST_SUBDIRS_V2
-        .iter()
-        .any(|subdir| key.starts_with(&format!("{subdir}/")))
-    {
+    if ingest_prefixes.iter().any(|pfx| key.starts_with(pfx)) {
         Some(key)
     } else {
         None

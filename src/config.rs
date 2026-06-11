@@ -356,6 +356,18 @@ fn default_news_today_enabled() -> bool {
     true
 }
 
+fn default_weather_enabled() -> bool {
+    true
+}
+
+fn default_wiki_enabled() -> bool {
+    true
+}
+
+fn default_db_rest_enabled() -> bool {
+    true
+}
+
 fn default_news_today_max_headlines() -> usize {
     12
 }
@@ -731,6 +743,15 @@ pub struct AppConfig {
     /// When false, `news:today` is not registered.
     #[serde(default = "default_news_today_enabled")]
     pub news_today_enabled: bool,
+    /// When false, `weather:current` and `weather:forecast` are not registered.
+    #[serde(default = "default_weather_enabled")]
+    pub weather_enabled: bool,
+    /// When false, `wiki:summary` is not registered.
+    #[serde(default = "default_wiki_enabled")]
+    pub wiki_enabled: bool,
+    /// When false, `db:find_connections` is not registered.
+    #[serde(default = "default_db_rest_enabled")]
+    pub db_rest_enabled: bool,
     /// Qdrant gRPC endpoint URL (semantic memory / `memory:query`).
     pub qdrant_url: String,
     /// Qdrant collection name. Computed at runtime: `fcp_vault_v2_{workspace}`.
@@ -932,6 +953,9 @@ pub struct AppConfig {
     /// When true, `eris chat --web` opens the listen URL in the system default browser after bind. Set `false` for SSH/headless.
     #[serde(default = "default_web_open_browser")]
     pub web_open_browser: bool,
+    /// Web console operator settings and upload guards.
+    #[serde(default)]
+    pub web_ui: WebUiConfig,
     /// Current working directory when [`AppConfig::load`] ran — this is the physical vault root for chat.
     #[serde(skip)]
     pub config_source_dir: PathBuf,
@@ -1386,6 +1410,82 @@ fn default_web_open_browser() -> bool {
     true
 }
 
+fn default_web_ui_num_ctx_max() -> usize {
+    32768
+}
+
+fn default_web_ui_num_ctx_warn_above() -> usize {
+    16384
+}
+
+fn default_web_ui_files_upload_dir() -> String {
+    "99_USER_UPLOADED/files".into()
+}
+
+fn default_web_ui_files_max_upload_bytes() -> u64 {
+    10 * 1024 * 1024
+}
+
+fn default_web_ui_files_allowed_extensions() -> Vec<String> {
+    vec!["pdf".into(), "md".into(), "markdown".into()]
+}
+
+/// Operator-facing settings guardrails and upload policy for the web console.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct WebUiSettingsConfig {
+    /// Hard cap for `num_ctx` edits from the web settings panel (OOM guard).
+    #[serde(default = "default_web_ui_num_ctx_max")]
+    pub num_ctx_max: usize,
+    /// Show a prominent VRAM warning when the operator sets `num_ctx` above this value.
+    #[serde(default = "default_web_ui_num_ctx_warn_above")]
+    pub num_ctx_warn_above: usize,
+}
+
+impl Default for WebUiSettingsConfig {
+    fn default() -> Self {
+        Self {
+            num_ctx_max: default_web_ui_num_ctx_max(),
+            num_ctx_warn_above: default_web_ui_num_ctx_warn_above(),
+        }
+    }
+}
+
+/// PDF/Markdown drop zone under `99_USER_UPLOADED/` (web console uploads panel).
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct WebUiFilesUploadConfig {
+    #[serde(default = "default_web_ui_files_upload_dir")]
+    pub upload_dir: String,
+    #[serde(default = "default_web_ui_files_max_upload_bytes")]
+    pub max_upload_bytes: u64,
+    #[serde(default = "default_web_ui_files_allowed_extensions")]
+    pub allowed_extensions: Vec<String>,
+}
+
+impl Default for WebUiFilesUploadConfig {
+    fn default() -> Self {
+        Self {
+            upload_dir: default_web_ui_files_upload_dir(),
+            max_upload_bytes: default_web_ui_files_max_upload_bytes(),
+            allowed_extensions: default_web_ui_files_allowed_extensions(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Default)]
+pub struct WebUiUploadsConfig {
+    #[serde(default)]
+    pub files: WebUiFilesUploadConfig,
+}
+
+/// Web console UI policy (`[web_ui]` in `.fcp/config.toml`).
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Default)]
+pub struct WebUiConfig {
+    #[serde(default)]
+    pub settings: WebUiSettingsConfig,
+    #[serde(default)]
+    pub uploads: WebUiUploadsConfig,
+}
+
 impl Default for AppConfig {
     /// Baseline profile aligned with a typical local Mac setup (Ollama + Qdrant); override per vault in `.fcp/config.toml` or `FCP_*`.
     /// A checked-in full example (including optional Gmail) is `vaults/nemo/.fcp/config.toml` — copy and trim for new vaults.
@@ -1431,6 +1531,9 @@ impl Default for AppConfig {
             turn_end_mention_enabled: default_turn_end_mention_enabled(),
             staged_memory_prompt_max_chars: default_staged_memory_prompt_max_chars(),
             news_today_enabled: default_news_today_enabled(),
+            weather_enabled: default_weather_enabled(),
+            wiki_enabled: default_wiki_enabled(),
+            db_rest_enabled: default_db_rest_enabled(),
             qdrant_url: "http://localhost:6334".into(),
             qdrant_collection_v2: "fcp_vault_v2_default".into(),
             snapshot_interval_secs: 300,
@@ -1506,6 +1609,7 @@ impl Default for AppConfig {
             web_bind_addr: default_web_bind_addr(),
             web_port: default_web_port(),
             web_open_browser: default_web_open_browser(),
+            web_ui: WebUiConfig::default(),
             config_source_dir: PathBuf::new(),
         }
     }

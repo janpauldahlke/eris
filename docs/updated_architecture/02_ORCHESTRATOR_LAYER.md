@@ -92,7 +92,7 @@ Note: **Pre-LLM** routing uses **user input** string, not the model’s `thought
 ## LLM support text (`orchestrator/llm_support/`)
 
 - **`llm_support/json_envelope.rs`:** split leading JSON object from trailing prose, trailing-content protocol check, `llm_json_parse_recovery_message` for `RecoverFromFuckup` (Ollama path only). Also provides `llm_schema_recovery_natural_language` for the grammar path — describes expected args in prose instead of raw JSON, since the grammar already constrains the output structure.
-- **`llm_support/post_tool_guidance.rs`:** `POST_TOOL_*` strings and `recover_override_message_for_tool_failure` injected after tool batches / failures.
+- **`llm_support/post_tool_guidance.rs`:** `POST_TOOL_*` strings and `recover_override_message_for_tool_failure` injected after tool batches / failures. Also **`user_wants_media_catalog`**, **`vision_see_catalog_nudge`**, and **`[FCP MEDIA — CATALOG NEXT]`** after successful `vision:see` when the user asked to remember an image (`tool_dispatch.rs`).
 
 ## Loop policy modules (`orchestrator/loop/`)
 

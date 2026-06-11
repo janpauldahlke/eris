@@ -14,6 +14,17 @@ use crate::executive::error::{FcpError, Result};
 
 const SYNTHESIS_DIR: &str = "30_Synthesis";
 
+/// Human-facing synthesis note card for the web console memory panel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SynthesisNoteCard {
+    pub node_id: String,
+    pub title: String,
+    pub tags: Vec<String>,
+    pub epistemic_status: Option<String>,
+    pub head_path: String,
+    pub committed_at: Option<u64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaglistEntry {
     pub tag: String,
@@ -60,6 +71,106 @@ pub async fn build_synthesis_taglist(workspace_root: &Path) -> Result<TaglistSna
         .await
         .map_err(|e| FcpError::Config(format!("vault:taglist build join error: {e}")))??;
     Ok(snapshot)
+}
+
+/// Title/tag cards for every synthesis node with a head revision (web console memory panel).
+pub async fn build_synthesis_note_cards(workspace_root: &Path) -> Result<Vec<SynthesisNoteCard>> {
+    let root = workspace_root.join(SYNTHESIS_DIR);
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+    let root_for_block = root.clone();
+    let cards = tokio::task::spawn_blocking(move || build_note_cards_blocking(&root_for_block))
+        .await
+        .map_err(|e| FcpError::Config(format!("synthesis note cards join error: {e}")))??;
+    Ok(cards)
+}
+
+fn build_note_cards_blocking(synthesis_root: &Path) -> Result<Vec<SynthesisNoteCard>> {
+    let read_dir = match std::fs::read_dir(synthesis_root) {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(FcpError::Io(e)),
+    };
+
+    let mut cards: Vec<SynthesisNoteCard> = Vec::new();
+    for entry in read_dir {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::debug!(error = %e, "synthesis cards: skip unreadable entry");
+                continue;
+            }
+        };
+        let node_path = entry.path();
+        let file_type = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(_) => continue,
+        };
+        if file_type.is_symlink() || !file_type.is_dir() {
+            continue;
+        }
+        let node_id = match node_path.file_name().and_then(|n| n.to_str()) {
+            Some(s) if !s.is_empty() && !s.starts_with('.') => s.to_string(),
+            _ => continue,
+        };
+        let head = match highest_revision_in(&node_path) {
+            Some(h) => h,
+            None => continue,
+        };
+        let raw = match std::fs::read_to_string(&head) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::debug!(path = %head.display(), error = %e, "synthesis cards: read failed");
+                continue;
+            }
+        };
+        let title = parse_frontmatter_string_field(&raw, "title")
+            .filter(|t| !t.trim().is_empty())
+            .unwrap_or_else(|| "Untitled note".to_string());
+        let tags = parse_frontmatter_tags(&raw);
+        let epistemic_status = parse_frontmatter_string_field(&raw, "epistemic_status");
+        let committed_at = parse_frontmatter_u64_field(&raw, "committed_at");
+        let file_name = head
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("r0001.md");
+        let head_path = format!("{SYNTHESIS_DIR}/{node_id}/{file_name}");
+        cards.push(SynthesisNoteCard {
+            node_id,
+            title,
+            tags,
+            epistemic_status,
+            head_path,
+            committed_at,
+        });
+    }
+    cards.sort_by(|a, b| {
+        b.committed_at
+            .unwrap_or(0)
+            .cmp(&a.committed_at.unwrap_or(0))
+            .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
+    });
+    Ok(cards)
+}
+
+pub fn parse_frontmatter_string_field(raw: &str, field: &str) -> Option<String> {
+    let frontmatter = extract_frontmatter(raw)?;
+    let prefix = format!("{field}:");
+    for line in frontmatter.lines() {
+        let trimmed = line.trim();
+        if let Some(val) = trimmed.strip_prefix(&prefix) {
+            let v = val.trim().trim_matches(|c: char| c == '"' || c == '\'');
+            if !v.is_empty() {
+                return Some(v.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn parse_frontmatter_u64_field(raw: &str, field: &str) -> Option<u64> {
+    parse_frontmatter_string_field(raw, field)?.parse().ok()
 }
 
 fn build_blocking(synthesis_root: &Path) -> Result<TaglistSnapshot> {

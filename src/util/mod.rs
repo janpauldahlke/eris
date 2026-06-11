@@ -1,4 +1,5 @@
 pub mod api;
+pub mod blob_store;
 pub mod fs_watch;
 pub mod audio;
 pub mod vision;

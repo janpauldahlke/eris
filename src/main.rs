@@ -18,6 +18,7 @@ pub mod engine;
 pub mod executive;
 pub mod generated;
 pub mod ingest;
+pub mod media;
 pub mod memory;
 pub mod orchestrator;
 pub mod presentation;

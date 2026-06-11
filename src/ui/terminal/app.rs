@@ -144,6 +144,12 @@ impl TuiApp {
                             self.chat_follow_latest = true;
                             redraw_now = true;
                         }
+                        SessionEvent::AssistantImage(_) => {
+                            tracing::debug!(
+                                event = "UI_RECV_ASSISTANT_IMAGE",
+                                "Terminal: assistant image ignored (web-only inline display)"
+                            );
+                        }
                         SessionEvent::IncomingMessage(msg) => {
                             let before_len = self.chat_stack.len();
                             self.chat_stack.push(msg);

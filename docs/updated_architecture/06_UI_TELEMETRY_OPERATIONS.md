@@ -5,7 +5,7 @@
 View-neutral types used by **terminal**, **web**, and **Discord**:
 
 - **`UserAction`** — inbound from any surface: `Submit`, `SubmitIngress` (carries `InputSource` + optional `for_model`), `CancelCurrentTurn`, `SystemInject`, `AgendaAlarmPending`.
-- **`SessionEvent`** — outbound to views: `StateUpdate`, `UserTranscriptLine`, `IncomingMessage`, `ModelThought`, `SystemError`, `SystemAlarm`.
+- **`SessionEvent`** — outbound to views: `StateUpdate`, `UserTranscriptLine`, `IncomingMessage`, `ModelThought`, `SystemError`, `SystemAlarm`, **`AssistantImage`** (inline web preview after `vision:display`).
 - **`InputSource`** — `Cli` | `Web` | `Discord` for transcript badges and telemetry.
 - **`alarm_relay`** — maps `SystemAlarm` payloads into the correct `UserAction` for the orchestrator loop.
 - **`multiplex.rs`** — when Discord runs with web or TUI, **one** task drains `presentation_rx` from core and fans out: relays alarms to `user_action_tx` exactly once, forwards events to web broadcast and/or terminal `mpsc`, and `try_send`s `IncomingMessage` bodies to Discord outbound (bounded queue; overflow drops with `tracing::warn`).
@@ -27,9 +27,10 @@ The orchestrator holds **`presentation_tx: Option<mpsc::Sender<SessionEvent>>`**
 ## Web UI (`ui/web/`)
 
 - **`eris chat --web`:** after `start_chat_session`, `run_web_chat` or `run_web_chat_with_broadcast` binds **`web_bind_addr`:` `web_port`**, serves Axum routes + **SSE** stream of serialized `SessionEvent`, static HTML/JS under `templates/` and `assets/`.
-- **Vision (when `[vision] enabled`):** `POST /api/vision/upload`, `GET /api/vision/preview/{filename}`, `GET /api/vision/status`; compose-area drop zone sets `UserIngress.image` on submit. **LlamaCpp backend only** — see [HOW_TO/VISION.md](../HOW_TO/VISION.md).
+- **Vision (when `[vision] enabled`):** `POST /api/vision/upload`, `GET /api/vision/preview/{filename}`, `GET /api/vision/status`; compose-area drop zone sets `UserIngress.image` on submit. **`vision:display`** tool success emits **`SessionEvent::AssistantImage`**; `assets/chat.js` renders the preview inline. **LlamaCpp backend only** — see [HOW_TO/VISION.md](../HOW_TO/VISION.md).
 - **Shutdown:** shares `CancellationToken` with the rest of chat. The bundled JS calls **`POST /api/shutdown`** from the explicit exit control (clean stop, same intent as Ctrl+C in the TUI); simply closing a tab without that hook leaves the server running until the operator stops the `eris` process.
 - **`web_open_browser`:** optional `open` / `xdg-open` / `cmd start` on listen URL.
+- **Tools console (sidebar):** `GET/PUT /api/console/tools` — family-grouped tool catalog with status badges (`active` / `off` / `unavailable` / `core`), operator-facing field descriptions from `ui/web/tools_config_schema.rs`, and whitelisted merge into `.fcp/config.toml` via `tools_config_merge.rs`. Active status uses `registered_tool_names` captured at chat startup. Restart required after save.
 
 ## Discord (`ui/discord/`)
 
