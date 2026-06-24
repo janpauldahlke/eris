@@ -176,6 +176,13 @@ impl DocumentStore {
         uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, key.as_bytes()).to_string()
     }
 
+    /// Deterministic doc_id derived from the source path. Survives Qdrant wipes
+    /// and re-ingests because the same file always maps to the same UUID.
+    pub fn deterministic_doc_id(source_path: &str) -> String {
+        let key = format!("{source_path}:doc_id");
+        uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, key.as_bytes()).to_string()
+    }
+
     pub async fn ingest_document(
         &self,
         vault_root: &Path,
@@ -264,7 +271,7 @@ impl DocumentStore {
             });
         }
 
-        let doc_id = uuid::Uuid::new_v4().to_string();
+        let doc_id = Self::deterministic_doc_id(&source_path);
         let source_name = source_label
             .map(str::trim)
             .filter(|s| !s.is_empty())
@@ -547,7 +554,11 @@ impl DocumentStore {
         if all.is_empty() {
             return Err(FcpError::ToolFault {
                 tool_name: "doc:read".into(),
-                reason: format!("no document found for doc_id {doc_id}"),
+                reason: format!(
+                    "no document found for doc_id {doc_id}. \
+                     The document may need to be re-ingested (use doc:ingest with the original file path). \
+                     Use doc:list to see currently available documents."
+                ),
             });
         }
         all.sort_by_key(|c| c.chunk_index);
@@ -629,6 +640,73 @@ impl DocumentStore {
             .iter()
             .filter_map(|p| document_chunk_from_payload(0.0, &p.payload))
             .collect())
+    }
+
+    /// Boot-time reconciliation: scan `40_MEDIA` for document cards whose `doc_id`
+    /// no longer maps to any chunks in Qdrant.  Returns the file_paths that need
+    /// re-ingest so the caller can queue them.
+    pub async fn reconcile_stale_doc_ids(
+        &self,
+        vault_root: &Path,
+    ) -> Vec<String> {
+        let media_dir = vault_root.join("40_MEDIA");
+        let mut stale_paths: Vec<String> = Vec::new();
+
+        let mut top_entries = match tokio::fs::read_dir(&media_dir).await {
+            Ok(e) => e,
+            Err(_) => return stale_paths,
+        };
+
+        while let Ok(Some(entry)) = top_entries.next_entry().await {
+            let json_path = entry.path().join("media.json");
+            if !json_path.is_file() {
+                continue;
+            }
+            let raw = match tokio::fs::read_to_string(&json_path).await {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            let card: Value = match serde_json::from_str(&raw) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            let media_type = card.get("media_type").and_then(|v| v.as_str()).unwrap_or("");
+            if media_type != "document" {
+                continue;
+            }
+
+            let file_path = match card.get("file_path").and_then(|v| v.as_str()) {
+                Some(p) => p.to_string(),
+                None => continue,
+            };
+
+            let stored_doc_id = card
+                .get("type_fields")
+                .and_then(|tf| tf.get("doc_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            if stored_doc_id.is_empty() {
+                continue;
+            }
+
+            let chunks = match self.chunks_for_doc_id(stored_doc_id).await {
+                Ok(c) => c,
+                Err(_) => Vec::new(),
+            };
+
+            if chunks.is_empty() {
+                tracing::warn!(
+                    file_path = %file_path,
+                    stale_doc_id = %stored_doc_id,
+                    "Boot reconciliation: document card references missing doc_id in Qdrant"
+                );
+                stale_paths.push(file_path);
+            }
+        }
+
+        stale_paths
     }
 }
 
@@ -874,6 +952,22 @@ mod tests {
         assert_eq!(a, b);
         let c = DocumentStore::chunk_point_id("99_USER_UPLOADED/files/x.md", 1);
         assert_ne!(a, c);
+    }
+
+    #[test]
+    fn deterministic_doc_id_is_stable() {
+        let a = DocumentStore::deterministic_doc_id("99_USER_UPLOADED/files/paper.pdf");
+        let b = DocumentStore::deterministic_doc_id("99_USER_UPLOADED/files/paper.pdf");
+        assert_eq!(a, b);
+        let c = DocumentStore::deterministic_doc_id("99_USER_UPLOADED/files/other.pdf");
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn deterministic_doc_id_differs_from_chunk_point_id() {
+        let doc = DocumentStore::deterministic_doc_id("99_USER_UPLOADED/files/x.md");
+        let chunk = DocumentStore::chunk_point_id("99_USER_UPLOADED/files/x.md", 0);
+        assert_ne!(doc, chunk);
     }
 
     #[test]

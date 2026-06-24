@@ -246,8 +246,9 @@ fn format_doc_prefetch_block(
             continue;
         }
         let attribution = format!(
-            "(from {}, chunk {}/{})\n{}",
+            "(from {}, doc_id={}, chunk {}/{})\n{}",
             chunk.source_name,
+            chunk.doc_id,
             chunk.chunk_index,
             chunk.total_chunks,
             snippet
@@ -348,6 +349,7 @@ mod tests {
         let block = format_doc_prefetch_block(&chunks, 800, 350);
         assert!(block.contains(DOC_PREFETCH_HEADER.trim()));
         assert!(block.contains("attention_paper.pdf"));
+        assert!(block.contains("doc_id=abc"));
         assert!(block.contains("chunk 12/87"));
         assert!(block.contains("encoder-decoder"));
     }

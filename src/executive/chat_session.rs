@@ -384,6 +384,23 @@ pub async fn start_chat_session(
             )
         });
 
+    if let (Some(doc_store), Some(ingest_q)) =
+        (document_store_arc.as_ref(), document_ingest_queue.as_ref())
+    {
+        let stale = doc_store.reconcile_stale_doc_ids(&workspace_root).await;
+        if !stale.is_empty() {
+            tracing::warn!(
+                count = stale.len(),
+                "Boot reconciliation: queuing re-ingest for documents with stale doc_ids"
+            );
+            for path in stale {
+                if let Err(e) = ingest_q.enqueue_background(path.clone(), None).await {
+                    tracing::warn!(path = %path, error = %e, "Failed to queue stale doc re-ingest");
+                }
+            }
+        }
+    }
+
     config.validate_vision_ready()?;
     config.validate_audio_ready()?;
 
