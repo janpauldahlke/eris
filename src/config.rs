@@ -1283,7 +1283,7 @@ pub fn default_open_meteo_apis() -> HashMap<String, ApiProfile> {
                 ("longitude".into(), "{lon}".into()),
                 (
                     "current".into(),
-                    "temperature_2m,weather_code,relative_humidity_2m,precipitation,cloud_cover"
+                    "temperature_2m,weather_code,relative_humidity_2m,precipitation,cloud_cover,apparent_temperature,wind_speed_10m,wind_direction_10m,uv_index"
                         .into(),
                 ),
                 ("timezone".into(), "auto".into()),
@@ -1304,8 +1304,18 @@ pub fn default_open_meteo_apis() -> HashMap<String, ApiProfile> {
                 ("latitude".into(), "{lat}".into()),
                 ("longitude".into(), "{lon}".into()),
                 (
+                    "current".into(),
+                    "temperature_2m,weather_code,wind_speed_10m,wind_direction_10m,uv_index".into(),
+                ),
+                (
                     "hourly".into(),
-                    "temperature_2m,precipitation,cloud_cover".into(),
+                    "temperature_2m,precipitation,cloud_cover,weather_code,precipitation_probability,is_day,wind_speed_10m,wind_direction_10m,uv_index"
+                        .into(),
+                ),
+                (
+                    "daily".into(),
+                    "temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code,precipitation_probability_max,uv_index_max,wind_speed_10m_max,wind_gusts_10m_max"
+                        .into(),
                 ),
                 ("forecast_days".into(), "3".into()),
                 ("timezone".into(), "auto".into()),

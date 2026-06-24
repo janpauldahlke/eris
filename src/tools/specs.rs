@@ -526,8 +526,8 @@ rationale = "hour must be 0-23."
 "#,
     r#"descriptor_version = 1
 tool_name = "weather:current"
-short_description = "Current weather (instant variables) for a city via Open-Meteo geocoding + forecast."
-when_to_use = "Use when the user wants present conditions at a named place: temperature, and when returned by the API also precipitation/rain and cloud or sun-related fields. Use city name; add country_code if the name is ambiguous (e.g. Springfield)."
+short_description = "Current weather for a city via Open-Meteo; returns a pre-computed report string."
+when_to_use = "Use when the user wants present conditions at a named place. The tool returns a pre-formatted markdown `report` — do not invent numbers. Use city name; add country_code if ambiguous (e.g. Springfield)."
 when_not_to_use = "Do not use for multi-day hourly series; use weather:forecast. Do not use for arbitrary URLs."
 routing_hints = ["weather now", "temperature outside", "is it raining", "rainfall", "cloudy or sunny", "current conditions", "humidity today"]
 
@@ -548,8 +548,8 @@ rationale = "city must be non-empty."
 "#,
     r#"descriptor_version = 1
 tool_name = "weather:forecast"
-short_description = "Hourly weather forecast for a city (several days) via Open-Meteo: temperature plus precipitation and cloud cover when available."
-when_to_use = "Use when the user wants upcoming hours/days: temperature trends, and when the tool returns them also rain/precipitation and cloud or sun-related patterns, not only instant conditions."
+short_description = "Multi-day weather forecast for a city via Open-Meteo; returns a pre-computed report (next 24h + daily outlook)."
+when_to_use = "Use when the user wants upcoming hours or days. The tool returns a pre-formatted markdown `report` — do not invent numbers or reinterpret raw data."
 when_not_to_use = "Do not use for only current conditions; use weather:current. Do not use for arbitrary URLs."
 routing_hints = ["weather forecast", "hourly temperature", "next days weather", "will it rain tomorrow", "rainfall outlook", "sunny or cloudy week"]
 

@@ -128,6 +128,8 @@ pub struct Orchestrator<E: LlmEngine> {
     pub document_store: Option<Arc<crate::memory::document_store::DocumentStore>>,
     /// Milliseconds spent on the last turn-start semantic prefetch (`0` when skipped).
     pub last_prefetch_ms: u64,
+    /// Set after a weather-only tool batch; stitched onto the next Idle `message_to_user` before deck emit.
+    pub(crate) pending_weather_deck_report: Option<String>,
 }
 
 impl<E: LlmEngine> Orchestrator<E> {
@@ -244,6 +246,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             semantic,
             document_store,
             last_prefetch_ms: 0,
+            pending_weather_deck_report: None,
         }
     }
 

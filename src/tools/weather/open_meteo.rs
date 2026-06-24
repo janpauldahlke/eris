@@ -6,6 +6,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::executive::error::{FcpError, Result};
+use crate::tools::weather::report::{format_current_report, format_forecast_report};
 use crate::util::ApiHttpClient;
 
 pub const PROFILE_GEOCODE: &str = "open_meteo_geocode";
@@ -13,8 +14,7 @@ pub const PROFILE_GEOCODE_CC: &str = "open_meteo_geocode_cc";
 pub const PROFILE_FORECAST_CURRENT: &str = "open_meteo_forecast_current";
 pub const PROFILE_FORECAST_HOURLY: &str = "open_meteo_forecast_hourly";
 
-pub const HINT_CURRENT: &str = "Open-Meteo `current` block: use every field the JSON provides. Always state temperature (temperature_2m, °C). When present, also summarize precipitation/rain (e.g. precipitation, rain, showers in mm) and sun-related conditions (e.g. cloud_cover %, shortwave_radiation, sunshine_duration). Interpret weather_code (WMO) for sky/conditions; mention relative_humidity_2m when present.";
-pub const HINT_HOURLY: &str = "Open-Meteo `hourly` block: arrays align by index (same length). Always cover temperature (temperature_2m). When present, also describe precipitation or rain over the window and cloud/sun-related series (e.g. cloud_cover, precipitation_probability, shortwave_radiation). `forecast_days` limits horizon.";
+pub const HINT_REPORT: &str = "The `report` field is authoritative pre-formatted markdown. Do not change numbers or invent conditions; the runtime relays it to the user when weather tools run alone.";
 
 #[derive(Deserialize)]
 struct GeocodeResponse {
@@ -50,14 +50,13 @@ pub fn map_api_err(tool_name: &'static str, e: FcpError) -> FcpError {
     }
 }
 
-/// Geocode city name, then fetch forecast JSON; wrap in a stable envelope for the LLM.
+/// Geocode city name, then fetch forecast JSON and return a deterministic report envelope.
 pub async fn run_weather_tool(
     api: &ApiHttpClient,
     tool_name: &'static str,
     city: &str,
     country_code: Option<&str>,
     forecast_profile: &'static str,
-    hint: &'static str,
 ) -> Result<String> {
     let (label, lat, lon) = resolve_location(api, tool_name, city, country_code).await?;
     let body = fetch_forecast_raw(api, tool_name, lat, lon, forecast_profile).await?;
@@ -65,13 +64,24 @@ pub async fn run_weather_tool(
         tool_name: tool_name.to_string(),
         reason: format!("forecast JSON parse error: {e}"),
     })?;
+    let timezone = forecast
+        .get("timezone")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let report = if forecast_profile == PROFILE_FORECAST_CURRENT {
+        format_current_report(&label, &forecast)?
+    } else {
+        format_forecast_report(&label, &forecast)?
+    };
     let envelope = json!({
         "tool": tool_name,
         "location": label,
         "latitude": lat,
         "longitude": lon,
-        "hint": hint,
-        "forecast": forecast,
+        "timezone": timezone,
+        "report": report,
+        "hint": HINT_REPORT,
     });
     serde_json::to_string(&envelope).map_err(FcpError::ParseFault)
 }

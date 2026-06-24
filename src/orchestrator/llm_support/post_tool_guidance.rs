@@ -6,6 +6,12 @@ pub const POST_TOOL_USER_REPLY_GUIDANCE: &str = r#"[FCP POST-TOOL — USER REPLY
 Your next JSON answer with status Idle must put the human-facing text in `message_to_user`: full sentences, plain language, and explain what the tool results mean for the user. Do not answer with raw JSON, one-line dumps, or robotic telegraphy. Use `thought` only for internal reasoning.
 [/FCP POST-TOOL — USER REPLY]"#;
 
+/// Weather-only batches: LLM adds a brief human line; the runtime appends the deterministic report.
+pub const POST_TOOL_WEATHER_COMMENT_GUIDANCE: &str = r#"[FCP POST-TOOL — WEATHER]
+A pre-formatted markdown weather report is appended automatically after your reply — do not repeat temperatures, emoji forecast lines, or tables.
+`message_to_user` must be one or two short sentences only (tone, heat/rain tip, or a direct answer). No bullet lists. Use `thought` for reasoning.
+[/FCP POST-TOOL — WEATHER]"#;
+
 /// Appended to the tool-failure protocol-fault recover line so Idle replies do not claim success.
 pub const POST_TOOL_FAILURE_TRUST_GUIDANCE: &str = r#"[FCP TOOL FAILURE — USER REPLY]
 A tool in the last batch failed. Your next JSON with status Idle must use `message_to_user` to state clearly that the operation did not complete, in plain language, using the error details above. Do not claim the tool succeeded, do not invent fetched or saved data, and do not imply Wikipedia/API/vault/memory worked unless a preceding system line explicitly says `Tool '...' succeeded` for that step. If some tools succeeded and another failed, say what worked and what failed.

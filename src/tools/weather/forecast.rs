@@ -6,9 +6,9 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::executive::error::{FcpError, Result};
-use crate::tools::context_view_hint::{API_TOOL_SNIPPET_CHARS, ToolContextViewHint};
+use crate::tools::context_view_hint::ToolContextViewHint;
 use crate::tools::traits::Tool;
-use crate::tools::weather::open_meteo::{self, HINT_HOURLY, PROFILE_FORECAST_HOURLY};
+use crate::tools::weather::open_meteo::{self, PROFILE_FORECAST_HOURLY};
 use crate::util::ApiHttpClient;
 
 #[derive(Deserialize, JsonSchema)]
@@ -31,7 +31,7 @@ impl Tool for WeatherForecastTool {
     }
 
     fn description(&self) -> &'static str {
-        "Multi-hour weather forecast for a place: geocodes the city, then returns Open-Meteo `hourly` time series (several days, configurable in API profile). The assistant should always discuss temperature trends; when the payload includes precipitation, rain probability, or cloud/sun-related series, incorporate those. Pass `country_code` if the city name is ambiguous."
+        "Weather forecast for a city (several days): geocodes the place, fetches Open-Meteo hourly and daily data, and returns a pre-computed markdown `report` with next-24h buckets and daily outlook. Pass `country_code` if ambiguous."
     }
 
     fn parameters_schema(&self) -> schemars::schema::RootSchema {
@@ -39,9 +39,7 @@ impl Tool for WeatherForecastTool {
     }
 
     fn context_view_hint(&self) -> ToolContextViewHint {
-        ToolContextViewHint::Snippet {
-            max_chars: API_TOOL_SNIPPET_CHARS,
-        }
+        ToolContextViewHint::Full
     }
 
     async fn execute(&self, args: Value) -> Result<String> {
@@ -63,7 +61,6 @@ impl Tool for WeatherForecastTool {
             city,
             cc,
             PROFILE_FORECAST_HOURLY,
-            HINT_HOURLY,
         )
         .await
     }

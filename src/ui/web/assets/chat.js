@@ -60,6 +60,13 @@
   function renderAssistantMarkdown(raw) {
     var x = escapeHtml(raw);
     x = x.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    x = x
+      .split("\n")
+      .map(function (line) {
+        return line.trim();
+      })
+      .join("\n");
+    x = x.replace(/\n{2,}/g, "\n");
     x = x.replace(/`([^`]+)`/g, "<code>$1</code>");
     x = x.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
     x = x.replace(/(?<![*\\])\*([^*\n]+)\*(?!\*)/g, "<em>$1</em>");
@@ -67,11 +74,15 @@
     x = x.replace(/^### (.+)$/gm, "<h3>$1</h3>");
     x = x.replace(/^## (.+)$/gm, "<h2>$1</h2>");
     x = x.replace(/^# (.+)$/gm, "<h1>$1</h1>");
-    x = x.replace(/^[-*] (.+)$/gm, "<li>$1</li>");
+    x = x.replace(/^\s*[-*] (.+)$/gm, "<li>$1</li>");
+    x = x.replace(
+      /^(Today|Tomorrow|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)(\s*\([^)]+\))?:\s*(.+)$/gim,
+      "<li><strong>$1$2:</strong> $3</li>"
+    );
     x = x.replace(/(<li>.*<\/li>\n?)+/g, function (m) {
       return "<ul>" + m + "</ul>";
     });
-    x = x.replace(/^\d+\. (.+)$/gm, "<li>$1</li>");
+    x = x.replace(/^\s*\d+\. (.+)$/gm, "<li>$1</li>");
     x = x.replace(/(<li>.*<\/li>\n?)+/g, function (m) {
       if (m.indexOf("<ul>") === -1) return "<ol>" + m + "</ol>";
       return m;
@@ -79,6 +90,7 @@
     x = x.replace(/\n/g, "<br>");
     x = x.replace(/<br>(<\/?[huo])/g, "$1");
     x = x.replace(/(<\/[huo]l?>)<br>/g, "$1");
+    x = x.replace(/(<br>)+/g, "<br>");
     return x;
   }
 

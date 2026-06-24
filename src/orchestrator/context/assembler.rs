@@ -440,7 +440,12 @@ fn tools_need_session_reference_time(tools: &[serde_json::Value]) -> bool {
     tools
         .iter()
         .filter_map(tool_name_from_entry)
-        .any(|n| n == "db:find_connections" || n.starts_with("calendar:"))
+        .any(|n| {
+            n == "db:find_connections"
+                || n == "weather:current"
+                || n == "weather:forecast"
+                || n.starts_with("calendar:")
+        })
 }
 
 fn append_session_reference_time_if_needed(
@@ -661,10 +666,22 @@ mod tests {
             serde_json::json!({"function": {"name": "db:find_connections", "description": ""}});
         let cal = serde_json::json!({"function": {"name": "calendar:list", "description": ""}});
         let vault = serde_json::json!({"function": {"name": "vault:read", "description": ""}});
+        let weather =
+            serde_json::json!({"function": {"name": "weather:current", "description": ""}});
         assert!(super::tools_need_session_reference_time(&[db.clone()]));
         assert!(super::tools_need_session_reference_time(&[cal.clone()]));
+        assert!(super::tools_need_session_reference_time(&[weather.clone()]));
         assert!(!super::tools_need_session_reference_time(&[vault.clone()]));
         assert!(super::tools_need_session_reference_time(&[vault, cal]));
+    }
+
+    #[test]
+    fn append_session_reference_time_inserts_block_for_weather_tool() {
+        let tools =
+            vec![serde_json::json!({"function": {"name": "weather:forecast", "description": ""}})];
+        let out = super::append_session_reference_time_if_needed("PREAMBLE".into(), &tools);
+        assert!(out.contains("[SESSION_REFERENCE_TIME]"));
+        assert!(out.starts_with("PREAMBLE"));
     }
 
     #[test]

@@ -6,9 +6,9 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::executive::error::{FcpError, Result};
-use crate::tools::context_view_hint::{API_TOOL_SNIPPET_CHARS, ToolContextViewHint};
+use crate::tools::context_view_hint::ToolContextViewHint;
 use crate::tools::traits::Tool;
-use crate::tools::weather::open_meteo::{self, HINT_CURRENT, PROFILE_FORECAST_CURRENT};
+use crate::tools::weather::open_meteo::{self, PROFILE_FORECAST_CURRENT};
 use crate::util::ApiHttpClient;
 
 #[derive(Deserialize, JsonSchema)]
@@ -31,7 +31,7 @@ impl Tool for WeatherCurrentTool {
     }
 
     fn description(&self) -> &'static str {
-        "Current weather at a place: geocodes the city, then returns Open-Meteo `current` fields as JSON. The assistant should always mention temperature; when the payload includes precipitation/rain or sun-related fields (e.g. cloud cover, radiation, sunshine), summarize those too. Pass `country_code` if the city name is ambiguous."
+        "Current weather for a city: geocodes the place, fetches Open-Meteo data, and returns a pre-computed markdown `report`. Pass `country_code` if the city name is ambiguous."
     }
 
     fn parameters_schema(&self) -> schemars::schema::RootSchema {
@@ -39,9 +39,7 @@ impl Tool for WeatherCurrentTool {
     }
 
     fn context_view_hint(&self) -> ToolContextViewHint {
-        ToolContextViewHint::Snippet {
-            max_chars: API_TOOL_SNIPPET_CHARS,
-        }
+        ToolContextViewHint::Full
     }
 
     async fn execute(&self, args: Value) -> Result<String> {
@@ -63,7 +61,6 @@ impl Tool for WeatherCurrentTool {
             city,
             cc,
             PROFILE_FORECAST_CURRENT,
-            HINT_CURRENT,
         )
         .await
     }

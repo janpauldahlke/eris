@@ -137,4 +137,38 @@ impl<E: LlmEngine> Orchestrator<E> {
         self.activity_line = None;
         self.broadcast_state().await;
     }
+
+    /// When a weather-only batch queued [`super::Orchestrator::pending_weather_deck_report`], append it after the model's short comment.
+    pub(super) fn stitch_pending_weather_report_into_content(
+        &mut self,
+        response_content: &str,
+    ) -> String {
+        let Some(report) = self.pending_weather_deck_report.take() else {
+            return response_content.to_string();
+        };
+        let report_backup = report.clone();
+        let (slice, trailing) = split_leading_json_object(response_content);
+        let Ok(mut v) = serde_json::from_str::<serde_json::Value>(slice) else {
+            self.pending_weather_deck_report = Some(report_backup);
+            return response_content.to_string();
+        };
+        let comment = v
+            .get("message_to_user")
+            .and_then(|x| x.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let combined = match comment {
+            Some(c) => format!("{c}\n\n{report}"),
+            None => report,
+        };
+        v["message_to_user"] = serde_json::Value::String(combined);
+        let Ok(mut out) = serde_json::to_string(&v) else {
+            self.pending_weather_deck_report = Some(report_backup);
+            return response_content.to_string();
+        };
+        if !trailing.is_empty() {
+            out.push_str(trailing);
+        }
+        out
+    }
 }

@@ -537,11 +537,13 @@ impl<E: LlmEngine> Orchestrator<E> {
                 Ok(p) => p,
             };
 
-            self.emit_optional_user_message(&response.content).await;
+            let deck_content =
+                self.stitch_pending_weather_report_into_content(&response.content);
+            self.emit_optional_user_message(&deck_content).await;
 
             self.chat_stack.push(crate::engine::Message {
                 role: "assistant".to_string(),
-                content: response.content.clone(),
+                content: deck_content,
             });
 
             let total_tokens = response.generated_tokens + response.prompt_tokens;
