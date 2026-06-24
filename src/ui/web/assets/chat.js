@@ -56,13 +56,29 @@
       .replace(/>/g, "&gt;");
   }
 
-  /** Minimal safe markdown: inline code, **bold**, newlines. */
+  /** Safe markdown: headings, inline code, bold, italic, bullet lists, newlines. */
   function renderAssistantMarkdown(raw) {
     var x = escapeHtml(raw);
     x = x.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
     x = x.replace(/`([^`]+)`/g, "<code>$1</code>");
     x = x.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    x = x.replace(/(?<![*\\])\*([^*\n]+)\*(?!\*)/g, "<em>$1</em>");
+    x = x.replace(/^#### (.+)$/gm, "<h4>$1</h4>");
+    x = x.replace(/^### (.+)$/gm, "<h3>$1</h3>");
+    x = x.replace(/^## (.+)$/gm, "<h2>$1</h2>");
+    x = x.replace(/^# (.+)$/gm, "<h1>$1</h1>");
+    x = x.replace(/^[-*] (.+)$/gm, "<li>$1</li>");
+    x = x.replace(/(<li>.*<\/li>\n?)+/g, function (m) {
+      return "<ul>" + m + "</ul>";
+    });
+    x = x.replace(/^\d+\. (.+)$/gm, "<li>$1</li>");
+    x = x.replace(/(<li>.*<\/li>\n?)+/g, function (m) {
+      if (m.indexOf("<ul>") === -1) return "<ol>" + m + "</ol>";
+      return m;
+    });
     x = x.replace(/\n/g, "<br>");
+    x = x.replace(/<br>(<\/?[huo])/g, "$1");
+    x = x.replace(/(<\/[huo]l?>)<br>/g, "$1");
     return x;
   }
 
@@ -96,6 +112,14 @@
     const div = document.createElement("div");
     div.className = "msg " + (className || "");
     div.textContent = normalizeLatexArrowsForDisplay(String(text));
+    transcript.appendChild(div);
+    transcript.scrollTop = transcript.scrollHeight;
+  }
+
+  function appendSystemBubble(text) {
+    const div = document.createElement("div");
+    div.className = "msg system-notice";
+    div.textContent = String(text);
     transcript.appendChild(div);
     transcript.scrollTop = transcript.scrollHeight;
   }
@@ -430,6 +454,14 @@
     }
     if (data.SystemError) {
       appendTelemetry(String(data.SystemError));
+      return;
+    }
+    if (data.UiNotice) {
+      var notice = String(data.UiNotice);
+      appendTelemetry(notice);
+      if (notice.indexOf("[doc]") === 0 || notice.indexOf("[ui]") === 0) {
+        appendSystemBubble(notice);
+      }
       return;
     }
     if (data.SystemAlarm) {

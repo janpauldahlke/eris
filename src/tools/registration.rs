@@ -56,6 +56,10 @@ pub fn should_register_memory_query(config: &AppConfig, semantic_available: bool
     semantic_available || !config.require_semantic_brain
 }
 
+pub fn should_register_document_rag(config: &AppConfig, document_store_available: bool) -> bool {
+    config.document_rag.enabled && document_store_available
+}
+
 /// Open-Meteo profile ids toggled with [`AppConfig::weather_enabled`].
 pub const WEATHER_API_PROFILES: &[&str] = &[
     "open_meteo_geocode",

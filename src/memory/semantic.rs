@@ -70,13 +70,15 @@ pub(crate) const VAULT_INGEST_SUBDIRS_V2: &[&str] = &[
     "40_MEDIA",
 ];
 
-/// Boot/watch ingest roots for the current config. `40_MEDIA` is included only when
-/// `[vision] enabled` — image catalog cards are a vision workflow (v1: images only).
+/// Boot/watch ingest roots for the current config. `40_MEDIA` is included when
+/// `[vision] enabled` (images) or `[document_rag] enabled` (document discovery cards).
 pub fn vault_ingest_subdirs_for_config(config: &AppConfig) -> Vec<&'static str> {
     VAULT_INGEST_SUBDIRS_V2
         .iter()
         .copied()
-        .filter(|subdir| *subdir != "40_MEDIA" || config.vision.enabled)
+        .filter(|subdir| {
+            *subdir != "40_MEDIA" || config.vision.enabled || config.document_rag.enabled
+        })
         .collect()
 }
 
@@ -447,9 +449,13 @@ impl SemanticBrain {
         let mut count = 0usize;
 
         let subdirs = vault_ingest_subdirs_for_config(&self.config);
-        if !self.config.vision.enabled {
+        if !self.config.vision.enabled && !self.config.document_rag.enabled {
             tracing::debug!(
-                "v2 ingest: skipping 40_MEDIA (vision disabled in config)"
+                "v2 ingest: skipping 40_MEDIA (vision and document_rag disabled)"
+            );
+        } else if !self.config.vision.enabled {
+            tracing::debug!(
+                "v2 ingest: 40_MEDIA limited to document cards (vision disabled)"
             );
         }
 
@@ -513,6 +519,9 @@ impl SemanticBrain {
 
         let raw = tokio::fs::read_to_string(path).await.map_err(FcpError::Io)?;
         let card = crate::media::parse_media_json(&raw)?;
+        if !crate::media::media_card_eligible_for_ingest(&self.config, &card) {
+            return Ok(false);
+        }
         let embed_text = crate::media::build_embed_text(&card);
         if embed_text.trim().is_empty() {
             return Ok(false);
@@ -1485,9 +1494,14 @@ Hello there."#;
     fn vault_ingest_subdirs_omit_40_media_when_vision_disabled() {
         let mut config = AppConfig::default();
         config.vision.enabled = false;
+        config.document_rag.enabled = false;
         let subdirs = vault_ingest_subdirs_for_config(&config);
         assert!(!subdirs.contains(&"40_MEDIA"));
         assert!(subdirs.contains(&"30_Synthesis"));
+
+        config.document_rag.enabled = true;
+        let subdirs = vault_ingest_subdirs_for_config(&config);
+        assert!(subdirs.contains(&"40_MEDIA"));
 
         config.vision.enabled = true;
         let subdirs = vault_ingest_subdirs_for_config(&config);

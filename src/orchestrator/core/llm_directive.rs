@@ -107,6 +107,37 @@ impl<E: LlmEngine> Orchestrator<E> {
                 .as_ref()
                 .is_none_or(|m| m.trim().is_empty());
 
+        // Conversational turns (alarms, short-input guard, final pass): one reply then idle.
+        // Prevents Task → Reflect loops when the model mis-tags a simple ack as `Task`.
+        if !self.last_turn_tools_enabled {
+            if let Some(msg) = parsed
+                .message_to_user
+                .as_ref()
+                .map(|m| m.trim())
+                .filter(|m| !m.is_empty())
+            {
+                return LoopDirective::HaltAndAwaitInput(Some(msg.to_string()));
+            }
+            if tool_mode_empty_action {
+                let msg = if self.config.is_llamacpp() {
+                    "Empty action: include tool_calls or a non-empty message_to_user.".to_string()
+                } else {
+                    "Tool-enabled mode forbids empty action: status Reflect with empty tool_calls and empty message_to_user. Use Reflect with tool_calls, or Idle with non-empty message_to_user.".to_string()
+                };
+                return LoopDirective::RecoverFromFuckup(msg);
+            }
+            let thought = parsed.thought.trim();
+            if !thought.is_empty() {
+                return LoopDirective::HaltAndAwaitInput(Some(thought.to_string()));
+            }
+            let msg = if self.config.is_llamacpp() {
+                "Conversational turn requires message_to_user or thought.".to_string()
+            } else {
+                "Conversational turn requires non-empty message_to_user or thought".to_string()
+            };
+            return LoopDirective::RecoverFromFuckup(msg);
+        }
+
         match status {
             LoopAction::Reflect => {
                 if let Some(msg) = parsed.message_to_user
@@ -228,6 +259,7 @@ mod phase5_recovery_tests {
             None,
             None,
             None,
+            None,
         )
     }
 
@@ -293,6 +325,23 @@ mod phase5_recovery_tests {
                 assert!(msg.contains("one more"));
             }
             other => panic!("unexpected {:?}", other),
+        }
+    }
+
+    #[test]
+    fn conversational_task_with_message_halts_once() {
+        let mut orch = orchestrator_with_config(AppConfig::default());
+        orch.last_turn_tools_enabled = false;
+        let json = r#"{
+            "thought": "ack upload",
+            "status": "Task",
+            "message_to_user": "File received.",
+            "tool_calls": []
+        }"#;
+        let directive = orch.process_llm_response(json);
+        match directive {
+            LoopDirective::HaltAndAwaitInput(Some(msg)) => assert_eq!(msg, "File received."),
+            other => panic!("expected HaltAndAwaitInput, got {:?}", other),
         }
     }
 }

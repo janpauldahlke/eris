@@ -524,6 +524,13 @@
       .msg.system {
         color: var(--system-msg);
       }
+      .msg.system-notice {
+        color: var(--system-msg);
+        font-size: 0.82rem;
+        opacity: 0.85;
+        font-style: italic;
+        padding: 0.25rem 0;
+      }
       .app-footer {
         grid-column: 1 / -1;
         flex-shrink: 0;
@@ -1312,6 +1319,19 @@
       .drop-zone.active {
         border-color: var(--accent);
         color: var(--accent);
+      }
+      .drop-zone.disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+        pointer-events: none;
+      }
+      .ingest-status-banner {
+        font-size: 12px;
+        margin-bottom: 0.5rem;
+        padding: 0.5rem 0.65rem;
+        border-radius: 6px;
+        background: rgba(120, 160, 220, 0.12);
+        color: var(--text);
       }
       .note-meta {
         font-size: 11px;

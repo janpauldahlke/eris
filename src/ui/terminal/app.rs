@@ -170,6 +170,10 @@ impl TuiApp {
                             self.system_messages.push(err);
                             redraw_now = true;
                         }
+                        SessionEvent::UiNotice(msg) => {
+                            self.system_messages.push(msg);
+                            redraw_now = true;
+                        }
                         SessionEvent::SystemAlarm(payload) => {
                             let action = match payload {
                                 AlarmPayload::Plain(label) => UserAction::SystemInject(label),

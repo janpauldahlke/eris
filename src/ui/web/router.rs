@@ -1,6 +1,7 @@
 //! Axum router for web chat.
 
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 
 use super::WebAppState;
@@ -11,6 +12,14 @@ use super::sse;
 use super::vision_handlers;
 
 pub fn web_chat_router(state: WebAppState) -> Router {
+    let upload_body_limit = state
+        .config
+        .document_rag
+        .max_file_bytes
+        .max(state.config.web_ui.uploads.files.max_upload_bytes)
+        .max(state.config.vision.max_upload_bytes)
+        .saturating_add(1024 * 64) as usize;
+
     Router::new()
         .route("/", get(handlers::chat_shell))
         .route("/assets/chat.js", get(handlers::chat_js))
@@ -48,8 +57,13 @@ pub fn web_chat_router(state: WebAppState) -> Router {
         .route("/api/console/memory/note", get(console_handlers::get_memory_note))
         .route("/api/console/uploads", get(console_handlers::get_uploads))
         .route(
+            "/api/console/ingest/status",
+            get(console_handlers::get_ingest_status),
+        )
+        .route(
             "/api/console/uploads/files",
             post(console_handlers::post_upload_file),
         )
+        .layer(DefaultBodyLimit::max(upload_body_limit))
         .with_state(state)
 }

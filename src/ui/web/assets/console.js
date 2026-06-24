@@ -17,6 +17,58 @@
   let tagSuggestIndex = -1;
   let activeTagFilter = null;
   let uploadsPollTimer = null;
+  let lastIngestStatus = null;
+
+  function ingestStatusLabel(st) {
+    if (!st || !st.enabled) return "";
+    if (st.running && st.current_path) {
+      const base = "Ingesting: " + st.current_path.split("/").pop();
+      if (st.queued_count > 0) {
+        return base + " (" + st.queued_count + " queued)";
+      }
+      return base;
+    }
+    if (st.queued_count > 0) {
+      return st.queued_count + " document(s) queued for ingest";
+    }
+    return "";
+  }
+
+  function isIngestBlockingUpload(st) {
+    return !!(st && st.enabled && st.auto_ingest && st.running);
+  }
+
+  async function fetchIngestStatus() {
+    try {
+      return await fetchJson("/api/console/ingest/status");
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  function applyIngestUi(st) {
+    lastIngestStatus = st;
+    const banner = document.getElementById("ingest-status-banner");
+    const dropZone = document.getElementById("file-drop-zone");
+    const label = ingestStatusLabel(st);
+    if (banner) {
+      if (label) {
+        banner.textContent = label;
+        banner.classList.remove("hidden");
+      } else {
+        banner.classList.add("hidden");
+      }
+    }
+    if (dropZone) {
+      const blocked = isIngestBlockingUpload(st);
+      dropZone.classList.toggle("disabled", blocked);
+      if (blocked) {
+        dropZone.textContent = "Ingest in progress — wait before uploading another file";
+      } else {
+        dropZone.textContent = "Drop PDF or Markdown here";
+      }
+    }
+  }
 
   const THEME_KEY = "eris_theme";
   const RAIL_KEY = "eris_rail_expanded";
@@ -645,8 +697,14 @@
   async function renderUploads() {
     openModal("Uploads", "<p class='hint'>Loading…</p>");
     try {
-      const data = await fetchJson("/api/console/uploads");
+      const [data, ingestSt] = await Promise.all([
+        fetchJson("/api/console/uploads"),
+        fetchIngestStatus(),
+      ]);
       let html = "";
+
+      html +=
+        "<div id='ingest-status-banner' class='ingest-status-banner hidden'></div>";
 
       html += "<div class='upload-section'><h3>Images</h3><div class='upload-grid'>";
       if (!data.images.length) {
@@ -702,6 +760,8 @@
 
       openModal("Uploads", html);
 
+      applyIngestUi(ingestSt);
+
       modalBody.querySelectorAll(".upload-thumb").forEach(function (img) {
         img.addEventListener("click", function () {
           attachImageToChat({
@@ -740,11 +800,15 @@
       }
 
       if (uploadsPollTimer) window.clearInterval(uploadsPollTimer);
-      uploadsPollTimer = window.setInterval(function () {
-        if (isModalOpen() && activePanel === "uploads") {
+      uploadsPollTimer = window.setInterval(async function () {
+        if (!isModalOpen() || activePanel !== "uploads") return;
+        const st = await fetchIngestStatus();
+        const wasBlocking = isIngestBlockingUpload(lastIngestStatus);
+        applyIngestUi(st);
+        if (wasBlocking && !isIngestBlockingUpload(st)) {
           renderUploads();
         }
-      }, 5000);
+      }, 2000);
     } catch (e) {
       modalBody.innerHTML =
         "<p class='console-warn'>" + escapeHtml(String(e.message || e)) + "</p>";
@@ -752,11 +816,27 @@
   }
 
   async function uploadFile(file) {
+    const st = await fetchIngestStatus();
+    if (isIngestBlockingUpload(st)) {
+      showToast("Ingest in progress — wait for the current file to finish.");
+      return;
+    }
     const fd = new FormData();
     fd.append("file", file);
     try {
-      await fetchJson("/api/console/uploads/files", { method: "POST", body: fd });
-      showToast("File uploaded.");
+      const res = await fetch("/api/console/uploads/files", { method: "POST", body: fd });
+      const body = await res.json().catch(function () {
+        return {};
+      });
+      if (!res.ok) {
+        throw new Error(body.error || "Upload failed (" + res.status + ")");
+      }
+      if (body.ingest_status && body.ingest_status.queued_count > 0) {
+        showToast("File uploaded — queued for ingest.");
+      } else {
+        showToast("File uploaded.");
+      }
+      applyIngestUi(body.ingest_status || (await fetchIngestStatus()));
       renderUploads();
     } catch (e) {
       showToast(String(e.message || e));

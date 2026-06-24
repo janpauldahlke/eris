@@ -287,6 +287,7 @@ pub async fn run_ignition_sequence(
                     chat_model_path,
                     embed_model_path,
                     n_gpu_layers,
+                    embed_n_gpu_layers: None,
                     ready_timeout_secs: default_llamacpp_ready_timeout(),
                     detach_servers_on_chat_exit: false,
                     shutdown_grace_secs: 30,
@@ -389,6 +390,7 @@ pub async fn run_ignition_sequence(
         ..Default::default()
     };
     config.qdrant_collection_v2 = format!("fcp_vault_v2_{}", config.workspace);
+    config.qdrant_docs_collection = format!("fcp_docs_{}", config.workspace);
 
     let config_toml = toml::to_string(&config)
         .map_err(|e| FcpError::Config(format!("Failed to serialize config: {}", e)))?;

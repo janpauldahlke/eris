@@ -148,6 +148,135 @@ pub async fn run_turn_prefetch(
     }
 }
 
+// ── Document-aware prefetch ──────────────────────────────────────────
+
+const DOC_PREFETCH_HEADER: &str = "[RELEVANT_DOCUMENT_CONTEXT]\n";
+const DOC_PREFETCH_FOOTER: &str = "[/RELEVANT_DOCUMENT_CONTEXT]\n";
+
+/// Run document prefetch for one user turn. Returns `None` when disabled,
+/// no hits, timed out, or errored.
+pub async fn run_document_prefetch(
+    doc_store: &crate::memory::document_store::DocumentStore,
+    user_text: &str,
+    config: &AppConfig,
+) -> Option<String> {
+    if !config.document_rag.document_prefetch_enabled {
+        return None;
+    }
+
+    let trimmed = user_text.trim();
+    if trimmed.len() < config.memory_prefetch_min_user_chars {
+        return None;
+    }
+    if ToolRouter::short_input_guard_conversational_only(trimmed) {
+        return None;
+    }
+
+    let timeout = Duration::from_secs(config.document_rag.document_prefetch_timeout_secs.max(1));
+    let top_k = config.document_rag.document_prefetch_top_k.max(1);
+    let min_score = Some(config.document_rag.document_prefetch_min_score.clamp(0.0, 1.0));
+    let max_total = config.document_rag.document_prefetch_max_chars.max(64);
+    let max_per_hit = config.document_rag.document_prefetch_max_chars_per_hit.max(64);
+
+    let started = Instant::now();
+    let search = tokio::time::timeout(
+        timeout,
+        doc_store.query(trimmed, top_k, None, min_score, max_total),
+    )
+    .await;
+
+    match search {
+        Ok(Ok(chunks)) => {
+            let prefetch_ms = started.elapsed().as_millis() as u64;
+            if chunks.is_empty() {
+                tracing::debug!(
+                    target: "fcp.document_prefetch",
+                    prefetch_ms,
+                    "document prefetch skipped: no hits above threshold"
+                );
+                return None;
+            }
+            let block = format_doc_prefetch_block(&chunks, max_total, max_per_hit);
+            if block.is_empty() {
+                return None;
+            }
+            tracing::debug!(
+                target: "fcp.document_prefetch",
+                hit_count = chunks.len(),
+                chars = block.len(),
+                prefetch_ms,
+                "document prefetch block ready"
+            );
+            Some(block)
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(
+                target: "fcp.document_prefetch",
+                error = %e,
+                "document prefetch failed; continuing without block"
+            );
+            None
+        }
+        Err(_) => {
+            tracing::warn!(
+                target: "fcp.document_prefetch",
+                timeout_secs = config.document_rag.document_prefetch_timeout_secs,
+                "document prefetch timed out; continuing without block"
+            );
+            None
+        }
+    }
+}
+
+fn format_doc_prefetch_block(
+    chunks: &[crate::memory::document_store::DocumentChunk],
+    max_total_chars: usize,
+    max_per_hit: usize,
+) -> String {
+    if chunks.is_empty() || max_total_chars == 0 {
+        return String::new();
+    }
+
+    let mut lines: Vec<String> = Vec::new();
+    let mut used = DOC_PREFETCH_HEADER.len() + DOC_PREFETCH_FOOTER.len();
+
+    for chunk in chunks {
+        let snippet = truncate_char_boundary(chunk.text.trim(), max_per_hit);
+        if snippet.is_empty() {
+            continue;
+        }
+        let attribution = format!(
+            "(from {}, chunk {}/{})\n{}",
+            chunk.source_name,
+            chunk.chunk_index,
+            chunk.total_chunks,
+            snippet
+        );
+        let line = if lines.is_empty() {
+            attribution
+        } else {
+            format!("\n{attribution}")
+        };
+        if used + line.len() > max_total_chars && !lines.is_empty() {
+            break;
+        }
+        used += line.len();
+        lines.push(line);
+    }
+
+    if lines.is_empty() {
+        return String::new();
+    }
+
+    let mut out = String::with_capacity(used);
+    out.push_str(DOC_PREFETCH_HEADER);
+    for line in lines {
+        out.push_str(&line);
+    }
+    out.push_str(DOC_PREFETCH_FOOTER);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,5 +329,62 @@ mod tests {
         ];
         let block = format_prefetch_content_only(&hits, 120, 80);
         assert!(block.len() <= 120);
+    }
+
+    #[test]
+    fn doc_prefetch_formats_with_attribution() {
+        use crate::memory::document_store::DocumentChunk;
+        let chunks = vec![DocumentChunk {
+            text: "The Transformer follows an encoder-decoder structure.".into(),
+            doc_id: "abc".into(),
+            source_path: "99_USER_UPLOADED/files/paper.pdf".into(),
+            source_name: "attention_paper.pdf".into(),
+            chunk_index: 12,
+            total_chunks: 87,
+            content_hash: "deadbeef".into(),
+            ingested_at_ms: 1,
+            score: 0.72,
+        }];
+        let block = format_doc_prefetch_block(&chunks, 800, 350);
+        assert!(block.contains(DOC_PREFETCH_HEADER.trim()));
+        assert!(block.contains("attention_paper.pdf"));
+        assert!(block.contains("chunk 12/87"));
+        assert!(block.contains("encoder-decoder"));
+    }
+
+    #[test]
+    fn doc_prefetch_empty_when_no_chunks() {
+        assert!(format_doc_prefetch_block(&[], 800, 350).is_empty());
+    }
+
+    #[test]
+    fn doc_prefetch_respects_budget() {
+        use crate::memory::document_store::DocumentChunk;
+        let chunks = vec![
+            DocumentChunk {
+                text: "a".repeat(400),
+                doc_id: "x".into(),
+                source_path: "p".into(),
+                source_name: "doc.pdf".into(),
+                chunk_index: 0,
+                total_chunks: 2,
+                content_hash: "h".into(),
+                ingested_at_ms: 1,
+                score: 0.9,
+            },
+            DocumentChunk {
+                text: "b".repeat(400),
+                doc_id: "x".into(),
+                source_path: "p".into(),
+                source_name: "doc.pdf".into(),
+                chunk_index: 1,
+                total_chunks: 2,
+                content_hash: "h".into(),
+                ingested_at_ms: 1,
+                score: 0.8,
+            },
+        ];
+        let block = format_doc_prefetch_block(&chunks, 150, 80);
+        assert!(block.len() <= 250);
     }
 }

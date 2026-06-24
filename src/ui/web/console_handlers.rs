@@ -13,6 +13,7 @@ use tokio::fs;
 use uuid::Uuid;
 
 use crate::executive::error::{FcpError, Result};
+use crate::presentation::SessionEvent;
 use crate::tools::vault::taglist_index::{
     SynthesisNoteCard, build_synthesis_note_cards, load_persisted, parse_frontmatter_string_field,
 };
@@ -532,6 +533,25 @@ pub async fn post_upload_file(
             .into_response();
     }
 
+    if state.config.document_rag.enabled
+        && state.config.document_rag.auto_ingest
+        && let Some(queue) = &state.document_ingest_queue
+    {
+        let st = queue.status();
+        if st.running {
+            return (
+                StatusCode::LOCKED,
+                Json(json!({
+                    "error": "Document ingest in progress — wait for the current file to finish before uploading another.",
+                    "ingest_busy": true,
+                    "current_path": st.current_path,
+                    "queued_count": st.queued_count,
+                })),
+            )
+                .into_response();
+        }
+    }
+
     let upload_dir = state.workspace_root.join(&cfg.upload_dir);
     if let Err(e) = fs::create_dir_all(&upload_dir).await {
         return (
@@ -559,6 +579,48 @@ pub async fn post_upload_file(
         "User file stored in vault upload dir"
     );
 
+    let display_name = orig_name.as_deref().unwrap_or(&stored_name);
+    let size_label = format_upload_bytes(raw.len());
+    let upload_notice = if state.config.document_rag.enabled && state.config.document_rag.auto_ingest {
+        format!(
+            "[doc] Uploaded {display_name} ({size_label}) — queued for ingest at {relative_path}"
+        )
+    } else {
+        format!(
+            "[doc] Uploaded {display_name} ({size_label}) at {relative_path}"
+        )
+    };
+    let _ = state.events_tx.send(SessionEvent::UiNotice(upload_notice));
+
+    if state.config.document_rag.enabled
+        && state.config.document_rag.auto_ingest
+        && let Some(queue) = state.document_ingest_queue.clone()
+    {
+        match queue
+            .enqueue_background(relative_path.clone(), orig_name.clone())
+            .await
+        {
+            Ok(receipt) => {
+                tracing::info!(
+                    event = "fcp.web.console.auto_ingest_queued",
+                    path = %relative_path,
+                    queue_position = receipt.queue_position,
+                    "Queued background document ingest after upload"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    event = "fcp.web.console.auto_ingest_queue_failed",
+                    path = %relative_path,
+                    error = %e,
+                    "Could not queue doc:ingest after upload"
+                );
+            }
+        }
+    }
+
+    let ingest_status = state.document_ingest_queue.as_ref().map(|queue| queue.status());
+
     (
         StatusCode::OK,
         Json(json!({
@@ -566,9 +628,41 @@ pub async fn post_upload_file(
             "relative_path": relative_path,
             "filename": stored_name,
             "size_bytes": raw.len(),
+            "ingest_status": ingest_status,
         })),
     )
         .into_response()
+}
+
+pub async fn get_ingest_status(State(state): State<WebAppState>) -> impl IntoResponse {
+    let Some(queue) = &state.document_ingest_queue else {
+        return Json(json!({
+            "enabled": false,
+            "running": false,
+            "queued_count": 0,
+            "current_path": serde_json::Value::Null,
+            "queued_paths": [],
+        }));
+    };
+    let st = queue.status();
+    Json(json!({
+        "enabled": state.config.document_rag.enabled,
+        "auto_ingest": state.config.document_rag.auto_ingest,
+        "running": st.running,
+        "queued_count": st.queued_count,
+        "current_path": st.current_path,
+        "queued_paths": st.queued_paths,
+    }))
+}
+
+fn format_upload_bytes(bytes: usize) -> String {
+    if bytes >= 1_048_576 {
+        format!("{:.1} MB", bytes as f64 / 1_048_576.0)
+    } else if bytes >= 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{bytes} B")
+    }
 }
 
 pub async fn console_js() -> Response {
