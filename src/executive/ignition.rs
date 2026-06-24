@@ -26,7 +26,7 @@ pub async fn run_ignition_sequence(
     // 1. Fetch available models first to keep async cleanly separated
     let host = "http://localhost".to_string();
     let port = 11434;
-    let client = Ollama::new(host, port);
+    let client = Ollama::builder().host(host).port(port).build();
 
     let local_models = client.list_local_models().await.ok().unwrap_or_default();
     let model_names: Vec<String> = local_models.into_iter().map(|m| m.name).collect();

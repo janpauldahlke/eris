@@ -252,7 +252,7 @@ pub async fn start_chat_session(
     );
     let port = parsed_url.port().unwrap_or(11434);
 
-    let client = Ollama::new(host, port);
+    let client = Ollama::builder().host(host).port(port).build();
     let (token_metrics_tx, token_metrics_rx) = crate::engine::token_metrics::channel();
     let mut engine: AnyEngine = match config.llm_backend {
         LlmBackend::Ollama => {

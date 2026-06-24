@@ -1294,7 +1294,12 @@ mod tests {
     use std::sync::Arc;
 
     fn dummy_embed_provider() -> Arc<dyn EmbeddingProvider> {
-        let ollama = Arc::new(Ollama::new("http://localhost".to_string(), 11434));
+        let ollama = Arc::new(
+            Ollama::builder()
+                .host("http://localhost")
+                .port(11434)
+                .build(),
+        );
         Arc::new(OllamaEmbedding::new(ollama, "nomic-embed-text".into()))
     }
 

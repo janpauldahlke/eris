@@ -200,7 +200,12 @@ mod tests {
 
     #[test]
     fn dimensions_returns_expected() {
-        let ollama_client = Arc::new(Ollama::new("http://localhost".to_string(), 11434));
+        let ollama_client = Arc::new(
+            Ollama::builder()
+                .host("http://localhost")
+                .port(11434)
+                .build(),
+        );
         let ollama_embed = OllamaEmbedding::new(ollama_client, "nomic-embed-text".into());
         assert_eq!(ollama_embed.dimensions(), 768);
 

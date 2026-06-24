@@ -204,7 +204,7 @@ mod tests {
         use ollama_rs::Ollama;
 
         let config = Arc::new(AppConfig::default());
-        let ollama = Ollama::new("http://localhost".to_string(), 11434);
+        let ollama = Ollama::builder().host("http://localhost").port(11434).build();
         let client = OllamaClient::new(ollama, config);
         let metrics = Arc::new(Mutex::new(QualityMetrics::default()));
 

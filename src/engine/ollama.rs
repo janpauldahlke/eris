@@ -243,7 +243,10 @@ mod tests {
         let mut config = AppConfig::default();
         config.ollama_host = "http://localhost:65535".to_string(); // Dead port
 
-        let client = Ollama::new("http://localhost".to_string(), 65535);
+        let client = Ollama::builder()
+            .host("http://localhost")
+            .port(65535)
+            .build();
         let engine = OllamaClient::new(client, Arc::new(config));
 
         let result = engine.generate(&[], "{}", None, LlmGenerateOptions::default()).await;
@@ -263,14 +266,14 @@ mod tests {
         config.generation_timeout_secs = 1;
 
         let parsed_url = url::Url::parse(&mock_server.uri()).unwrap();
-        let client = Ollama::new(
-            format!(
+        let client = Ollama::builder()
+            .host(format!(
                 "{}://{}",
                 parsed_url.scheme(),
                 parsed_url.host_str().unwrap()
-            ),
-            parsed_url.port().unwrap_or(80),
-        );
+            ))
+            .port(parsed_url.port().unwrap_or(80))
+            .build();
         let engine = OllamaClient::new(client, Arc::new(config));
 
         Mock::given(method("POST"))
@@ -295,14 +298,14 @@ mod tests {
         config.ollama_host = mock_server.uri();
 
         let parsed_url = url::Url::parse(&mock_server.uri()).unwrap();
-        let client = Ollama::new(
-            format!(
+        let client = Ollama::builder()
+            .host(format!(
                 "{}://{}",
                 parsed_url.scheme(),
                 parsed_url.host_str().unwrap()
-            ),
-            parsed_url.port().unwrap_or(80),
-        );
+            ))
+            .port(parsed_url.port().unwrap_or(80))
+            .build();
         let engine = OllamaClient::new(client, Arc::new(config));
 
         let mock_response = serde_json::json!({

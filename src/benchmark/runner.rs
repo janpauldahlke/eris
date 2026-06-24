@@ -138,7 +138,7 @@ pub async fn run_benchmark(
             parsed_url.host_str().unwrap_or("localhost")
         );
         let port = parsed_url.port().unwrap_or(11434);
-        let ollama_client = Ollama::new(host, port);
+        let ollama_client = Ollama::builder().host(host).port(port).build();
         Arc::new(crate::engine::embedding::OllamaEmbedding::new(
             Arc::new(ollama_client),
             config_arc.embed_model_name.clone(),
@@ -242,7 +242,7 @@ pub async fn run_benchmark(
             parsed_url.host_str().unwrap_or("localhost")
         );
         let port = parsed_url.port().unwrap_or(11434);
-        let client = Ollama::new(host, port);
+        let client = Ollama::builder().host(host).port(port).build();
         let (token_metrics_tx, _token_metrics_rx) = token_metrics::channel();
         let probe_engine = OllamaClient::with_token_metrics(
             client.clone(),
