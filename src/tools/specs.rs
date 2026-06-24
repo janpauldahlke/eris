@@ -526,8 +526,8 @@ rationale = "hour must be 0-23."
 "#,
     r#"descriptor_version = 1
 tool_name = "weather:current"
-short_description = "Current weather (instant variables) for a city via Open-Meteo geocoding + forecast."
-when_to_use = "Use when the user wants present conditions at a named place: temperature, and when returned by the API also precipitation/rain and cloud or sun-related fields. Use city name; add country_code if the name is ambiguous (e.g. Springfield)."
+short_description = "Current weather for a city via Open-Meteo; returns a pre-computed report string."
+when_to_use = "Use when the user wants present conditions at a named place. The tool returns a pre-formatted markdown `report` — do not invent numbers. Use city name; add country_code if ambiguous (e.g. Springfield)."
 when_not_to_use = "Do not use for multi-day hourly series; use weather:forecast. Do not use for arbitrary URLs."
 routing_hints = ["weather now", "temperature outside", "is it raining", "rainfall", "cloudy or sunny", "current conditions", "humidity today"]
 
@@ -548,8 +548,8 @@ rationale = "city must be non-empty."
 "#,
     r#"descriptor_version = 1
 tool_name = "weather:forecast"
-short_description = "Hourly weather forecast for a city (several days) via Open-Meteo: temperature plus precipitation and cloud cover when available."
-when_to_use = "Use when the user wants upcoming hours/days: temperature trends, and when the tool returns them also rain/precipitation and cloud or sun-related patterns, not only instant conditions."
+short_description = "Multi-day weather forecast for a city via Open-Meteo; returns a pre-computed report (next 24h + daily outlook)."
+when_to_use = "Use when the user wants upcoming hours or days. The tool returns a pre-formatted markdown `report` — do not invent numbers or reinterpret raw data."
 when_not_to_use = "Do not use for only current conditions; use weather:current. Do not use for arbitrary URLs."
 routing_hints = ["weather forecast", "hourly temperature", "next days weather", "will it rain tomorrow", "rainfall outlook", "sunny or cloudy week"]
 
@@ -1281,5 +1281,93 @@ rationale = "User asked to see a known cataloged image."
 name = "analyze"
 args = { relative_path = "99_USER_UPLOADED/images/abc.jpg" }
 rationale = "Visual questions need vision:see; display is for showing pixels to the human."
+"#,
+    r#"descriptor_version = 1
+tool_name = "doc:ingest"
+short_description = "Ingest an uploaded PDF/Markdown/text file into the document RAG store."
+when_to_use = "Use after a file lands in 99_USER_UPLOADED/files/ or when the user asks to index an uploaded report. Creates chunked vectors plus a 40_MEDIA discovery card for memory recall."
+when_not_to_use = "Do not use for vault markdown notes (memory:commit / vault ingest). Do not use for ephemeral pasted text (content lens). Do not use for web fetch artifacts (web:find)."
+routing_hints = ["ingest document", "index pdf", "index uploaded file", "parse report", "chunk document", "add document to search"]
+
+[[examples_good]]
+name = "ingest_upload"
+args = { relative_path = "99_USER_UPLOADED/files/abc.pdf" }
+rationale = "Indexes a vault-relative upload path."
+
+[[examples_bad]]
+name = "missing_path"
+args = {}
+rationale = "relative_path is required."
+"#,
+    r#"descriptor_version = 1
+tool_name = "doc:read"
+short_description = "Paginated sequential chunk reader for an ingested document."
+when_to_use = "Use to read through a document page by page, e.g. to summarize, review, or extract information. Pass doc_id from doc:list or doc:ingest receipt. Optional start (default 0) and count (default 15) for pagination."
+when_not_to_use = "Do not use for semantic search (doc:query). Do not use before doc:ingest."
+suggested_skills = ["doc-summarize"]
+routing_hints = ["read document", "read chunks", "page through document", "sequential read", "read uploaded file", "read the pdf"]
+
+[[examples_good]]
+name = "read_from_start"
+args = { doc_id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890" }
+rationale = "Reads first page of chunks (default start=0, count=15)."
+
+[[examples_good]]
+name = "read_next_page"
+args = { doc_id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890", start = 15, count = 15 }
+rationale = "Continues reading from chunk 15."
+
+[[examples_bad]]
+name = "missing_doc_id"
+args = {}
+rationale = "doc_id is required."
+"#,
+    r#"descriptor_version = 1
+tool_name = "doc:query"
+short_description = "Semantic search over ingested document chunks."
+when_to_use = "Use when memory:query surfaced a document card (doc_id in type_fields) or the user asks what an uploaded PDF/report says. Returns cited passages."
+when_not_to_use = "Do not use for vault markdown recall (memory:query). Do not use for lexical file grep (vault:search). Do not use before doc:ingest."
+suggested_skills = ["doc-summarize"]
+routing_hints = ["search document", "what does the pdf say", "find in uploaded report", "document passage", "query ingested file"]
+
+[[examples_good]]
+name = "scoped_query"
+args = { query = "Q2 revenue", doc_id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890" }
+rationale = "Scopes search to one ingested document."
+
+[[examples_bad]]
+name = "empty_query"
+args = { query = "" }
+rationale = "query is required."
+"#,
+    r#"descriptor_version = 1
+tool_name = "doc:list"
+short_description = "List ingested documents in the document RAG store."
+when_to_use = "Use to see which uploads are indexed (doc_id, chunk counts) before doc:query, doc:read, or doc:delete."
+when_not_to_use = "Do not use for vault folder listings (vault:list) or memory recall (memory:query)."
+suggested_skills = ["doc-summarize"]
+routing_hints = ["list documents", "indexed uploads", "what documents are ingested"]
+
+[[examples_good]]
+name = "list_all"
+args = {}
+rationale = "No parameters required."
+"#,
+    r#"descriptor_version = 1
+tool_name = "doc:delete"
+short_description = "Remove an ingested document from the RAG store and memory discovery tier."
+when_to_use = "Use when the user wants a document fully removed from search (chunks + 40_MEDIA card)."
+when_not_to_use = "Do not use to delete raw upload bytes only — removes indexed chunks and catalog card."
+routing_hints = ["delete document", "remove ingested pdf", "unindex document"]
+
+[[examples_good]]
+name = "delete_by_id"
+args = { doc_id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890" }
+rationale = "doc_id from doc:list or memory card type_fields."
+
+[[examples_bad]]
+name = "missing_id"
+args = {}
+rationale = "doc_id is required."
 "#,
 ];

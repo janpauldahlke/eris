@@ -352,6 +352,7 @@ pub async fn run_benchmark(
         None,
         None,
         semantic_arc,
+        None,
     );
 
     let harness = BenchmarkHarness::new(&config.active_vault(), isolation_mode)?;

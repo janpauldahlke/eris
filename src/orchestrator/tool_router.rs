@@ -63,8 +63,30 @@ impl ToolRouter {
             || Self::has_domain_like_token(&lower)
             || lower.contains("search web for")
             || lower.contains("search the web")
-            || lower.contains("look up online");
+            || lower.contains("look up online")
+            || Self::has_tool_intent_keyword(&lower);
         !explicit
+    }
+
+    /// Detect short inputs that clearly want a tool: "list my documents", "check email",
+    /// "show tasks", etc.  These must bypass the short-input guard.
+    fn has_tool_intent_keyword(lower: &str) -> bool {
+        const KEYWORDS: &[&str] = &[
+            "document", "documents", "doc ", "docs",
+            "email", "mail", "inbox",
+            "calendar", "schedule", "meeting",
+            "weather", "forecast",
+            "alarm", "timer", "remind",
+            "agenda", "task", "tasks", "todo",
+            "ingest", "upload",
+            "memory", "vault",
+            "health", "status",
+            "skill", "skills",
+            "moltbook",
+            "wikipedia", "wiki",
+            "news", "headlines",
+        ];
+        KEYWORDS.iter().any(|kw| lower.contains(kw))
     }
 
     fn has_domain_like_token(text: &str) -> bool {
@@ -395,11 +417,32 @@ mod tests {
     #[test]
     fn test_short_input_guard_without_explicit_intent() {
         assert!(ToolRouter::short_input_guard_conversational_only("test"));
+        assert!(ToolRouter::short_input_guard_conversational_only("hey"));
+        assert!(ToolRouter::short_input_guard_conversational_only("thanks"));
         assert!(!ToolRouter::short_input_guard_conversational_only(
             "https://example.com"
         ));
         assert!(!ToolRouter::short_input_guard_conversational_only(
             "/health"
+        ));
+    }
+
+    #[test]
+    fn test_short_input_guard_bypassed_by_tool_keywords() {
+        assert!(!ToolRouter::short_input_guard_conversational_only(
+            "list my documents"
+        ));
+        assert!(!ToolRouter::short_input_guard_conversational_only(
+            "check email"
+        ));
+        assert!(!ToolRouter::short_input_guard_conversational_only(
+            "show tasks"
+        ));
+        assert!(!ToolRouter::short_input_guard_conversational_only(
+            "system health"
+        ));
+        assert!(!ToolRouter::short_input_guard_conversational_only(
+            "check moltbook"
         ));
     }
 

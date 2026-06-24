@@ -113,6 +113,7 @@ fn test_orchestrator_initialization() {
         None,
         None,
         None,
+        None,
     );
 
     assert_eq!(orchestrator.state, AgentState::Idle);
@@ -161,6 +162,7 @@ fn setup_orchestrator_with_engine(engine: MockEngine) -> Orchestrator<MockEngine
         None,
         None,
         None,
+        None,
     )
 }
 
@@ -205,6 +207,9 @@ fn test_router_idle_with_tools_executes_tools() {
 
 #[test]
 fn test_router_reflect_empty_tools_shifts_to_reflection() {
+    // When tools were enabled last turn, Reflect with empty tools + no message is a protocol error.
+    // When tools were NOT enabled (conversational turn), thought becomes the halt output
+    // (prevents Task → Reflect loop on alarm/upload turns).
     let mut orchestrator = setup_orchestrator();
     orchestrator.last_turn_tools_enabled = false;
     let json = r#"{
@@ -214,8 +219,7 @@ fn test_router_reflect_empty_tools_shifts_to_reflection() {
         }"#;
 
     let directive = orchestrator.process_llm_response(json);
-    assert_eq!(directive, LoopDirective::ShiftToReflection);
-    assert_eq!(orchestrator.state, AgentState::Chat);
+    assert_eq!(directive, LoopDirective::HaltAndAwaitInput(Some("test".to_string())));
 }
 
 #[test]
@@ -303,6 +307,8 @@ fn test_router_single_tool_calls_missing_inner_close_brace_yields_recovery_hint(
 
 #[test]
 fn test_router_initiate_reflection_mutates_state() {
+    // In conversational mode (last_turn_tools_enabled=false), thought with no message halts
+    // immediately, preventing the Task → Reflect loop on alarm/upload turns.
     let mut orchestrator = setup_orchestrator();
     orchestrator.last_turn_tools_enabled = false;
     let json = r#"{
@@ -312,8 +318,30 @@ fn test_router_initiate_reflection_mutates_state() {
         }"#;
 
     let directive = orchestrator.process_llm_response(json);
-    assert_eq!(directive, LoopDirective::ShiftToReflection);
-    assert_eq!(orchestrator.state, AgentState::Chat);
+    assert_eq!(directive, LoopDirective::HaltAndAwaitInput(Some("test".to_string())));
+}
+
+#[test]
+fn test_router_task_empty_tools_in_tool_mode_shifts_to_reflection() {
+    // When tools WERE enabled, Task with empty tool_calls and no message shifts to reflection.
+    let mut orchestrator = setup_orchestrator();
+    orchestrator.last_turn_tools_enabled = true;
+    orchestrator.state = AgentState::Chat;
+    let json = r#"{
+            "thought": "need more info",
+            "status": "Task",
+            "tool_calls": [],
+            "message_to_user": null
+        }"#;
+
+    let directive = orchestrator.process_llm_response(json);
+    // In tool mode with empty actions, Task triggers the existing empty-action fuckup path.
+    match directive {
+        LoopDirective::RecoverFromFuckup(msg) => {
+            assert!(msg.contains("empty action") || msg.contains("Empty action"));
+        }
+        _ => panic!("Expected RecoverFromFuckup in tool mode with empty actions, got {:?}", directive),
+    }
 }
 
 #[test]
@@ -608,6 +636,7 @@ async fn test_async_guillotine_interrupts_generation() {
         None,
         None,
         None,
+        None,
     );
 
     orchestrator.state = AgentState::Chat;
@@ -744,6 +773,7 @@ async fn test_duplicate_only_batch_halts_without_extra_generation() {
         None,
         None,
         None,
+        None,
     );
     orchestrator.state = AgentState::Chat;
     orchestrator.chat_stack.push(Message {
@@ -849,6 +879,7 @@ async fn orchestrator_with_presentation(
         Arc::new(AppConfig::default()),
         id_rx,
         Arc::new(AtomicBool::new(false)),
+        None,
         None,
         None,
         None,

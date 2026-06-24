@@ -54,6 +54,14 @@ pub fn infer_media_type_from_path(relative_path: &str) -> Option<MediaType> {
     None
 }
 
+/// Whether a catalog card should be embedded into the memory Qdrant collection.
+pub fn media_card_eligible_for_ingest(config: &crate::config::AppConfig, card: &MediaCard) -> bool {
+    match card.media_type {
+        MediaType::Document => config.document_rag.enabled || config.vision.enabled,
+        MediaType::Image | MediaType::Audio => config.vision.enabled,
+    }
+}
+
 /// Canonical on-disk catalog record (`40_MEDIA/{content_hash}/media.json`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MediaCard {

@@ -42,6 +42,11 @@ impl Gatekeeper {
                     | "memory:commit"
                     | "memory:commit_all"
                     | "memory:query"
+                    | "doc:ingest"
+                    | "doc:query"
+                    | "doc:read"
+                    | "doc:list"
+                    | "doc:delete"
                     | "vault:read"
                     | "vault:list"
                     | "vault:search"
@@ -87,6 +92,11 @@ impl Gatekeeper {
                     | "memory:commit"
                     | "memory:commit_all"
                     | "memory:query"
+                    | "doc:ingest"
+                    | "doc:query"
+                    | "doc:read"
+                    | "doc:list"
+                    | "doc:delete"
                     | "vault:read"
                     | "vault:write"
                     | "vault:list"
@@ -147,6 +157,11 @@ impl Gatekeeper {
                     | "memory:commit"
                     | "memory:commit_all"
                     | "memory:query"
+                    | "doc:ingest"
+                    | "doc:query"
+                    | "doc:read"
+                    | "doc:list"
+                    | "doc:delete"
                     | "vault:read"
                     | "vault:list"
                     | "vault:search"
@@ -930,6 +945,11 @@ mod tests {
             "memory:commit",
             "memory:commit_all",
             "memory:query",
+            "doc:ingest",
+            "doc:query",
+            "doc:read",
+            "doc:list",
+            "doc:delete",
             "system:health",
             "clock:now",
             "clock:timer",

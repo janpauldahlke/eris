@@ -1,6 +1,7 @@
 //! Open-Meteo weather tools: geocode then forecast (two HTTP calls via [`crate::util::ApiHttpClient`]).
 
 mod open_meteo;
+pub mod report;
 
 pub mod current;
 pub mod forecast;
@@ -38,7 +39,7 @@ mod integration_tests {
         Mock::given(method("GET"))
             .and(path("/v1/forecast"))
             .respond_with(ResponseTemplate::new(200).set_body_string(
-                r#"{"latitude":1.5,"longitude":2.5,"current":{"time":"2026-01-01T12:00","temperature_2m":12.0}}"#,
+                r#"{"timezone":"Europe/Berlin","timezone_abbreviation":"CET","current":{"time":"2026-01-01T12:00","interval":900,"temperature_2m":12.0,"weather_code":0,"relative_humidity_2m":50,"precipitation":0.0,"cloud_cover":10}}"#,
             ))
             .mount(&fc)
             .await;
@@ -86,8 +87,10 @@ mod integration_tests {
             .await
             .expect("execute");
         assert!(out.contains("Testville"));
-        assert!(out.contains("temperature_2m"));
+        assert!(out.contains("\"report\""));
+        assert!(out.contains("## 🌡️ Now"));
         assert!(out.contains("weather:current"));
+        assert!(!out.contains("\"forecast\""));
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -105,7 +108,7 @@ mod integration_tests {
         Mock::given(method("GET"))
             .and(path("/v1/forecast"))
             .respond_with(ResponseTemplate::new(200).set_body_string(
-                r#"{"hourly":{"time":["2026-01-01T00:00"],"temperature_2m":[20.0]}}"#,
+                r#"{"timezone":"Australia/Sydney","current":{"time":"2026-01-01T12:00"},"hourly":{"time":["2026-01-01T12:00","2026-01-01T13:00","2026-01-01T14:00"],"temperature_2m":[20.0,21.0,22.0],"precipitation":[0.0,0.0,0.0],"weather_code":[0,0,0],"is_day":[1,1,1]},"daily":{"time":["2026-01-01"],"temperature_2m_min":[18.0],"temperature_2m_max":[22.0],"precipitation_sum":[0.0],"weather_code":[0]}}"#,
             ))
             .mount(&fc)
             .await;
@@ -135,7 +138,9 @@ mod integration_tests {
                 query: [
                     ("latitude".into(), "{lat}".into()),
                     ("longitude".into(), "{lon}".into()),
-                    ("hourly".into(), "temperature_2m".into()),
+                    ("current".into(), "temperature_2m,weather_code".into()),
+                    ("hourly".into(), "temperature_2m,precipitation,weather_code,is_day".into()),
+                    ("daily".into(), "temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code".into()),
                     ("forecast_days".into(), "1".into()),
                     ("timezone".into(), "auto".into()),
                 ]
@@ -153,7 +158,10 @@ mod integration_tests {
             .execute(json!({ "city": "Testville" }))
             .await
             .expect("execute");
-        assert!(out.contains("hourly"));
+        assert!(out.contains("\"report\""));
+        assert!(out.contains("## 🌤️ Forecast"));
+        assert!(out.contains("### 📅 Next few days"));
         assert!(out.contains("weather:forecast"));
+        assert!(!out.contains("\"forecast\":"));
     }
 }

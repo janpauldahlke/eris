@@ -118,6 +118,11 @@ pub struct StartedChatSession {
     pub peripheral_lifecycle: PeripheralLifecycle,
     /// Snapshot of gatekeeper tool names at startup (for web Tools console active status).
     pub registered_tool_names: Arc<[String]>,
+    /// Document RAG store when `[document_rag] enabled` and Qdrant is online.
+    pub document_store: Option<Arc<crate::memory::document_store::DocumentStore>>,
+    /// Serialized document ingest worker (auto-ingest + `doc:ingest`).
+    pub document_ingest_queue:
+        Option<Arc<crate::memory::document_ingest_queue::DocumentIngestQueue>>,
 }
 
 /// Bootstrap engine, tools, orchestrator, and background tasks. Caller keeps `presentation_rx` for the view.
@@ -333,6 +338,68 @@ pub async fn start_chat_session(
                 None
             }
         };
+
+    let document_store_arc: Option<Arc<crate::memory::document_store::DocumentStore>> =
+        if config.document_rag.enabled && semantic_arc.is_some() {
+            match crate::memory::document_store::DocumentStore::new_with_connect_retries(
+                config.clone(),
+                embed_provider.clone(),
+                connect_attempts,
+                connect_retry_ms,
+            )
+            .await
+            {
+                Ok(store) => {
+                    tracing::info!("Document RAG store online.");
+                    Some(Arc::new(store))
+                }
+                Err(e) => {
+                    if config.require_semantic_brain {
+                        return Err(FcpError::VectorDbOffline(format!(
+                            "require_semantic_brain enabled: document store did not connect: {e}"
+                        )));
+                    }
+                    tracing::warn!(
+                        error = %e,
+                        "Document RAG store offline; doc:* tools will be unavailable"
+                    );
+                    None
+                }
+            }
+        } else {
+            if config.document_rag.enabled && semantic_arc.is_none() {
+                tracing::info!("doc:* tools skipped — semantic brain required for document RAG");
+            }
+            None
+        };
+
+    let (user_action_tx, mut action_rx) = mpsc::channel::<UserAction>(100);
+
+    let document_ingest_queue: Option<Arc<crate::memory::document_ingest_queue::DocumentIngestQueue>> =
+        document_store_arc.as_ref().map(|store| {
+            crate::memory::document_ingest_queue::DocumentIngestQueue::spawn(
+                store.clone(),
+                workspace_root.clone(),
+                Some(presentation_tx.clone()),
+            )
+        });
+
+    if let (Some(doc_store), Some(ingest_q)) =
+        (document_store_arc.as_ref(), document_ingest_queue.as_ref())
+    {
+        let stale = doc_store.reconcile_stale_doc_ids(&workspace_root).await;
+        if !stale.is_empty() {
+            tracing::warn!(
+                count = stale.len(),
+                "Boot reconciliation: queuing re-ingest for documents with stale doc_ids"
+            );
+            for path in stale {
+                if let Err(e) = ingest_q.enqueue_background(path.clone(), None).await {
+                    tracing::warn!(path = %path, error = %e, "Failed to queue stale doc re-ingest");
+                }
+            }
+        }
+    }
 
     config.validate_vision_ready()?;
     config.validate_audio_ready()?;
@@ -700,6 +767,37 @@ pub async fn start_chat_session(
         }));
     }
 
+    if let Some(store) = &document_store_arc {
+        if crate::tools::registration::should_register_document_rag(&config, true) {
+            if let Some(queue) = &document_ingest_queue {
+                gatekeeper.register(Arc::new(crate::tools::doc::DocIngestTool {
+                    ingest_queue: queue.clone(),
+                }));
+            }
+            gatekeeper.register(Arc::new(crate::tools::doc::DocQueryTool {
+                store: store.clone(),
+                default_top_k: config.document_rag.query_top_k_default,
+                top_k_max: config.document_rag.query_top_k_max,
+                default_max_total_chars: config.document_rag.query_max_total_chars,
+                default_min_score: config.document_rag.query_min_score,
+            }));
+            gatekeeper.register(Arc::new(crate::tools::doc::DocReadTool {
+                store: store.clone(),
+                page_size_default: config.document_rag.read_page_size_default,
+                page_size_max: config.document_rag.read_page_size_max,
+            }));
+            gatekeeper.register(Arc::new(crate::tools::doc::DocListTool {
+                store: store.clone(),
+            }));
+            gatekeeper.register(Arc::new(crate::tools::doc::DocDeleteTool {
+                workspace_root: workspace_root.clone(),
+                store: store.clone(),
+            }));
+        }
+    } else if config.document_rag.enabled {
+        tracing::info!("document_rag enabled but store offline — doc:* tools not registered");
+    }
+
     let registered_tool_names: Arc<[String]> =
         gatekeeper.registered_tool_names().into();
 
@@ -879,6 +977,7 @@ pub async fn start_chat_session(
         Some(token_metrics_rx.clone()),
         Some(web_ledger),
         semantic_arc,
+        document_store_arc.clone(),
     );
 
     tracing::info!(
@@ -894,15 +993,22 @@ pub async fn start_chat_session(
         ChatViewMode::Terminal => InputSource::Cli,
     };
 
-    let (user_action_tx, mut action_rx) = mpsc::channel::<UserAction>(100);
     let presentation_tx_err = presentation_tx.clone();
     let cancel_token_loop = cancel_token.clone();
     let interrupt_tx_user = interrupt_tx.clone();
     let discord_typing_loop = discord_typing_tx.clone();
     let workspace_root_loop = workspace_root.clone();
+    let mut ingest_busy_rx: Option<watch::Receiver<bool>> =
+        document_ingest_queue.as_ref().map(|q| q.subscribe_busy());
     tokio::spawn(async move {
         let mut pending_inputs: VecDeque<UserIngress> = VecDeque::new();
+        let mut ingest_defer_notified = false;
         loop {
+            let ingest_blocking = ingest_busy_rx
+                .as_ref()
+                .map(|rx| *rx.borrow())
+                .unwrap_or(false);
+
             tokio::select! {
                 Some(action) = action_rx.recv() => {
                     match action {
@@ -1118,6 +1224,48 @@ pub async fn start_chat_session(
                     tracing::info!("Orchestrator loop received cancellation signal");
                     break;
                 }
+                // Wake when document ingest finishes so deferred user inputs can proceed.
+                _ = async {
+                    if let Some(ref mut rx) = ingest_busy_rx {
+                        let _ = rx.changed().await;
+                    } else {
+                        std::future::pending::<()>().await;
+                    }
+                }, if !pending_inputs.is_empty() && ingest_blocking => {
+                    ingest_defer_notified = false;
+                    tracing::info!(
+                        event = "fcp.chat_session.ingest_gate_released",
+                        pending = pending_inputs.len(),
+                        "Document ingest finished — releasing deferred user input"
+                    );
+                }
+            }
+
+            // Defer LLM inference while the document ingest queue is using the GPU.
+            let ingest_free = !ingest_busy_rx
+                .as_ref()
+                .map(|rx| *rx.borrow())
+                .unwrap_or(false);
+
+            if !ingest_free && !pending_inputs.is_empty() {
+                if !ingest_defer_notified {
+                    let _ = presentation_tx_err
+                        .send(SessionEvent::UiNotice(
+                            "[ui] Message queued — waiting for document ingest to finish before responding.".into(),
+                        ))
+                        .await;
+                    ingest_defer_notified = true;
+                    orchestrator.activity_line =
+                        Some("Waiting for document ingest…".into());
+                    orchestrator.queued_inputs = pending_inputs.len();
+                    orchestrator.broadcast_state().await;
+                }
+                continue;
+            }
+            if ingest_defer_notified {
+                ingest_defer_notified = false;
+                orchestrator.activity_line = None;
+                orchestrator.broadcast_state().await;
             }
 
             while let Some(ing) = pending_inputs.pop_front() {
@@ -1291,5 +1439,7 @@ pub async fn start_chat_session(
         token_metrics_rx,
         peripheral_lifecycle,
         registered_tool_names,
+        document_store: document_store_arc,
+        document_ingest_queue,
     })
 }

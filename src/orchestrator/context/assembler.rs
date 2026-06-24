@@ -76,6 +76,8 @@ pub struct ContextAssembler {
     is_grammar_constrained: bool,
     /// Turn-start semantic prefetch block (content-only facts from Qdrant).
     turn_prefetch_block: Option<String>,
+    /// Turn-start document prefetch block (passages from ingested documents).
+    turn_document_prefetch_block: Option<String>,
 }
 
 impl ContextAssembler {
@@ -91,11 +93,16 @@ impl ContextAssembler {
             staged_memory_prompt_max_chars,
             is_grammar_constrained: false,
             turn_prefetch_block: None,
+            turn_document_prefetch_block: None,
         }
     }
 
     pub fn set_turn_prefetch_block(&mut self, block: Option<String>) {
         self.turn_prefetch_block = block;
+    }
+
+    pub fn set_turn_document_prefetch_block(&mut self, block: Option<String>) {
+        self.turn_document_prefetch_block = block;
     }
 
     pub fn with_grammar_constraint(mut self, enabled: bool) -> Self {
@@ -168,6 +175,10 @@ impl ContextAssembler {
         if let Some(prefetch) = self.turn_prefetch_block.as_ref().filter(|b| !b.is_empty()) {
             out.push_str("\n\n");
             out.push_str(prefetch);
+        }
+        if let Some(doc_block) = self.turn_document_prefetch_block.as_ref().filter(|b| !b.is_empty()) {
+            out.push_str("\n\n");
+            out.push_str(doc_block);
         }
         out
     }
@@ -363,6 +374,7 @@ impl ContextAssembler {
             - When the user wants long-term vault storage, use memory:commit with staged_id for single-item persistence.\n\
             - Use memory:commit_all for bulk persistence of promote-tier rows only.\n\
             - [RELEVANT_LEARNED_MEMORY] (when present) is auto-injected from indexed vault knowledge when your message matches semantically; use it directly; call memory:query only for more detail, filters, or recency ordering.\n\
+            - [RELEVANT_DOCUMENT_CONTEXT] (when present) is auto-injected from ingested document chunks; use it directly; call doc:query for deeper drill-down or doc:read for sequential page-through.\n\
             - Web fetch content is stored under 20_Discourse/web/missions/ on disk; use web:find to search fetched pages.\n\n\
             Vault taxonomy — use the 'kind' field in memory:stage to route to the correct root:\n\
             - kind=topology → 10_Topology/ (environment, config, infrastructure)\n\
@@ -428,7 +440,12 @@ fn tools_need_session_reference_time(tools: &[serde_json::Value]) -> bool {
     tools
         .iter()
         .filter_map(tool_name_from_entry)
-        .any(|n| n == "db:find_connections" || n.starts_with("calendar:"))
+        .any(|n| {
+            n == "db:find_connections"
+                || n == "weather:current"
+                || n == "weather:forecast"
+                || n.starts_with("calendar:")
+        })
 }
 
 fn append_session_reference_time_if_needed(
@@ -649,10 +666,22 @@ mod tests {
             serde_json::json!({"function": {"name": "db:find_connections", "description": ""}});
         let cal = serde_json::json!({"function": {"name": "calendar:list", "description": ""}});
         let vault = serde_json::json!({"function": {"name": "vault:read", "description": ""}});
+        let weather =
+            serde_json::json!({"function": {"name": "weather:current", "description": ""}});
         assert!(super::tools_need_session_reference_time(&[db.clone()]));
         assert!(super::tools_need_session_reference_time(&[cal.clone()]));
+        assert!(super::tools_need_session_reference_time(&[weather.clone()]));
         assert!(!super::tools_need_session_reference_time(&[vault.clone()]));
         assert!(super::tools_need_session_reference_time(&[vault, cal]));
+    }
+
+    #[test]
+    fn append_session_reference_time_inserts_block_for_weather_tool() {
+        let tools =
+            vec![serde_json::json!({"function": {"name": "weather:forecast", "description": ""}})];
+        let out = super::append_session_reference_time_if_needed("PREAMBLE".into(), &tools);
+        assert!(out.contains("[SESSION_REFERENCE_TIME]"));
+        assert!(out.starts_with("PREAMBLE"));
     }
 
     #[test]

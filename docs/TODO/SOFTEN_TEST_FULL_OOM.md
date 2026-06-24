@@ -2,15 +2,15 @@
 
 **Also known as (old misname):** “test-full OOM” — see [Why the old name was wrong](#why-the-old-name-was-wrong).
 
-**Status:** understood + workarounds in place · **likely fix: GNOME on Wayland** (monitoring) · **Priority:** monitor  
+**Status:** understood + workarounds in place · **GNOME (X11 + Wayland) still drops on FUCKUP** · **experimental:** KDE Plasma + SDDM (2026-06-24) · **Priority:** monitor  
 **Issue label:** `hybrid-gpu-gnome-session-drop`  
-**Host:** FUCKUP — Ubuntu 24.04, kernel 6.17, AMD Raphael iGPU (displays) + RTX 4080 SUPER (`prime-select on-demand`). **Was X11** (session drops); **now Wayland** (GDM gear → “Ubuntu”, not “Ubuntu on Xorg”). GDM remembers last session choice.
+**Host:** FUCKUP — Ubuntu 24.04, kernel 6.17, AMD Raphael iGPU (displays) + RTX 4080 SUPER (`prime-select on-demand`). Displays on **AMD iGPU** (BIOS primary) to reserve RTX VRAM for LLM. **Was GNOME** (GDM, X11 then Wayland — session drops during tests). **Now KDE Plasma + SDDM** (experimental desktop workaround, 2026-06-24).
 
 ---
 
 ## One-sentence summary
 
-> **`cargo test-full` does not fail — the GNOME graphical session sometimes dies while it runs.** Same tests pass via `cargo test` (~26s) and via detached `test-full` (all 47 batches, exit 0).
+> **`cargo test-full` does not fail — the GNOME graphical session sometimes dies while it runs.** Same tests pass via `cargo test` (~26s) and via detached `test-full` (all 47 batches, exit 0). On FUCKUP (2026-06-24), **KDE Plasma + SDDM** is an **experimental** workaround that restored interactive `cargo test` (709 passed); long-term stability not proven.
 
 ---
 
@@ -18,7 +18,7 @@
 
 | Tool | Needed locally? | Why it exists |
 |------|-----------------|---------------|
-| `cargo test` | **Yes** — daily dev | Runs all 682 unit tests in one process (~26s here) |
+| `cargo test` | **Yes** — daily dev | Runs all unit tests in one process (~26s here; 709 as of 2026-06-24) |
 | `cargo test-full` | **No** — optional | Local mirror of CI’s 47-batch shard list |
 | GitHub CI test matrix | **Yes** — on push | Parallel batches on `ubuntu-latest` (memory-safe cloud runners) |
 | GitHub CI + Codecov | **Yes** — on push | Same batch list, `cargo llvm-cov` per shard — **does not require local test-full** |
@@ -28,50 +28,83 @@
 **Practical workflow (FUCKUP / hybrid-GPU desktops):**
 
 ```bash
-# Daily
+# Daily (on Plasma — experimental; see KDE section)
 cargo test
 
 # Pre-push (let CI be the full gate)
 git push
 
-# Optional: local full-suite parity without killing GNOME
+# If back on GNOME, or Plasma regresses: full suite without session roulette
 ./scripts/test-full-detached.sh
 tail -f target/test-full.log
 
-# On X11 only — session roulette in GUI terminals (see Wayland section)
+# Interactive test-full: try on Plasma first; GNOME = roulette
 cargo test-full
 ```
 
-**FUCKUP (2026-06-10):** switched to **Wayland** after r/ubuntu report (Intel+NVIDIA, same symptom). First `cargo test` in GUI terminal: **682 passed, ~26s, no session drop**. Re-validate with `cargo test-full` over a few days before trusting interactive GUI runs again.
+**FUCKUP (2026-06-10):** switched GNOME to **Wayland** — `cargo test` briefly OK (~682 passed); **regressed** (session drops returned; Wayland is not a reliable fix on this host).
+
+**FUCKUP (2026-06-24):** installed **KDE Plasma + SDDM** (`apt install kde-plasma-desktop`, default display manager **sddm**). Interactive `cargo test`: **709 passed ~26s, no session drop** — **experimental workaround only**; re-validate `cargo test-full` over several days before trusting it.
 
 ---
 
-## Wayland workaround (2026-06-10)
+## Wayland workaround (2026-06-10) — insufficient on FUCKUP
 
 **Symptom on X11:** intermittent forced logout (`exit.target` → GDM) during terminal workloads — `cargo test`, `cargo test-full`, GNOME Terminal or Cursor. Journal: `gnome-shell: X connection to :1 broken` + `amdgpu` LTTPR DRM errors. Not RAM OOM.
 
-**Switch (no packages, no leaving GNOME):**
+**Switch tried (no packages, stayed on GNOME):**
 
 1. Log out to GDM.
 2. Click username → gear icon → **Ubuntu** (Wayland), not **Ubuntu on Xorg**.
 3. Confirm: `echo $XDG_SESSION_TYPE` → `wayland`.
 
-**Why it might help:** Wayland uses mutter’s compositor path directly instead of Xorg; hybrid-GPU session-death reports on Intel+NVIDIA often clear after this switch. AMD iGPU + NVIDIA `on-demand` is a different stack but same class of bug.
+**Why it might help (elsewhere):** Wayland uses mutter’s compositor path directly instead of Xorg; hybrid-GPU session-death reports on Intel+NVIDIA often clear after this switch. AMD iGPU + NVIDIA `on-demand` is a different stack but same class of bug.
 
-**Evidence so far (FUCKUP):**
+**Evidence (FUCKUP):**
 
 | Session | Run | Outcome |
 |---------|-----|---------|
-| X11 | `cargo test` in GNOME Terminal | **Session drop** (2026-06-10, journal: `exit.target` + LTTPR) |
-| X11 | `cargo test-full` (historical) | Drops ~batch 9–13 after ~5–15 min |
-| Wayland | `cargo test` in GUI terminal | **682 passed ~26s**, no drop (2026-06-10) |
-| Either | `./scripts/test-full-detached.sh` | All 47 batches pass (outside graphical session) |
+| GNOME X11 | `cargo test` in GUI terminal | **Session drop** (2026-06-10, journal: `exit.target` + LTTPR) |
+| GNOME X11 | `cargo test-full` (historical) | Drops ~batch 9–13 after ~5–15 min |
+| GNOME Wayland | `cargo test` in GUI terminal | **682 passed ~26s** once (2026-06-10); **later regressed** — drops returned |
+| GNOME either | `./scripts/test-full-detached.sh` | All 47 batches pass (outside graphical session); also flaky if host unstable |
+| **KDE Plasma + SDDM** | `cargo test` in GUI terminal | **709 passed ~26s**, no drop (2026-06-24) — see [KDE Plasma experimental workaround](#kde-plasma-experimental-workaround-2026-06-24) |
 
-**Still use detached `test-full` until Wayland is proven stable** over several days / an interactive `test-full` run.
+**Conclusion:** Wayland is **not** a reliable fix on FUCKUP. Do not assume GNOME is safe on Wayland.
 
-**Revert:** log out → gear → **Ubuntu on Xorg**.
+**Revert GNOME session type:** log out → gear → **Ubuntu on Xorg** or **Ubuntu** (Wayland).
 
-**Community:** [r/gnome hybrid NVIDIA thread](https://www.reddit.com/r/gnome/comments/1s5tldz/any_having_trouble_hybrid_nvidia_gpu/); r/ubuntu 2026-06 — “switch to Wayland fixed random session deaths” (Intel+NVIDIA).
+**Community:** [r/gnome hybrid NVIDIA thread](https://www.reddit.com/r/gnome/comments/1s5tldz/any_having_trouble_hybrid_nvidia_gpu/); r/ubuntu 2026-06 — “switch to Wayland fixed random session deaths” (Intel+NVIDIA; did not hold on FUCKUP).
+
+---
+
+## KDE Plasma experimental workaround (2026-06-24)
+
+> **Experimental only** — not a guaranteed or officially supported fix. Plasma may regress under `cargo test-full`, Cursor, or driver updates. CI remains the source of truth for the full suite.
+
+**Motivation:** displays stay on **AMD iGPU** so **RTX VRAM is reserved for LLM** (`prime-select on-demand`). GNOME (mutter) still dropped the session during terminal workloads even on Wayland. Leaving GNOME entirely is a desktop-level experiment, not a Rust/Eris change.
+
+**What we did (Ubuntu 24.04, same kernel, no NVIDIA reinstall required for KDE alone):**
+
+```bash
+sudo apt update
+sudo apt install kde-plasma-desktop
+# debconf: default display manager → sddm (not gdm3)
+# log out → Plasma session
+```
+
+**Result (first day):** interactive `cargo test` — **709 passed, ~26s, no session drop** (Konsole / GUI terminal on Plasma).
+
+**Still to validate before trusting Plasma:**
+
+- [ ] `cargo test-full` interactively (47 batches, ~10–15 min)
+- [ ] Cursor IDE terminal under sustained load
+- [ ] Several days of normal dev without `exit.target` / SDDM surprise logout
+- [ ] Idle `nvidia-smi` — RTX still mostly free when LLM not running
+
+**Revert to GNOME:** `sudo dpkg-reconfigure sddm` → select **gdm3**; log out → **Ubuntu** / GNOME session.
+
+**Why it might work:** KWin (Plasma) uses a different compositor path than mutter; hybrid-GPU reports often differ between GNOME and KDE. **Not proven** on all AMD+NVIDIA + VRAM-hoarding layouts.
 
 ---
 
@@ -224,7 +257,9 @@ cargo test --bin eris executive::router:: -- --test-threads=1
 
 ## Open / optional (do not block dev)
 
-- [ ] `cargo test-full` completes interactively in GNOME on **Wayland** without drop (X11 fix: switch session — see above)
+- [ ] `cargo test-full` completes interactively on **Plasma + SDDM** without drop (experimental workaround — 2026-06-24)
+- [ ] Plasma stable for several days / Cursor terminal (experimental)
+- [x] GNOME Wayland as fix — **ruled out on FUCKUP** (regressed after initial OK)
 - [ ] Rename this file to `HYBRID_GPU_GNOME_SESSION_DROP.md` once link rot is acceptable
 - [ ] Lighten `relay_submit_then_system_inject_orders_after_tool` if profiling shows benefit (not proven on FUCKUP)
 
@@ -235,14 +270,18 @@ cargo test --bin eris executive::router:: -- --test-threads=1
 ```
 Read docs/TODO/SOFTEN_TEST_FULL_OOM.md (issue: hybrid-gpu-gnome-session-drop).
 
-Context: GNOME session drops to login during terminal workloads on FUCKUP when on
-**X11** (AMD iGPU displays + NVIDIA on-demand, kernel 6.17). NOT RAM OOM.
-**Wayland session (2026-06-10) looks like the fix** — cargo test OK in GUI; still
-monitoring. Detached test-full always passed all 47 batches.
+Context: GNOME session drops to login during terminal workloads on FUCKUP (AMD iGPU
+displays + NVIDIA on-demand, kernel 6.17). NOT RAM OOM. Displays on iGPU to reserve
+RTX VRAM for LLM.
+
+GNOME X11 and Wayland both dropped sessions. Wayland briefly OK then regressed.
+
+Experimental workaround (2026-06-24): KDE Plasma + SDDM — interactive cargo test
+709 passed ~26s, no drop. NOT proven long-term; validate test-full and Cursor.
 
 Do NOT assume test failure. Check target/test-full.log and journalctl for
-exit.target / LTTPR / oomd. On X11: exit.target + gnome-shell X connection broken.
+exit.target / LTTPR / oomd.
 
-Local workflow: cargo test daily on Wayland; ./scripts/test-full-detached.sh for
-full suite if unsure; CI+Codecov on push. X11 + interactive test-full = roulette.
+Local workflow: cargo test daily on Plasma (experimental); detached test-full or CI
+if session unstable; CI+Codecov on push. GNOME interactive test-full = roulette.
 ```

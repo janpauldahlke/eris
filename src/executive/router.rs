@@ -225,6 +225,8 @@ pub async fn execute_command(
                             config.clone(),
                             cancel_token.clone(),
                             session.registered_tool_names.clone(),
+                            session.document_store.clone(),
+                            session.document_ingest_queue.clone(),
                         )
                         .await;
                         log_peripheral_shutdown(&mut session, config.as_ref()).await;
@@ -255,6 +257,8 @@ pub async fn execute_command(
                             config.clone(),
                             cancel_token.clone(),
                             session.registered_tool_names.clone(),
+                            session.document_store.clone(),
+                            session.document_ingest_queue.clone(),
                         )
                         .await;
                         log_peripheral_shutdown(&mut session, config.as_ref()).await;
@@ -730,6 +734,7 @@ mod tests {
             Arc::new(crate::config::AppConfig::default()),
             id_rx,
             Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            None,
             None,
             None,
             None,

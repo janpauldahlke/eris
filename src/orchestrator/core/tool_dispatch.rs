@@ -3,9 +3,9 @@ use crate::executive::error::{FcpError, Result};
 use crate::orchestrator::context::resolved_tool_recovery::SYSTEM_RECOVERY_PREFIX;
 use crate::orchestrator::llm_support::json_envelope::natural_language_schema_description;
 use crate::orchestrator::llm_support::post_tool_guidance::{
-    POST_TOOL_USER_REPLY_GUIDANCE, ensure_web_find_paired_with_fetch_tools,
-    recover_override_message_for_tool_failure, user_wants_media_catalog,
-    vision_see_catalog_nudge,
+    POST_TOOL_USER_REPLY_GUIDANCE, POST_TOOL_WEATHER_COMMENT_GUIDANCE,
+    ensure_web_find_paired_with_fetch_tools, recover_override_message_for_tool_failure,
+    user_wants_media_catalog, vision_see_catalog_nudge,
 };
 use crate::tools::web::ledger::policy::WEB_FIND_BEFORE_REFETCH;
 use crate::orchestrator::r#loop::recovery_policy::{ToolFailureAction, classify_tool_failure};
@@ -87,6 +87,8 @@ impl<E: LlmEngine> Orchestrator<E> {
         let mut recoverable_failed_tools: Vec<String> = Vec::new();
         let mut fatal_fail_count = 0usize;
         let mut suppressed_repeat_failure_streak = 0usize;
+        let mut weather_deck_parts: Vec<(String, String)> = Vec::new();
+        let mut non_weather_success = false;
 
         for tool_call in tools {
             let tool_name = tool_call.name;
@@ -281,6 +283,15 @@ impl<E: LlmEngine> Orchestrator<E> {
                         role: "system".to_string(),
                         content: msg.clone(),
                     });
+                    if tool_name.starts_with("weather:") {
+                        if let Some(report) =
+                            crate::tools::weather::report::report_from_tool_envelope(&result)
+                        {
+                            weather_deck_parts.push((tool_name.clone(), report));
+                        }
+                    } else {
+                        non_weather_success = true;
+                    }
                     if tool_name == "vision:see"
                         && user_wants_media_catalog(self.last_user_content())
                         && !batch_includes_catalog
@@ -617,6 +628,31 @@ impl<E: LlmEngine> Orchestrator<E> {
             return Ok(ToolBatchDecision::Recover { message: msg });
         }
 
+        if executed_success_count > 0
+            && !weather_deck_parts.is_empty()
+            && !non_weather_success
+            && executed_success_count == weather_deck_parts.len()
+        {
+            let parts: Vec<(&str, String)> = weather_deck_parts
+                .iter()
+                .map(|(n, r)| (n.as_str(), r.clone()))
+                .collect();
+            let message = crate::tools::weather::report::compose_weather_deck_message(&parts);
+            self.pending_weather_deck_report = Some(message);
+            targeted_tools.clear();
+            self.force_full_tool_schemas_in_llm_view = false;
+            self.chat_stack.push(crate::engine::Message {
+                role: "system".to_string(),
+                content: POST_TOOL_WEATHER_COMMENT_GUIDANCE.to_string(),
+            });
+            tracing::info!(
+                event = "orchestrator.weather.comment_then_report",
+                report_blocks = weather_deck_parts.len(),
+                "Weather report queued; LLM will add a short comment before append"
+            );
+            return Ok(ToolBatchDecision::Continue);
+        }
+
         if executed_success_count > 0 {
             self.force_full_tool_schemas_in_llm_view = false;
             // Schema-fault recovery arms `targeted_tools` for one retry with full schemas. If we do
@@ -809,6 +845,7 @@ mod repeat_failure_streak_tests {
             None,
             None,
             None,
+            None,
         )
     }
 
@@ -867,6 +904,7 @@ mod repeat_failure_streak_tests {
             Arc::new(config),
             id_rx,
             Arc::new(AtomicBool::new(false)),
+            None,
             None,
             None,
             None,
@@ -1043,6 +1081,7 @@ mod targeted_schema_retry_phase5_tests {
             Arc::new(cfg),
             id_rx,
             Arc::new(AtomicBool::new(false)),
+            None,
             None,
             None,
             None,

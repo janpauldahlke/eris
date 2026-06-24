@@ -124,8 +124,12 @@ pub struct Orchestrator<E: LlmEngine> {
     pub web_tool_calls_this_turn: u32,
     /// Semantic brain for turn-start prefetch (optional when `require_semantic_brain` is false).
     pub semantic: Option<Arc<SemanticBrain>>,
+    /// Document store for turn-start document prefetch (optional when `document_rag.enabled` is false).
+    pub document_store: Option<Arc<crate::memory::document_store::DocumentStore>>,
     /// Milliseconds spent on the last turn-start semantic prefetch (`0` when skipped).
     pub last_prefetch_ms: u64,
+    /// Set after a weather-only tool batch; stitched onto the next Idle `message_to_user` before deck emit.
+    pub(crate) pending_weather_deck_report: Option<String>,
 }
 
 impl<E: LlmEngine> Orchestrator<E> {
@@ -187,6 +191,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         token_metrics_rx: Option<tokio::sync::watch::Receiver<crate::engine::token_metrics::LlmTokenSnapshot>>,
         web_ledger: Option<Arc<tokio::sync::Mutex<WebSessionLedger>>>,
         semantic: Option<Arc<SemanticBrain>>,
+        document_store: Option<Arc<crate::memory::document_store::DocumentStore>>,
     ) -> Self {
         Self {
             state: AgentState::Idle,
@@ -239,7 +244,9 @@ impl<E: LlmEngine> Orchestrator<E> {
             web_ledger,
             web_tool_calls_this_turn: 0,
             semantic,
+            document_store,
             last_prefetch_ms: 0,
+            pending_weather_deck_report: None,
         }
     }
 

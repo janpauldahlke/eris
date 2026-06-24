@@ -4,6 +4,7 @@ pub mod clock;
 pub mod context_view_hint;
 pub mod db_rest;
 pub mod descriptors;
+pub mod doc;
 pub mod gatekeeper;
 pub mod mail;
 pub mod media;

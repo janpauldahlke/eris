@@ -554,9 +554,12 @@ pub struct LlamaCppConfig {
     pub chat_model_path: PathBuf,
     /// GGUF model file for embeddings.
     pub embed_model_path: PathBuf,
-    /// GPU layers to offload (--n-gpu-layers); 0 = CPU only.
+    /// GPU layers to offload for chat model (--n-gpu-layers); 0 = CPU only.
     #[serde(default)]
     pub n_gpu_layers: u32,
+    /// GPU layers for the embed server (defaults to 0 = CPU-only, keeping VRAM free for chat).
+    #[serde(default)]
+    pub embed_n_gpu_layers: Option<u32>,
     /// Max seconds to wait for each llama-server to become ready after spawn.
     #[serde(default = "default_llamacpp_ready_timeout")]
     pub ready_timeout_secs: u64,
@@ -608,6 +611,7 @@ impl Default for LlamaCppConfig {
             chat_model_path: PathBuf::new(),
             embed_model_path: PathBuf::new(),
             n_gpu_layers: 0,
+            embed_n_gpu_layers: None,
             ready_timeout_secs: default_llamacpp_ready_timeout(),
             detach_servers_on_chat_exit: false,
             shutdown_grace_secs: default_llamacpp_shutdown_grace_secs(),
@@ -757,6 +761,9 @@ pub struct AppConfig {
     /// Qdrant collection name. Computed at runtime: `fcp_vault_v2_{workspace}`.
     #[serde(skip)]
     pub qdrant_collection_v2: String,
+    /// Qdrant document-chunk collection. Computed at runtime: `fcp_docs_{workspace}`.
+    #[serde(skip)]
+    pub qdrant_docs_collection: String,
     /// How often the ephemeral daemon writes `.fcp/ephemeral_{workspace}.bin` and purges expiry.
     pub snapshot_interval_secs: u64,
     /// Ollama embedding model for ToolRouter and Qdrant upserts (vector width must match collection).
@@ -953,6 +960,9 @@ pub struct AppConfig {
     /// When true, `eris chat --web` opens the listen URL in the system default browser after bind. Set `false` for SSH/headless.
     #[serde(default = "default_web_open_browser")]
     pub web_open_browser: bool,
+    /// Persistent uploaded-document RAG (`[document_rag]` in `.fcp/config.toml`).
+    #[serde(default)]
+    pub document_rag: DocumentRagConfig,
     /// Web console operator settings and upload guards.
     #[serde(default)]
     pub web_ui: WebUiConfig,
@@ -1273,7 +1283,7 @@ pub fn default_open_meteo_apis() -> HashMap<String, ApiProfile> {
                 ("longitude".into(), "{lon}".into()),
                 (
                     "current".into(),
-                    "temperature_2m,weather_code,relative_humidity_2m,precipitation,cloud_cover"
+                    "temperature_2m,weather_code,relative_humidity_2m,precipitation,cloud_cover,apparent_temperature,wind_speed_10m,wind_direction_10m,uv_index"
                         .into(),
                 ),
                 ("timezone".into(), "auto".into()),
@@ -1294,8 +1304,18 @@ pub fn default_open_meteo_apis() -> HashMap<String, ApiProfile> {
                 ("latitude".into(), "{lat}".into()),
                 ("longitude".into(), "{lon}".into()),
                 (
+                    "current".into(),
+                    "temperature_2m,weather_code,wind_speed_10m,wind_direction_10m,uv_index".into(),
+                ),
+                (
                     "hourly".into(),
-                    "temperature_2m,precipitation,cloud_cover".into(),
+                    "temperature_2m,precipitation,cloud_cover,weather_code,precipitation_probability,is_day,wind_speed_10m,wind_direction_10m,uv_index"
+                        .into(),
+                ),
+                (
+                    "daily".into(),
+                    "temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code,precipitation_probability_max,uv_index_max,wind_speed_10m_max,wind_gusts_10m_max"
+                        .into(),
                 ),
                 ("forecast_days".into(), "3".into()),
                 ("timezone".into(), "auto".into()),
@@ -1450,6 +1470,193 @@ impl Default for WebUiSettingsConfig {
     }
 }
 
+/// Persistent document RAG (`doc:*` tools, `fcp_docs_{workspace}` Qdrant collection).
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct DocumentRagConfig {
+    #[serde(default = "default_document_rag_enabled")]
+    pub enabled: bool,
+    /// When true, web console file uploads trigger background `doc:ingest`.
+    #[serde(default)]
+    pub auto_ingest: bool,
+    #[serde(default = "default_document_rag_chunk_target_chars")]
+    pub chunk_target_chars: usize,
+    #[serde(default = "default_document_rag_chunk_overlap_chars")]
+    pub chunk_overlap_chars: usize,
+    #[serde(default = "default_document_rag_min_chunk_chars")]
+    pub min_chunk_chars: usize,
+    /// llama.cpp embed server per-request token ceiling (physical batch size).
+    #[serde(default = "default_document_rag_embed_max_tokens")]
+    pub embed_max_tokens: u32,
+    /// Conservative chars-per-token estimate for dense/citation text when deriving chunk cap.
+    #[serde(default = "default_document_rag_embed_chars_per_token")]
+    pub embed_chars_per_token: f32,
+    #[serde(default = "default_document_rag_max_file_bytes")]
+    pub max_file_bytes: u64,
+    #[serde(default = "default_document_rag_max_chunks_per_doc")]
+    pub max_chunks_per_doc: u32,
+    #[serde(default = "default_document_rag_query_top_k_default")]
+    pub query_top_k_default: u32,
+    #[serde(default = "default_document_rag_query_top_k_max")]
+    pub query_top_k_max: u32,
+    #[serde(default = "default_document_rag_query_min_score")]
+    pub query_min_score: f32,
+    #[serde(default = "default_document_rag_query_max_total_chars")]
+    pub query_max_total_chars: u32,
+
+    // ── doc:read pagination ──
+    #[serde(default = "default_document_rag_read_page_size_default")]
+    pub read_page_size_default: u32,
+    #[serde(default = "default_document_rag_read_page_size_max")]
+    pub read_page_size_max: u32,
+
+    // ── document-aware prefetch ──
+    #[serde(default = "default_document_rag_prefetch_enabled")]
+    pub document_prefetch_enabled: bool,
+    #[serde(default = "default_document_rag_prefetch_top_k")]
+    pub document_prefetch_top_k: u32,
+    #[serde(default = "default_document_rag_prefetch_min_score")]
+    pub document_prefetch_min_score: f32,
+    #[serde(default = "default_document_rag_prefetch_max_chars")]
+    pub document_prefetch_max_chars: usize,
+    #[serde(default = "default_document_rag_prefetch_max_chars_per_hit")]
+    pub document_prefetch_max_chars_per_hit: usize,
+    #[serde(default = "default_document_rag_prefetch_timeout_secs")]
+    pub document_prefetch_timeout_secs: u64,
+}
+
+fn default_document_rag_enabled() -> bool {
+    true
+}
+
+fn default_document_rag_chunk_target_chars() -> usize {
+    480
+}
+
+fn default_document_rag_chunk_overlap_chars() -> usize {
+    80
+}
+
+fn default_document_rag_min_chunk_chars() -> usize {
+    100
+}
+
+fn default_document_rag_embed_max_tokens() -> u32 {
+    512
+}
+
+fn default_document_rag_embed_chars_per_token() -> f32 {
+    1.75
+}
+
+fn default_document_rag_max_file_bytes() -> u64 {
+    52_428_800
+}
+
+fn default_document_rag_max_chunks_per_doc() -> u32 {
+    500
+}
+
+fn default_document_rag_query_top_k_default() -> u32 {
+    5
+}
+
+fn default_document_rag_query_top_k_max() -> u32 {
+    20
+}
+
+fn default_document_rag_query_min_score() -> f32 {
+    0.35
+}
+
+fn default_document_rag_query_max_total_chars() -> u32 {
+    12_000
+}
+
+fn default_document_rag_read_page_size_default() -> u32 {
+    15
+}
+
+fn default_document_rag_read_page_size_max() -> u32 {
+    50
+}
+
+fn default_document_rag_prefetch_enabled() -> bool {
+    true
+}
+
+fn default_document_rag_prefetch_top_k() -> u32 {
+    2
+}
+
+fn default_document_rag_prefetch_min_score() -> f32 {
+    0.45
+}
+
+fn default_document_rag_prefetch_max_chars() -> usize {
+    800
+}
+
+fn default_document_rag_prefetch_max_chars_per_hit() -> usize {
+    350
+}
+
+fn default_document_rag_prefetch_timeout_secs() -> u64 {
+    5
+}
+
+impl Default for DocumentRagConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_document_rag_enabled(),
+            auto_ingest: false,
+            chunk_target_chars: default_document_rag_chunk_target_chars(),
+            chunk_overlap_chars: default_document_rag_chunk_overlap_chars(),
+            min_chunk_chars: default_document_rag_min_chunk_chars(),
+            embed_max_tokens: default_document_rag_embed_max_tokens(),
+            embed_chars_per_token: default_document_rag_embed_chars_per_token(),
+            max_file_bytes: default_document_rag_max_file_bytes(),
+            max_chunks_per_doc: default_document_rag_max_chunks_per_doc(),
+            query_top_k_default: default_document_rag_query_top_k_default(),
+            query_top_k_max: default_document_rag_query_top_k_max(),
+            query_min_score: default_document_rag_query_min_score(),
+            query_max_total_chars: default_document_rag_query_max_total_chars(),
+            read_page_size_default: default_document_rag_read_page_size_default(),
+            read_page_size_max: default_document_rag_read_page_size_max(),
+            document_prefetch_enabled: default_document_rag_prefetch_enabled(),
+            document_prefetch_top_k: default_document_rag_prefetch_top_k(),
+            document_prefetch_min_score: default_document_rag_prefetch_min_score(),
+            document_prefetch_max_chars: default_document_rag_prefetch_max_chars(),
+            document_prefetch_max_chars_per_hit: default_document_rag_prefetch_max_chars_per_hit(),
+            document_prefetch_timeout_secs: default_document_rag_prefetch_timeout_secs(),
+        }
+    }
+}
+
+impl DocumentRagConfig {
+    /// Effective paragraph chunk size: `chunk_target_chars` capped by embed token budget.
+    pub fn resolved_chunk_target_chars(&self) -> usize {
+        let token_budget = self.embed_max_tokens.max(64) as f32 * self.embed_chars_per_token.clamp(0.5, 8.0);
+        let from_tokens = token_budget.floor() as usize;
+        self.chunk_target_chars.max(256).min(from_tokens.max(256))
+    }
+
+    /// Overlap clamped so it never exceeds target − 1.
+    pub fn resolved_chunk_overlap_chars(&self) -> usize {
+        let target = self.resolved_chunk_target_chars();
+        self.chunk_overlap_chars.min(target.saturating_sub(1))
+    }
+
+    pub fn resolved_chunk_config(&self) -> crate::ingest::ChunkConfig {
+        let target = self.resolved_chunk_target_chars();
+        crate::ingest::ChunkConfig {
+            target_chars: target,
+            max_chars: target,
+            overlap_chars: self.resolved_chunk_overlap_chars(),
+            min_chunk_chars: self.min_chunk_chars.max(1),
+        }
+    }
+}
+
 /// PDF/Markdown drop zone under `99_USER_UPLOADED/` (web console uploads panel).
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct WebUiFilesUploadConfig {
@@ -1536,6 +1743,7 @@ impl Default for AppConfig {
             db_rest_enabled: default_db_rest_enabled(),
             qdrant_url: "http://localhost:6334".into(),
             qdrant_collection_v2: "fcp_vault_v2_default".into(),
+            qdrant_docs_collection: "fcp_docs_default".into(),
             snapshot_interval_secs: 300,
             embed_model_name: "nomic-embed-text".into(),
             idle_timeout_secs: 900,
@@ -1609,6 +1817,7 @@ impl Default for AppConfig {
             web_bind_addr: default_web_bind_addr(),
             web_port: default_web_port(),
             web_open_browser: default_web_open_browser(),
+            document_rag: DocumentRagConfig::default(),
             web_ui: WebUiConfig::default(),
             config_source_dir: PathBuf::new(),
         }
@@ -1679,6 +1888,7 @@ impl AppConfig {
         }
 
         config.qdrant_collection_v2 = format!("fcp_vault_v2_{}", config.workspace);
+        config.qdrant_docs_collection = format!("fcp_docs_{}", config.workspace);
 
         Ok(config)
     }
@@ -2410,5 +2620,24 @@ mod tests {
         assert_eq!(lc.embed_server_url, "http://127.0.0.1:8091");
         assert_eq!(config.num_ctx, 8192);
         assert_eq!(lc.n_gpu_layers, 0);
+    }
+
+    #[test]
+    fn document_rag_resolved_chunk_target_respects_embed_token_budget() {
+        let cfg = DocumentRagConfig {
+            chunk_target_chars: 1200,
+            embed_max_tokens: 512,
+            embed_chars_per_token: 1.75,
+            ..DocumentRagConfig::default()
+        };
+        assert_eq!(cfg.resolved_chunk_target_chars(), 896);
+
+        let small = DocumentRagConfig {
+            chunk_target_chars: 480,
+            embed_max_tokens: 512,
+            embed_chars_per_token: 1.75,
+            ..DocumentRagConfig::default()
+        };
+        assert_eq!(small.resolved_chunk_target_chars(), 480);
     }
 }

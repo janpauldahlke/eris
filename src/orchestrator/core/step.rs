@@ -57,6 +57,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         self.last_deck_message_body = None;
         self.last_prefetch_ms = 0;
         self.context_assembler.set_turn_prefetch_block(None);
+        self.context_assembler.set_turn_document_prefetch_block(None);
         let mut web_tool_activity = false;
         self.web_tool_calls_this_turn = 0;
         if let Some(ledger) = &self.web_ledger {
@@ -90,17 +91,42 @@ impl<E: LlmEngine> Orchestrator<E> {
             return Ok(());
         }
 
-        // ── Turn-start semantic prefetch (deterministic; not an LLM tool) ──
-        if let Some(semantic) = self.semantic.as_ref() {
+        // ── Turn-start prefetch (memory + document, in parallel) ──
+        {
             let user_text = self.last_user_content().to_string();
             let prefetch_started = Instant::now();
-            if let Some(block) =
-                crate::memory::prefetch::run_turn_prefetch(semantic, &user_text, &self.config).await
-            {
+
+            let memory_fut = async {
+                if let Some(semantic) = self.semantic.as_ref() {
+                    crate::memory::prefetch::run_turn_prefetch(semantic, &user_text, &self.config).await
+                } else {
+                    None
+                }
+            };
+            let doc_fut = async {
+                if let Some(ds) = self.document_store.as_ref() {
+                    crate::memory::prefetch::run_document_prefetch(ds, &user_text, &self.config).await
+                } else {
+                    None
+                }
+            };
+
+            let (memory_block, doc_block) = tokio::join!(memory_fut, doc_fut);
+
+            let mut activity_parts: Vec<String> = Vec::new();
+            if let Some(block) = memory_block {
                 self.last_prefetch_ms = prefetch_started.elapsed().as_millis() as u64;
                 let hit_count = block.matches('\n').count().saturating_add(1);
-                self.activity_line = Some(format!("Recalled {hit_count} indexed fact(s)"));
+                activity_parts.push(format!("{hit_count} memory fact(s)"));
                 self.context_assembler.set_turn_prefetch_block(Some(block));
+            }
+            if let Some(block) = doc_block {
+                let hit_count = block.matches("(from ").count().max(1);
+                activity_parts.push(format!("{hit_count} document passage(s)"));
+                self.context_assembler.set_turn_document_prefetch_block(Some(block));
+            }
+            if !activity_parts.is_empty() {
+                self.activity_line = Some(format!("Recalled {}", activity_parts.join(" + ")));
             }
         }
 
@@ -511,11 +537,13 @@ impl<E: LlmEngine> Orchestrator<E> {
                 Ok(p) => p,
             };
 
-            self.emit_optional_user_message(&response.content).await;
+            let deck_content =
+                self.stitch_pending_weather_report_into_content(&response.content);
+            self.emit_optional_user_message(&deck_content).await;
 
             self.chat_stack.push(crate::engine::Message {
                 role: "assistant".to_string(),
-                content: response.content.clone(),
+                content: deck_content,
             });
 
             let total_tokens = response.generated_tokens + response.prompt_tokens;

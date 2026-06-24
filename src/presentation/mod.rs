@@ -144,6 +144,8 @@ pub enum SessionEvent {
     /// JSON protocol `thought` string from the assistant reply (internal reasoning; not `message_to_user`).
     ModelThought(String),
     SystemError(String),
+    /// Non-error UI line (upload/ingest status, etc.) — telemetry only, no LLM turn.
+    UiNotice(String),
     /// Fired by the alarm scheduler; the active view forwards to [`UserAction`] (plain inject or agenda confirmation).
     SystemAlarm(AlarmPayload),
 }
@@ -256,6 +258,14 @@ mod tests {
             image: None,
             audio: None,
         };
+        let j = serde_json::to_string(&ev).expect("serialize");
+        let back: SessionEvent = serde_json::from_str(&j).expect("deserialize");
+        assert_eq!(ev, back);
+    }
+
+    #[test]
+    fn session_event_json_roundtrip_ui_notice() {
+        let ev = SessionEvent::UiNotice("document ingested".into());
         let j = serde_json::to_string(&ev).expect("serialize");
         let back: SessionEvent = serde_json::from_str(&j).expect("deserialize");
         assert_eq!(ev, back);

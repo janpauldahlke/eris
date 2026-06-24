@@ -122,6 +122,21 @@ pub fn fallback_triggers(tool_name: &str) -> &'static str {
         "media:meta" => {
             "update image notes, add tag to photo, correct image description, append catalog note"
         }
+        "doc:ingest" => {
+            "ingest uploaded document, index pdf markdown file, parse and chunk uploaded report, add document to rag"
+        }
+        "doc:read" => {
+            "read document sequentially, page through uploaded pdf, read chunks of ingested file, sequential document reading, read the uploaded report page by page"
+        }
+        "doc:query" => {
+            "search uploaded documents, find passage in pdf, query ingested report, document semantic search, what does the upload say"
+        }
+        "doc:list" => {
+            "list ingested documents, what documents are indexed, show uploaded files in rag"
+        }
+        "doc:delete" => {
+            "remove ingested document, delete uploaded document from index, unindex document"
+        }
         _ => "",
     }
 }

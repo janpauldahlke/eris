@@ -1,5 +1,9 @@
 # Ephemeral big-content lens (pagination + query)
 
+!!!!DEPRECATED!!!
+
+in favor of [large document rag](LARGE_DOCUMENT_RAG_PIPELINE.md)
+
 ## Goal
 
 Handle **large blobs only in ephemeral** ([`EphemeralMemory`](src/memory/ephemeral)): stage once, return a **small receipt** to the LLM, then read back via **ordered pages** (chunk windows) and/or **top-k query** over chunks—same mental model as [`web:fetch`](src/tools/web/fetch.rs) + [`web:artifact_query`](src/tools/web/artifact_query.rs), but **not** tied to URLs or vault paths.
