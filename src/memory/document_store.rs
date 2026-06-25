@@ -358,6 +358,32 @@ impl DocumentStore {
         )
         .await?;
 
+        if self.config.document_rag.cleanup_source_after_ingest {
+            let upload_prefix = self
+                .config
+                .web_ui
+                .uploads
+                .files
+                .upload_dir
+                .trim_end_matches('/');
+            if source_path.starts_with(upload_prefix) {
+                if let Err(e) = fs::remove_file(&abs).await {
+                    tracing::warn!(
+                        event = "fcp.document_ingest.source_cleanup_failed",
+                        path = %source_path,
+                        error = %e,
+                        "Post-ingest source file cleanup failed"
+                    );
+                } else {
+                    tracing::info!(
+                        event = "fcp.document_ingest.source_cleaned",
+                        path = %source_path,
+                        "Deleted source file after successful ingest"
+                    );
+                }
+            }
+        }
+
         Ok(IngestReceipt {
             doc_id,
             content_hash: content_hash.clone(),

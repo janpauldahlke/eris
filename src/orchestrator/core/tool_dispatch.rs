@@ -3,9 +3,10 @@ use crate::executive::error::{FcpError, Result};
 use crate::orchestrator::context::resolved_tool_recovery::SYSTEM_RECOVERY_PREFIX;
 use crate::orchestrator::llm_support::json_envelope::natural_language_schema_description;
 use crate::orchestrator::llm_support::post_tool_guidance::{
-    POST_TOOL_USER_REPLY_GUIDANCE, POST_TOOL_WEATHER_COMMENT_GUIDANCE,
-    ensure_web_find_paired_with_fetch_tools, recover_override_message_for_tool_failure,
-    user_wants_media_catalog, vision_see_catalog_nudge,
+    POST_TOOL_REFLECT_CONTINUATION_GUIDANCE, POST_TOOL_USER_REPLY_GUIDANCE,
+    POST_TOOL_WEATHER_COMMENT_GUIDANCE, ensure_web_find_paired_with_fetch_tools,
+    recover_override_message_for_tool_failure, user_wants_media_catalog,
+    vision_see_catalog_nudge,
 };
 use crate::tools::web::ledger::policy::WEB_FIND_BEFORE_REFETCH;
 use crate::orchestrator::r#loop::recovery_policy::{ToolFailureAction, classify_tool_failure};
@@ -71,6 +72,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         }
         let tools = stable_prioritize_clock_now_before_db(tools);
         let batch_includes_catalog = tools.iter().any(|t| t.name == "media:catalog");
+        let batch_had_doc_read = tools.iter().any(|t| t.name == "doc:read");
         tracing::info!(
             event = "orchestrator.tools.batch",
             tool_count = tools.len(),
@@ -661,13 +663,28 @@ impl<E: LlmEngine> Orchestrator<E> {
             // (e.g. repeated `mail:write`) until it finally returns Idle. See orchestrator field
             // doc on `force_full_tool_schemas_in_llm_view` (same intended lifetime as this set).
             targeted_tools.clear();
+
+            if current_state == AgentState::Reflect && batch_had_doc_read {
+                crate::orchestrator::context::prune_stale_tool_results(
+                    &mut self.chat_stack,
+                    "doc:read",
+                    1,
+                );
+            }
+
+            let guidance = if current_state == AgentState::Reflect {
+                POST_TOOL_REFLECT_CONTINUATION_GUIDANCE
+            } else {
+                POST_TOOL_USER_REPLY_GUIDANCE
+            };
             self.chat_stack.push(crate::engine::Message {
                 role: "system".to_string(),
-                content: POST_TOOL_USER_REPLY_GUIDANCE.to_string(),
+                content: guidance.to_string(),
             });
             tracing::debug!(
                 target: "fcp.context_view",
                 event = "post_tool_user_reply_guidance_injected",
+                reflect_continuation = (current_state == AgentState::Reflect),
                 "Post-tool guidance appended after successful tool batch"
             );
         }

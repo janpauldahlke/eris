@@ -7,6 +7,7 @@ use serde_json::Value;
 
 use crate::executive::error::{FcpError, Result};
 use crate::memory::document_store::DocumentStore;
+use crate::tools::context_view_hint::ToolContextViewHint;
 use crate::tools::traits::Tool;
 
 #[derive(Deserialize, JsonSchema)]
@@ -39,6 +40,10 @@ impl Tool for DocReadTool {
 
     fn parameters_schema(&self) -> schemars::schema::RootSchema {
         schemars::schema_for!(DocReadArgs)
+    }
+
+    fn context_view_hint(&self) -> ToolContextViewHint {
+        ToolContextViewHint::Full
     }
 
     async fn execute(&self, args: Value) -> Result<String> {

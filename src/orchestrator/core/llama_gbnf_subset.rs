@@ -109,6 +109,13 @@ pub(crate) fn slim_offered_tool_names(
         }
     }
 
+    if offered.iter().any(|n| n == "doc:read")
+        && !offered.iter().any(|n| n == "vault:write")
+        && Gatekeeper::state_allows_tool(state, "vault:write")
+    {
+        offered.push("vault:write".to_string());
+    }
+
     offered
 }
 

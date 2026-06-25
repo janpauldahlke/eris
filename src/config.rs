@@ -1522,6 +1522,12 @@ pub struct DocumentRagConfig {
     pub document_prefetch_max_chars_per_hit: usize,
     #[serde(default = "default_document_rag_prefetch_timeout_secs")]
     pub document_prefetch_timeout_secs: u64,
+
+    /// Delete the source file from `99_USER_UPLOADED/files/` after successful
+    /// ingest into Qdrant.  Mirrors the web-mission cleanup pattern: once the
+    /// content lives as vectors the raw blob is dead weight.
+    #[serde(default)]
+    pub cleanup_source_after_ingest: bool,
 }
 
 fn default_document_rag_enabled() -> bool {
@@ -1553,7 +1559,7 @@ fn default_document_rag_max_file_bytes() -> u64 {
 }
 
 fn default_document_rag_max_chunks_per_doc() -> u32 {
-    500
+    4000
 }
 
 fn default_document_rag_query_top_k_default() -> u32 {
@@ -1628,6 +1634,7 @@ impl Default for DocumentRagConfig {
             document_prefetch_max_chars: default_document_rag_prefetch_max_chars(),
             document_prefetch_max_chars_per_hit: default_document_rag_prefetch_max_chars_per_hit(),
             document_prefetch_timeout_secs: default_document_rag_prefetch_timeout_secs(),
+            cleanup_source_after_ingest: false,
         }
     }
 }

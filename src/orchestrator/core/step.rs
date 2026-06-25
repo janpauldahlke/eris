@@ -7,7 +7,7 @@ use crate::orchestrator::llm_support::json_envelope::{
 use crate::orchestrator::r#loop::directive_policy::decide_transition_from_directive;
 use crate::orchestrator::r#loop::tool_batch::ToolBatchDecision;
 use crate::orchestrator::r#loop::transition::{StateTransition, TransitionControl};
-use crate::orchestrator::state::{AgentState, LoopDirective, ToolIntentTicket};
+use crate::orchestrator::state::{AgentState, LoopAction, LoopDirective, ToolIntentTicket};
 use crate::presentation::SessionEvent;
 use crate::telemetry::routing_codes;
 use std::collections::{HashMap, HashSet};
@@ -18,6 +18,7 @@ use super::{
     RECOVERY_BUDGET_EXHAUSTED_DECK_LINE, TOOL_ROUND_CAP_SYSTEM_GUIDANCE,
 };
 use crate::config::AppConfig;
+use crate::tools::Gatekeeper;
 
 /// Sampling temperature for LLM calls after at least one recovery message was pushed this `step()`.
 const RECOVERY_PASS_LLM_TEMPERATURE: f32 = 0.25;
@@ -168,7 +169,9 @@ impl<E: LlmEngine> Orchestrator<E> {
                 }
                 return Ok(());
             }
-            if self.tool_rounds >= self.max_tool_rounds {
+            if self.tool_rounds >= self.max_tool_rounds
+                && self.state != AgentState::Reflect
+            {
                 if !self.tool_round_cap_final_pass_pending {
                     self.tool_round_cap_final_pass_pending = true;
                     tracing::warn!(
@@ -257,6 +260,14 @@ impl<E: LlmEngine> Orchestrator<E> {
                             offered.push(name);
                         }
                     }
+                }
+                // doc:read workflows (doc-summarize skill) need vault:write to
+                // persist running notes; semantic routing won't match it.
+                if offered.iter().any(|n| n == "doc:read")
+                    && !offered.iter().any(|n| n == "vault:write")
+                    && Gatekeeper::state_allows_tool(&self.state, "vault:write")
+                {
+                    offered.push("vault:write".to_string());
                 }
                 tracing::info!(
                     event = "fcp.tool_prompt.assembly",
@@ -567,6 +578,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             }
 
             // 4. Directive Processing
+            let model_declared_reflect = parsed.status() == LoopAction::Reflect;
             let directive = self.directive_from_parsed(parsed);
             tracing::info!(directive = ?directive, "Directive from LLM response");
             let tool_cap_final = self.tool_round_cap_final_pass_pending;
@@ -578,6 +590,10 @@ impl<E: LlmEngine> Orchestrator<E> {
             }
             match transition {
                 StateTransition::ExecuteTools(tools) => {
+                    if model_declared_reflect && self.state != AgentState::Reflect {
+                        self.state = AgentState::Reflect;
+                        self.broadcast_state().await;
+                    }
                     let decision = self
                         .execute_tool_batch(
                             tools,

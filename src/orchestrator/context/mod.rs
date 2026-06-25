@@ -3,6 +3,7 @@
 
 mod assembler;
 mod compendium;
+pub mod prune;
 pub mod resolved_tool_recovery;
 pub mod stack_lines;
 mod view;
@@ -10,6 +11,7 @@ mod window;
 
 pub use assembler::ContextAssembler;
 pub use compendium::{build_phrase_compendium, typical_phrasing_for_tool};
+pub use prune::prune_stale_tool_results;
 pub use stack_lines::{
     ParsedSystemLine, TOOL_SUCCESS_INFIX, TOOL_SUCCESS_PREFIX, ToolSuccessLine,
     format_tool_success_line, parse_system_line, try_parse_tool_success_line,

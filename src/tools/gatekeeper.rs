@@ -32,7 +32,7 @@ impl Gatekeeper {
         self.registry.insert(name.to_string(), tool);
     }
 
-    fn state_allows_tool(state: &AgentState, tool_name: &str) -> bool {
+    pub fn state_allows_tool(state: &AgentState, tool_name: &str) -> bool {
         match state {
             AgentState::Chat => !matches!(tool_name, "agenda:complete"),
             AgentState::Reflect => matches!(
@@ -48,6 +48,7 @@ impl Gatekeeper {
                     | "doc:list"
                     | "doc:delete"
                     | "vault:read"
+                    | "vault:write"
                     | "vault:list"
                     | "vault:search"
                     | "vault:taglist"
@@ -595,7 +596,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn test_gatekeeper_unauthorized_tool_in_reflect() {
+    async fn test_gatekeeper_vault_write_allowed_in_reflect() {
         let mut gatekeeper = Gatekeeper::new();
         gatekeeper.register(Arc::new(MockVaultWrite));
 
@@ -603,16 +604,18 @@ mod tests {
             .execute_tool(
                 &AgentState::Reflect,
                 "vault:write",
-                json!({"path": "test.md", "content": "test"}),
+                json!({"path": "20_Discourse/doc-notes/test.md", "content": "notes"}),
             )
             .await;
-        assert!(res.is_err());
-        match res {
-            Err(FcpError::ToolFault { reason, .. }) => {
-                assert!(reason.contains("not authorized"));
-            }
-            _ => panic!("Expected ToolFault"),
-        }
+        assert!(res.is_ok(), "vault:write must be allowed in Reflect for doc-summarize skill workflow");
+    }
+
+    #[test]
+    fn test_gatekeeper_chat_only_tools_blocked_in_reflect() {
+        assert!(
+            !Gatekeeper::state_allows_tool(&AgentState::Reflect, "calendar:create"),
+            "Mutating tools without Reflect allowlist entry must remain blocked"
+        );
     }
 
     #[test]

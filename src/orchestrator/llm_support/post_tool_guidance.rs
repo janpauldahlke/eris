@@ -6,6 +6,13 @@ pub const POST_TOOL_USER_REPLY_GUIDANCE: &str = r#"[FCP POST-TOOL — USER REPLY
 Your next JSON answer with status Idle must put the human-facing text in `message_to_user`: full sentences, plain language, and explain what the tool results mean for the user. Do not answer with raw JSON, one-line dumps, or robotic telegraphy. Use `thought` only for internal reasoning.
 [/FCP POST-TOOL — USER REPLY]"#;
 
+/// Injected instead of [`POST_TOOL_USER_REPLY_GUIDANCE`] when the model is in
+/// Reflect state, so multi-step tool workflows (e.g. paginated doc:read for
+/// full-book summarization) are not prematurely terminated.
+pub const POST_TOOL_REFLECT_CONTINUATION_GUIDANCE: &str = r#"[FCP POST-TOOL — CONTINUE]
+Tool results are above. You are in a multi-step workflow (Reflect). If you need more data to complete the user's request, continue with status Reflect and additional tool_calls. Only set status Idle with a complete answer in message_to_user when you have gathered enough information. Do not stop early with a progress report — the user asked for the full result.
+[/FCP POST-TOOL — CONTINUE]"#;
+
 /// Weather-only batches: LLM adds a brief human line; the runtime appends the deterministic report.
 pub const POST_TOOL_WEATHER_COMMENT_GUIDANCE: &str = r#"[FCP POST-TOOL — WEATHER]
 A pre-formatted markdown weather report is appended automatically after your reply — do not repeat temperatures, emoji forecast lines, or tables.
