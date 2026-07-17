@@ -20,10 +20,15 @@ fn should_generate() -> bool {
 }
 
 fn main() {
+    // Only re-run when the generation trigger or the generated output changes —
+    // without these directives cargo re-executes this script on every build.
+    println!("cargo:rerun-if-env-changed=GWS_GEN");
+    println!("cargo:rerun-if-changed=src/generated/gws_types");
+    println!("cargo:rerun-if-changed=scripts/build.rs");
+
     if !should_generate() {
-        println!(
-            "cargo:warning=gws-builder: skipping generation (src/generated/gws_types/ already populated; set GWS_GEN=1 to force)"
-        );
+        // Silent skip: this is the normal case on every build (generated types are
+        // checked in); a cargo:warning here is pure noise. Set GWS_GEN=1 to force.
         return;
     }
 

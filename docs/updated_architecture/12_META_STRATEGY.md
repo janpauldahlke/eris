@@ -118,7 +118,21 @@ Honest read: **Patreon underperforms for developer tools** — it lives off para
 
 ---
 
-## 8. Condensed action list
+## 8. Where the potential is (ranked closing judgment)
+
+Written after the July 2026 review session, as the takeaway ranking across docs 10–13.
+
+1. **Turn the reliability claim into measured evidence.** Eris's differentiator is "disciplined pipelines for small local models" — every competitor *asserts* reliability; nobody *measures* it. The ~4.5k-line `benchmark/` harness already exists and has never been pointed at the one question that matters publicly: **JSON envelope validity rate — grammar vs. no grammar, across context lengths, across 2–3 models.** One table does four jobs: validates the headline claim before strangers do, verifies whether `n_predict_max` moved the needle, becomes the centerpiece of launch essay #1, and preempts r/LocalLLaMA skepticism. ~2 days reusing existing code. Nothing converts effort into credibility at a better rate.
+2. **Subtraction as the primary engineering strategy.** The tier-ladder deletion ([13](./13_MEMVID_AND_MEMORY_SIMPLIFICATION.md) §2), the Ollama demotion ([11](./11_OSS_SHIPPING_ROADMAP.md) §1), the core-vs-extras freeze — the aggregate matters more than the parts: eris at ~40k lines is a *better and sustainable* product for a solo maintainer. Every deleted subsystem is context returned to the maintainer's head — the actual scarce resource. For the next six months, "what can I remove" outranks "what can I add."
+3. **The read-time memory inversion** ([13](./13_MEMVID_AND_MEMORY_SIMPLIFICATION.md) §2): stop deciding at write time what will matter (the promote ladder — unknowable), decide at read time what matters now (similarity × recency — what embeddings are for). More than a refactor: a better theory of agent memory, publishable, and the kind of design insight that gets a project noticed. Simmer, don't rush.
+
+**Explicitly ranked low despite the audit:** the orchestrator god-component ([10](./10_DEEP_REVIEW_2026-07.md) §2). Most visible flaw, least urgent — it hurts contributors that don't exist yet, not the product. Fix lazily, when the first real external PR to `orchestrator/core/` arrives.
+
+Compressed: **the code is done enough — the deficit is proof and reach, not features.** Measure the claim, publish the measurement, delete what you can, let the memory idea simmer. In that order.
+
+---
+
+## 9. Condensed action list
 
 ```text
 Gate: M0 (this weekend)

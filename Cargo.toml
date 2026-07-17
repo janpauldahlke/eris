@@ -8,6 +8,11 @@ authors = [
     "Eris <admin@eris-system.dev>",
 ]
 edition = "2024"
+license = "Apache-2.0"
+description = "Local-first agent: Markdown vault as memory, grammar-enforced tool calls on llama.cpp, nothing leaves your machine unless you say so."
+repository = "https://github.com/janpauldahlke/eris"
+keywords = ["llm", "agent", "local-first", "llama-cpp", "tui"]
+categories = ["command-line-utilities"]
 
 [[bin]]
 name = "eris-test-full"

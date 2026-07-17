@@ -119,13 +119,17 @@ Eris's differentiator is local-first. Make the promise explicit and auditable:
 
 ```text
 [ ] gitleaks detect --log-opts="--all"        # abort-gate: rotate anything found
-[ ] LICENSE + NOTICE + Cargo.toml license field
-[ ] README: new top section; delete "All Rights Reserved" + CLA strategy prose
-[ ] Park docs/CLA.md + signatures/; add CONTRIBUTING.md stub with DCO
-[ ] .gitignore += .idea/
-[ ] Remove/error-stub `eris run` + `eris tool`
-[ ] SECURITY.md with privacy statement
-[ ] GitHub: squash-check repo settings (issues on, discussions optional)
+[x] LICENSE + NOTICE + Cargo.toml license field
+[x] README: rewritten user-facing; full reference moved to docs/REFERENCE.md;
+    "All Rights Reserved" + CLA prose deleted
+[x] CLA removed (docs/CLA.md, .github/workflows/cla.yml, signatures/);
+    CONTRIBUTING.md with DCO added
+[x] .gitignore += .idea/
+[x] `eris run` + `eris tool` now return honest not-implemented errors
+[x] SECURITY.md with privacy statement
+[x] Codecov removed from CI (clippy + sharded tests remain)
+[ ] Record TUI demo GIF (placeholder marked in README)
+[ ] GitHub: repo settings (issues on, discussions optional); GitHub Sponsors profile
 [ ] Tag v0.1.0-alpha, release notes with honest "known limitations"
 ```
 

@@ -1,4 +1,4 @@
-# Rust CI: clippy, shared test build, matrix test/coverage shards (OOM + long-job safe).
+# Rust CI: clippy, shared test build, matrix test shards (OOM + long-job safe).
 # Toolchain: https://github.com/dtolnay/rust-toolchain
 # Caching: https://github.com/Swatinem/rust-cache
 
@@ -124,50 +124,3 @@ jobs:
             exit 1
           fi
 
-  coverage:
-    name: Coverage (${{ matrix.batch }})
-    needs: [clippy, test]
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        batch: *test-batches
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
-
-      - uses: Swatinem/rust-cache@v2
-
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-llvm-cov
-
-      - name: cargo llvm-cov (${{ matrix.batch }})
-        run: |
-          set -o pipefail
-          batch='${{ matrix.batch }}'
-          output="$(
-            CARGO_TERM_COLOR=never cargo llvm-cov test --bin eris "$batch" \
-              --codecov --output-path codecov.json \
-              -- --test-threads=1 2>&1 | tee /dev/stderr
-          )"
-          if printf '%s\n' "$output" | grep -qE '^test result: ok\. 0 passed'; then
-            echo "ERROR: batch filter matched zero tests: $batch"
-            exit 1
-          fi
-          if ! printf '%s\n' "$output" | grep -qE '^test result: ok\.'; then
-            echo "ERROR: cargo llvm-cov test did not succeed for batch: $batch"
-            exit 1
-          fi
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        continue-on-error: true
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: codecov.json
-          fail_ci_if_error: false

@@ -59,7 +59,7 @@ async fn main() -> ExitCode {
         }
     };
 
-    tracing::info!("Starting FCP Subconscious Orchestrator...");
+    tracing::info!("Starting Eris...");
     tracing::info!(
         model = %config.model_name,
         workspace = %config.workspace,
