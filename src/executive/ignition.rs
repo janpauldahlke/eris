@@ -293,6 +293,7 @@ pub async fn run_ignition_sequence(
                     shutdown_grace_secs: 30,
                     shutdown_stagger_secs: 3,
                     shutdown_allow_sigkill: true,
+                    n_predict_max: 2048,
                     mmproj_path: None,
                     media_path: None,
                 };

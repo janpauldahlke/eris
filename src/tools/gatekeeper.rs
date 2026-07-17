@@ -984,6 +984,10 @@ mod tests {
             "moltbook:verify",
             "moltbook:notifications_read",
             "moltbook:dm",
+            "vision:see",
+            "vision:display",
+            "media:catalog",
+            "media:meta",
         ];
 
         for tool in known_tools {

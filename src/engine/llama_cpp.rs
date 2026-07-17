@@ -331,11 +331,22 @@ impl LlmEngine for LlamaCppClient {
             None => (false, None, None),
         };
 
+        // Bounded completion: an unbounded generation that runs into the server's
+        // `--ctx-size` is cut off mid-envelope, producing invalid JSON the grammar
+        // cannot prevent. `<= 0` in config restores the legacy unbounded behavior.
+        let n_predict = self
+            .config
+            .llama_cpp
+            .as_ref()
+            .map(|lc| lc.n_predict_max)
+            .filter(|&cap| cap > 0)
+            .unwrap_or(-1);
+
         let request_body = ChatCompletionRequest {
             messages,
             stream: use_stream,
             temperature: Some(temperature),
-            n_predict: Some(-1),
+            n_predict: Some(n_predict),
             grammar: wire_grammar,
             chat_template_kwargs,
         };

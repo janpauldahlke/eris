@@ -70,7 +70,8 @@ impl GbnfSubsetCache {
     }
 }
 
-/// Same offered list as slim assembly in [`super::step::Orchestrator::step`].
+/// Single source of truth for the slim offered-tool list: used by both slim prompt
+/// assembly and the per-hop GBNF subset grammar in [`super::step::Orchestrator::step`].
 pub(crate) fn slim_offered_tool_names(
     pre_llm_matched_tools: &[String],
     tool_map_offer_cap: usize,

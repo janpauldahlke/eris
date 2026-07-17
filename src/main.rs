@@ -47,7 +47,11 @@ async fn main() -> ExitCode {
 
     // 3. Telemetry under the same directory as chat (launch cwd).
     let log_vault_root = config.active_vault();
-    let _guard = match crate::telemetry::logger::init_tracing(&log_vault_root) {
+    let _guard = match crate::telemetry::logger::init_tracing(
+        &log_vault_root,
+        &config.log_level,
+        cli.verbose > 0,
+    ) {
         Ok(guard) => guard,
         Err(e) => {
             eprintln!("Failed to initialize telemetry: {}", e);

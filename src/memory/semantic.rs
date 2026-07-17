@@ -180,14 +180,17 @@ impl SemanticBrain {
             .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
 
         if !exists {
+            // Width from the active embedding provider, not a hardcoded constant:
+            // creating a 768-dim collection under a non-768 model would poison every upsert.
+            let dims = embed.dimensions() as u64;
             client
                 .create_collection(
                     CreateCollectionBuilder::new(collection_name)
-                        .vectors_config(VectorParamsBuilder::new(768, Distance::Cosine)),
+                        .vectors_config(VectorParamsBuilder::new(dims, Distance::Cosine)),
                 )
                 .await
                 .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
-            tracing::info!(collection = %collection_name, "Created Qdrant collection");
+            tracing::info!(collection = %collection_name, dims, "Created Qdrant collection");
         }
 
         Ok(Self {

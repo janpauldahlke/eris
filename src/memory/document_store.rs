@@ -88,14 +88,16 @@ impl DocumentStore {
             .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
 
         if !exists {
+            // Width from the active embedding provider (see `SemanticBrain::new` rationale).
+            let dims = embed.dimensions() as u64;
             client
                 .create_collection(
                     CreateCollectionBuilder::new(collection)
-                        .vectors_config(VectorParamsBuilder::new(768, Distance::Cosine)),
+                        .vectors_config(VectorParamsBuilder::new(dims, Distance::Cosine)),
                 )
                 .await
                 .map_err(|e| FcpError::NetworkFault(e.to_string()))?;
-            tracing::info!(collection = %collection, "Created Qdrant document collection");
+            tracing::info!(collection = %collection, dims, "Created Qdrant document collection");
         }
 
         let store = Self {

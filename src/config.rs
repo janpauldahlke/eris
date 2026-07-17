@@ -578,6 +578,12 @@ pub struct LlamaCppConfig {
     /// when you want servers left running after exit.
     #[serde(default = "default_llamacpp_shutdown_allow_sigkill")]
     pub shutdown_allow_sigkill: bool,
+    /// Upper bound on completion tokens per request (`n_predict`). Guards against context-window
+    /// truncation mid-JSON-envelope on long prompts: the GBNF grammar guarantees shape but not
+    /// completion, so an unbounded generation that hits `--ctx-size` yields a truncated (invalid)
+    /// envelope. `0` or negative = unbounded (legacy `-1` behavior; not recommended).
+    #[serde(default = "default_llamacpp_n_predict_max")]
+    pub n_predict_max: i32,
     /// Multimodal projector GGUF; required when [`crate::config::VisionConfig::enabled`] is true.
     #[serde(default)]
     pub mmproj_path: Option<PathBuf>,
@@ -602,6 +608,10 @@ fn default_llamacpp_shutdown_allow_sigkill() -> bool {
     true
 }
 
+fn default_llamacpp_n_predict_max() -> i32 {
+    2048
+}
+
 impl Default for LlamaCppConfig {
     fn default() -> Self {
         Self {
@@ -617,6 +627,7 @@ impl Default for LlamaCppConfig {
             shutdown_grace_secs: default_llamacpp_shutdown_grace_secs(),
             shutdown_stagger_secs: default_llamacpp_shutdown_stagger_secs(),
             shutdown_allow_sigkill: default_llamacpp_shutdown_allow_sigkill(),
+            n_predict_max: default_llamacpp_n_predict_max(),
             mmproj_path: None,
             media_path: None,
         }

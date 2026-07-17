@@ -18,7 +18,6 @@ use super::{
     RECOVERY_BUDGET_EXHAUSTED_DECK_LINE, TOOL_ROUND_CAP_SYSTEM_GUIDANCE,
 };
 use crate::config::AppConfig;
-use crate::tools::Gatekeeper;
 
 /// Sampling temperature for LLM calls after at least one recovery message was pushed this `step()`.
 const RECOVERY_PASS_LLM_TEMPERATURE: f32 = 0.25;
@@ -239,36 +238,15 @@ impl<E: LlmEngine> Orchestrator<E> {
                     )
                     .await?
             } else if slim_assembly {
-                let mut offered: Vec<String> = if pre_llm_matched_tools.is_empty() {
-                    vec![]
-                } else {
-                    let cap = self.tool_map_offer_cap;
-                    if cap == 0 {
-                        pre_llm_matched_tools.clone()
-                    } else {
-                        pre_llm_matched_tools.iter().take(cap).cloned().collect()
-                    }
-                };
-                // Slim mode filters to `offered` only; semantic routing can omit every `moltbook:*`
-                // while the Moltbook overlay still instructs browse behavior — union native tools.
-                if moltbook_overlay_latched && !offered.is_empty() {
-                    for name in self
-                        .gatekeeper
-                        .allowed_tool_names_with_prefix(&self.state, "moltbook:")
-                    {
-                        if !offered.contains(&name) {
-                            offered.push(name);
-                        }
-                    }
-                }
-                // doc:read workflows (doc-summarize skill) need vault:write to
-                // persist running notes; semantic routing won't match it.
-                if offered.iter().any(|n| n == "doc:read")
-                    && !offered.iter().any(|n| n == "vault:write")
-                    && Gatekeeper::state_allows_tool(&self.state, "vault:write")
-                {
-                    offered.push("vault:write".to_string());
-                }
+                // Single source of truth shared with the GBNF subset path below, so the
+                // grammar and the slim tool map can never drift apart.
+                let offered = slim_offered_tool_names(
+                    &pre_llm_matched_tools,
+                    self.tool_map_offer_cap,
+                    moltbook_overlay_latched,
+                    &self.gatekeeper,
+                    &self.state,
+                );
                 tracing::info!(
                     event = "fcp.tool_prompt.assembly",
                     mode = "slim_phrase_map",

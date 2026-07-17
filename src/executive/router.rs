@@ -560,16 +560,19 @@ pub async fn execute_command(
 
             Ok(())
         }
+        // Honest stubs: these subcommands are declared but not implemented. Failing loudly
+        // beats silently returning success (operators scripting against them must know).
         Commands::Run { prompt } => {
             let _ = prompt;
-            Ok(())
+            Err(FcpError::Config(
+                "`eris run` is not implemented yet; use `eris chat` instead.".to_string(),
+            ))
         }
         Commands::Tool { name, args } => {
             let _ = args;
-            match name.as_str() {
-                "memory:query" => Ok(()),
-                _ => Err(FcpError::Config(format!("Tool not found: {}", name))),
-            }
+            Err(FcpError::Config(format!(
+                "`eris tool` is not implemented yet (requested tool: {name}); use `eris chat` instead."
+            )))
         }
     }
 }
@@ -627,7 +630,8 @@ mod tests {
             prompt: "test".to_string(),
         };
         let result = execute_command(test_cli(cmd), test_config(), cancel_token).await;
-        assert!(result.is_ok());
+        // `eris run` is an honest not-implemented stub.
+        assert!(matches!(result, Err(FcpError::Config(_))));
     }
 
     /// Submit queues work that runs `system:health` (Reflect), then `SystemInject` is already on
