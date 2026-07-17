@@ -2,6 +2,7 @@
 /dist
 .fcp/
 .DS_Store
+**/.DS_Store
 /vaults
 .cursor/
 .idea/
