@@ -375,6 +375,8 @@ You interact through the **TUI**, a **localhost web page**, and/or **Discord**; 
 
 ## Natural language → tool routing (phrase compendium)
 
+**Tool inventory (what exists):** see the curated roster in **[TOOLS.md](TOOLS.md)** — that list tracks the web Tools console families plus Document RAG. This section is only the human-readable **routing-phrase** mirror.
+
 Tool choice is **not** parsed from rigid commands. The orchestrator’s **ToolRouter** (`[src/orchestrator/tool_router.rs](src/orchestrator/tool_router.rs)`) embeds your text with the same model as vector memory (`embed_model_name` in config, default `nomic-embed-text`) and compares it to **precomputed** vectors—one per tool built from the tool name, JSON-schema description, and (when present) **`routing_hints`** from the embedded TOML descriptors in `[src/tools/specs.rs](src/tools/specs.rs)`. If a tool has no descriptor hints, **`routing_phrases::fallback_triggers`** in `[src/tools/routing_phrases.rs](src/tools/routing_phrases.rs)` supplies compile-time “typical phrasing” for embeddings and the slim phrase compendium. Tools whose **cosine similarity** meets `tool_match_threshold` in `.fcp/config.toml` (default **0.50**) are surfaced to the LLM. In slim tool mode the **`[FCP_TOOL_PHRASE_MAP]`** snippet is generated at runtime from registered tools plus those descriptors ([`src/orchestrator/context/compendium.rs`](src/orchestrator/context/compendium.rs)); the table below is the human-readable mirror (keep it aligned with `routing_phrases.rs` / `specs.rs`). **Web tools** need **browser39** on PATH — see [browser39 (web fetch)](#browser39-web-fetch--search--headlines).
 
 The **gatekeeper** only enforces **state** and **JSON Schema** on tool calls (`[src/tools/gatekeeper.rs](src/tools/gatekeeper.rs)`); it does not map phrases to tools.
@@ -392,7 +394,13 @@ Representative **`routing_hints`** (say things _like_ this—the model still dec
 | **vault:list**             | list files, show directory, browse folder, what files exist                                                      |
 | **vault:read**             | read file, open note, show file, inspect markdown                                                                |
 | **vault:write**            | save note, write file, append note, create markdown                                                              |
+| **vault:search**           | search vault, find in notes, grep markdown, keyword search vault                                                 |
 | **vault:taglist**          | list vault tags, map of tags, tag frequencies, synthesis taxonomy, notes under tag                                |
+| **doc:ingest**             | ingest PDF/document into RAG store, index this file for page reads                                               |
+| **doc:query**              | ask across ingested documents, semantic search documents                                                         |
+| **doc:read**               | read document page, next page of PDF, continue reading doc                                                       |
+| **doc:list**               | list ingested documents, what docs are indexed                                                                   |
+| **doc:delete**             | remove document from RAG store, delete ingested doc                                                              |
 | **memory:query**           | search memory, do you remember, what is my name, who am I, user preferences, my identity, recall context         |
 | **memory:stage**           | remember this, stage memory, temporary memory, hold in staging                                                   |
 | **memory:staged_list**     | show staged memory, list staged ids, what is staged                                                              |

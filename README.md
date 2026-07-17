@@ -32,6 +32,8 @@ Eris is **not** smarter than hosted frontier models — its intelligence ceiling
 | Agenda: reminders, alarms, self-driven follow-ups | Google Workspace mail/calendar tools |
 | Web fetch/search with allowlist, consent, and session budget | Moltbook client |
 
+Full tool roster (by family): **[docs/TOOLS.md](docs/TOOLS.md)**.
+
 ## Quickstart
 
 Prerequisites: Rust (stable, edition 2024), [llama.cpp](https://github.com/ggml-org/llama.cpp) (`llama-server`), a chat GGUF + an embedding GGUF (e.g. `nomic-embed-text`), and Qdrant for semantic memory:
@@ -77,7 +79,8 @@ Everything under [`docs/`](docs/) is **my working notes** — design diaries, re
 
 | Doc | Contents |
 |---|---|
-| [docs/REFERENCE.md](docs/REFERENCE.md) | Setup & operations reference (models, config keys, benchmark suite, tool roster) |
+| [docs/TOOLS.md](docs/TOOLS.md) | Curated tool roster by family (what ships / what is opt-in) |
+| [docs/REFERENCE.md](docs/REFERENCE.md) | Setup & operations reference (models, config, benchmarks, routing phrases) |
 | [docs/HOW_TO/](docs/HOW_TO/) | llama.cpp setup, vision, audio, adding a tool, operator manual |
 | [docs/updated_architecture/](docs/updated_architecture/README.md) | Architecture notes and self-reviews for contributors |
 
