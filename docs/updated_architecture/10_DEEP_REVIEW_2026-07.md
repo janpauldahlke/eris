@@ -102,7 +102,7 @@ Adding one tool touches, minimum: the impl file, family `mod.rs`, `chat_session.
 - Gatekeeper `known_tools` test (`gatekeeper.rs:926–987`) lists 59 of 63 — missing `vision:see`, `vision:display`, `media:catalog`, `media:meta`.
 - `registration.rs` doesn't register anything (feature gates only) — rename candidate.
 
-Gatekeeper reality check: Chat state is effectively open (denies only `agenda:complete`); Reflect/Idle/Recover are real policy. Two intentional elevation paths exist (`force_full_tool_schemas` dispatch and Recover→Chat elevation at `gatekeeper.rs:198–211`) — fine by design, but they mean Chat allowlisting is the only line of defense in the common case.
+Gatekeeper reality check: Chat state is effectively open (denies only `agenda:complete`); Reflect/Idle/Recover are real policy. Two intentional elevation paths exist (`force_full_tool_schemas` dispatch and Recover→Chat elevation at `gatekeeper.rs:198–211`) — fine by design *for user turns*, but they mean Chat allowlisting is the only line of defense in the common case, and the Recover elevation leaks Chat privileges into autonomous turns (see §10.3).
 
 Highest-ROI fixes: one CI test asserting impl names ⊆ specs ⊆ gatekeeper ⊆ known_tools; data-driven allowlist table instead of 4 `matches!` arms; dedupe `WeatherCityArgs` (`weather/current.rs` and `forecast.rs` are near-identical); move `specs.rs` blobs to `descriptors/*.toml` + `include_str!`.
 
@@ -147,7 +147,7 @@ Non-findings worth recording: the 14-file `web/` cluster (~4.5k LOC) maps to rea
 ### P1 — drift-prevention (a day each)
 
 7. CI inventory test: impl names ⊆ `specs.rs` ⊆ gatekeeper ⊆ `known_tools` (also fixes the 4 missing vision/media entries).
-8. Data-driven gatekeeper allowlists (one table, four views).
+8. Data-driven gatekeeper allowlists (one table, four views) — and key authorization on **turn origin**, not on live `self.state` (see §10.4; fixes the Recover privilege leak for autonomous turns).
 9. Shared `truncate_with_ellipsis`; dedupe `WeatherCityArgs`; TUI uses `alarm_relay`; delete `moltbook_soak_check.rs` or register it; kill `ReasoningRouter` and the unused `available_tools_json` trait param.
 10. Bound `thought`/`message_to_user` in the GBNF envelope; attach a minimal grammar to condensation calls.
 
@@ -178,3 +178,49 @@ Non-findings worth recording: the 14-file `web/` cluster (~4.5k LOC) maps to rea
 - §3.4: `enable_reasoning_fsm` is no longer dead — it gates llama.cpp `enable_thinking`. `ReasoningRouter` is still dead.
 - §4.1: vector-dim validation exists, but **collection creation still hardcodes 768** in two places — "partially resolved" was optimistic.
 - New since 09: the slim-offer prompt/grammar drift (§2), the `n_predict: -1` truncation chain (§3), the ignored `log_level` (§4), and the web-console config mirror (§7).
+
+---
+
+## 10. Addendum 2026-07-17 — state machine vs. tool authorization (incident + fix)
+
+Found live via `fcp_core.log.2026-07-17`: `news:today` (and, user-confirmed, `mail:write`) failed in ordinary chat turns with `Tool not authorized in state Reflect`. Root-caused, fixed, and regression-tested the same day. Recorded here because the *class* of bug will recur unless the structural conflation below is resolved.
+
+### 10.1 Root cause **[verified]**
+
+`AgentState` conflates two different concepts:
+
+1. **Turn origin / privilege** — who initiated the work (user chat turn, autonomous agenda/Moltbook cycle, recovery hop). This is what the Gatekeeper allowlists are *for*.
+2. **Model-declared loop phase** — the `status` field of the LLM envelope (`Reflect` = "calling tools", `Idle` = "done"). This is conversational protocol. The system prompt *instructs* the model to say `Reflect` on every tool call (status rule 1 in `assembler.rs`), and the missing-status fallback infers `Reflect` whenever `tool_calls` is non-empty (`state.rs:82–96`).
+
+Commit `b02f019` (2026-06-25, the doc-summarize experiment) wired concept 2 into concept 1: four lines in `step.rs` flipped `self.state = AgentState::Reflect` before tool dispatch whenever the model declared Reflect. Consequences of that single flip:
+
+- Every chat-turn tool call was authorized against the **reduced Reflect allowlist** — `news:today`, `web:fetch`, `web:search`, `mail:write`, `calendar:create`, `moltbook:post` etc. died at the Gatekeeper (`gatekeeper.rs` Reflect arm).
+- The **per-turn tool-round cap was bypassed** — the `max_tool_rounds` check in `step.rs` explicitly exempts Reflect (that exemption existed *for* the chunk-loop experiment).
+- It went unnoticed for ~3 weeks because the commonly-called tools (`memory:query`, `vision:display`, `db:find_connections`) happen to be on the Reflect list.
+
+Textbook drift pattern for this codebase (cf. §2, §5): a feature commit ("teach smoll models to read 1600 chunks") mutated a shared control point (`self.state`) to obtain three side effects (continuation guidance, chunk pruning, cap bypass), and the palette shrink came along invisibly.
+
+### 10.2 Fix applied (same day)
+
+- **Removed the flip** in `step.rs` (§4 "Directive Processing" now carries a NOTE explaining why model-declared `status` must never touch `self.state`). Genuine Reflect entries remain: condensation and `ShiftToReflection`.
+- **Retired the `doc-summarize` skill** (embedded default, `suggested_skills` hooks on `doc:*` in `specs.rs`, seeded vault copy). Verdict on the feature itself: an LLM cannot be its own for-loop over thousands of chunks — index drift and early stops are inherent, no prompt fixes this. The `doc:*` tools and RAG path are untouched and work. A v2 must be a **runtime-owned map-reduce** (deterministic chunk iteration in Rust, LLM only for bounded per-chunk work — same architecture as condensation, which works for exactly this reason). Design record: `docs/TODO/HANDOVER-doc-summarize-v1.md`.
+- **Regression test:** `core/tests.rs::test_model_declared_reflect_does_not_shrink_chat_tool_palette` — Chat turn, model declares Reflect + calls `news:today`, must execute and end Idle. The test first asserts its own premise (`news:today` ∉ Reflect allowlist), so allowlist changes surface it.
+
+### 10.3 Related finding still open: Recover privilege leak **[verified]**
+
+§5 called the Recover→Chat elevation (`gatekeeper.rs:198–213`, `dispatch_authorization_state`) "fine by design". Qualify that: the elevation promotes Chat-only tools to Chat authorization in **any** Recover round, with no knowledge of who started the turn. An autonomous agenda/Moltbook cycle that fails into recovery can therefore execute `mail:write` / `calendar:create` — the reduced-palette guarantee for autonomous turns silently evaporates under recovery. Not urgent (requires an autonomous turn + tool failure + the model then calling a mutating tool), but it is the same conflation as §10.1 in the opposite direction.
+
+### 10.4 Suggested solution: turn-origin authorization (keeps `AgentState` as-is)
+
+Do not add a fifth state. Split the two concepts:
+
+1. Add a field captured **once at `step()` entry**: `turn_origin: AgentState` (or a dedicated `TurnOrigin { UserChat, Autonomous, … }` enum — the executive already distinguishes these at the call sites in `chat_session.rs` where it sets `state = Chat` before each `step()`).
+2. `dispatch_authorization_state` takes `turn_origin` instead of live `self.state`: a turn that began as user chat authorizes as Chat for its entire lifetime (including Recover hops — subsumes today's Recover elevation); a turn that began autonomously keeps its reduced palette **even in Recover** (closes §10.3).
+3. Live `self.state` remains what it is good at: UI badge, prompt focus line (`runtime_state_json_contract_focus`), guidance selection (`POST_TOOL_REFLECT_CONTINUATION_GUIDANCE`), condensation bookkeeping.
+4. Fold into P1 item 8: when the four `matches!` arms become one data table, make the table's lookup key `(turn_origin, tool)` and delete `dispatch_authorization_state` entirely.
+
+Invariant to enforce from now on (candidate for a CI test): **model output may steer guidance and loop control, but must never write `self.state` or anything the Gatekeeper reads.** The two remaining model-driven writes worth auditing against this rule are in `llm_directive.rs:157,186` (`self.state = Chat` on Task/empty-Reflect before `ShiftToReflection` — benign today, same smell).
+
+### 10.5 Minor note
+
+`Idle` also carries two meanings: "awaiting user input" (UI) and "background-work tool palette" (the deterministic `agenda:complete` executes under Idle authorization, `turn_entry.rs:40`). Harmless today; resolves itself if authorization moves to turn origin.

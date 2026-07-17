@@ -1304,7 +1304,6 @@ tool_name = "doc:read"
 short_description = "Paginated sequential chunk reader for an ingested document."
 when_to_use = "Use to read through a document page by page, e.g. to summarize, review, or extract information. Pass doc_id from doc:list or doc:ingest receipt. Optional start (default 0) and count (default 15) for pagination."
 when_not_to_use = "Do not use for semantic search (doc:query). Do not use before doc:ingest."
-suggested_skills = ["doc-summarize"]
 routing_hints = ["read document", "read chunks", "page through document", "sequential read", "read uploaded file", "read the pdf"]
 
 [[examples_good]]
@@ -1327,7 +1326,6 @@ tool_name = "doc:query"
 short_description = "Semantic search over ingested document chunks."
 when_to_use = "Use when memory:query surfaced a document card (doc_id in type_fields) or the user asks what an uploaded PDF/report says. Returns cited passages."
 when_not_to_use = "Do not use for vault markdown recall (memory:query). Do not use for lexical file grep (vault:search). Do not use before doc:ingest."
-suggested_skills = ["doc-summarize"]
 routing_hints = ["search document", "what does the pdf say", "find in uploaded report", "document passage", "query ingested file"]
 
 [[examples_good]]
@@ -1345,7 +1343,6 @@ tool_name = "doc:list"
 short_description = "List ingested documents in the document RAG store."
 when_to_use = "Use to see which uploads are indexed (doc_id, chunk counts) before doc:query, doc:read, or doc:delete."
 when_not_to_use = "Do not use for vault folder listings (vault:list) or memory recall (memory:query)."
-suggested_skills = ["doc-summarize"]
 routing_hints = ["list documents", "indexed uploads", "what documents are ingested"]
 
 [[examples_good]]

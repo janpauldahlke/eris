@@ -12,8 +12,9 @@ pub const WEB_FETCH_WORKFLOW_RAW: &str =
     include_str!("defaults/web-fetch-workflow.md");
 pub const MEDIA_CATALOG_WORKFLOW_RAW: &str =
     include_str!("defaults/media-catalog-workflow.md");
-pub const DOC_SUMMARIZE_RAW: &str =
-    include_str!("defaults/doc-summarize.md");
+// `doc-summarize` retired: LLM-driven for-loops over thousands of chunks degrade
+// (index drift, early stops). A future v2 must be a runtime-owned map-reduce
+// pipeline; see docs/TODO/HANDOVER-doc-summarize-v1.md.
 
 #[derive(Debug, Clone)]
 pub struct EmbeddedSkill {
@@ -21,7 +22,7 @@ pub struct EmbeddedSkill {
     pub raw: &'static str,
 }
 
-pub fn embedded_defaults() -> [EmbeddedSkill; 8] {
+pub fn embedded_defaults() -> [EmbeddedSkill; 7] {
     [
         EmbeddedSkill {
             file_name: "mail-recipient-verify.md",
@@ -50,10 +51,6 @@ pub fn embedded_defaults() -> [EmbeddedSkill; 8] {
         EmbeddedSkill {
             file_name: "media-catalog-workflow.md",
             raw: MEDIA_CATALOG_WORKFLOW_RAW,
-        },
-        EmbeddedSkill {
-            file_name: "doc-summarize.md",
-            raw: DOC_SUMMARIZE_RAW,
         },
     ]
 }

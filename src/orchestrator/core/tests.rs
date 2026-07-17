@@ -791,6 +791,155 @@ async fn test_duplicate_only_batch_halts_without_extra_generation() {
     assert_eq!(orchestrator.state, AgentState::Idle);
 }
 
+/// Regression: a user chat turn where the model declares `status: Reflect` while calling a
+/// Chat-only tool (`news:today` is not on the Reflect allowlist) must still dispatch under
+/// Chat authorization. The doc-summarize experiment flipped `self.state` to Reflect before
+/// dispatch, which made the Gatekeeper reject news/web/mail tools in ordinary chat turns.
+#[tokio::test(flavor = "current_thread")]
+async fn test_model_declared_reflect_does_not_shrink_chat_tool_palette() {
+    #[derive(Clone)]
+    struct SequenceEngine {
+        responses: Arc<Vec<String>>,
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl LlmEngine for SequenceEngine {
+        async fn generate(
+            &self,
+            _stack: &[Message],
+            _available_tools_json: &str,
+            _stream_tx: Option<mpsc::UnboundedSender<String>>,
+            _options: LlmGenerateOptions,
+        ) -> Result<EngineResponse> {
+            let idx = self.calls.fetch_add(1, Ordering::SeqCst);
+            let content = self.responses.get(idx).cloned().unwrap_or_else(|| {
+                "{\"status\":\"Idle\",\"message_to_user\":\"done\",\"tool_calls\":[]}".to_string()
+            });
+            Ok(EngineResponse {
+                content,
+                prompt_tokens: 0,
+                generated_tokens: 0,
+                generation_ms: 0,
+            })
+        }
+    }
+
+    #[derive(schemars::JsonSchema, serde::Deserialize)]
+    struct EmptyArgs {}
+
+    struct NewsTodayStub {
+        executions: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl crate::tools::traits::Tool for NewsTodayStub {
+        fn name(&self) -> &'static str {
+            "news:today"
+        }
+        fn description(&self) -> &'static str {
+            "stub"
+        }
+        fn parameters_schema(&self) -> schemars::schema::RootSchema {
+            schemars::schema_for!(EmptyArgs)
+        }
+        async fn execute(&self, _args: serde_json::Value) -> Result<String> {
+            self.executions.fetch_add(1, Ordering::SeqCst);
+            Ok(r#"{"headlines":["stub headline"]}"#.to_string())
+        }
+    }
+
+    // Chat-only in Reflect: precondition for the regression must hold.
+    assert!(
+        !Gatekeeper::state_allows_tool(&AgentState::Reflect, "news:today"),
+        "test premise: news:today must not be on the Reflect allowlist"
+    );
+    assert!(Gatekeeper::state_allows_tool(&AgentState::Chat, "news:today"));
+
+    let reflect_with_news = r#"{
+            "thought": "user wants headlines",
+            "status": "Reflect",
+            "message_to_user": null,
+            "tool_calls": [{"name": "news:today", "args": {}}]
+        }"#
+    .to_string();
+    let idle_reply = r#"{
+            "thought": "done",
+            "status": "Idle",
+            "message_to_user": "Here are the headlines.",
+            "tool_calls": []
+        }"#
+    .to_string();
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let engine = SequenceEngine {
+        responses: Arc::new(vec![reflect_with_news, idle_reply]),
+        calls: calls.clone(),
+    };
+
+    let executions = Arc::new(AtomicUsize::new(0));
+    let mut gatekeeper = Gatekeeper::new();
+    gatekeeper.register(Arc::new(NewsTodayStub {
+        executions: executions.clone(),
+    }));
+
+    let ephemeral = Arc::new(EphemeralMemory::new("test_ws".to_string()));
+    let vault_root = Path::new("/tmp/vault");
+    let (tx, rx) = tokio::sync::watch::channel(());
+    Box::leak(Box::new(tx));
+    let (id_tx, id_rx) = tokio::sync::watch::channel(Arc::from("test identity"));
+    Box::leak(Box::new(id_tx));
+
+    let mut orchestrator = Orchestrator::new(
+        engine,
+        gatekeeper,
+        ephemeral,
+        vault_root,
+        "test_ws",
+        3,
+        5,
+        0.8,
+        4096,
+        3,
+        6000,
+        false,
+        0,
+        rx,
+        None,
+        None,
+        None,
+        ContextViewSettings::default(),
+        Arc::new(AppConfig::default()),
+        id_rx,
+        Arc::new(AtomicBool::new(false)),
+        None,
+        None,
+        None,
+        None,
+    );
+    orchestrator.state = AgentState::Chat;
+    orchestrator.chat_stack.push(Message {
+        role: "user".to_string(),
+        content: "what are today's news?".to_string(),
+    });
+
+    let result = orchestrator.step(None).await;
+    assert!(result.is_ok(), "step failed: {:?}", result.err());
+    assert_eq!(
+        executions.load(Ordering::SeqCst),
+        1,
+        "news:today must execute under Chat authorization even when the model declares Reflect"
+    );
+    assert_eq!(orchestrator.state, AgentState::Idle);
+    assert!(
+        !orchestrator
+            .chat_stack
+            .iter()
+            .any(|m| m.content.contains("not authorized in state")),
+        "no Gatekeeper authorization failure may appear on the chat stack"
+    );
+}
+
 #[test]
 fn test_extract_agenda_confirm_task_id() {
     let s = "noise\n[AGENDA_CONFIRM task_id=abc-xyz alarm_id=u late_sec=0]";

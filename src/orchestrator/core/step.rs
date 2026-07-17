@@ -7,7 +7,7 @@ use crate::orchestrator::llm_support::json_envelope::{
 use crate::orchestrator::r#loop::directive_policy::decide_transition_from_directive;
 use crate::orchestrator::r#loop::tool_batch::ToolBatchDecision;
 use crate::orchestrator::r#loop::transition::{StateTransition, TransitionControl};
-use crate::orchestrator::state::{AgentState, LoopAction, LoopDirective, ToolIntentTicket};
+use crate::orchestrator::state::{AgentState, LoopDirective, ToolIntentTicket};
 use crate::presentation::SessionEvent;
 use crate::telemetry::routing_codes;
 use std::collections::{HashMap, HashSet};
@@ -556,7 +556,13 @@ impl<E: LlmEngine> Orchestrator<E> {
             }
 
             // 4. Directive Processing
-            let model_declared_reflect = parsed.status() == LoopAction::Reflect;
+            //
+            // NOTE: the model declaring `status: Reflect` must NOT flip `self.state` here.
+            // Small models declare Reflect on virtually every tool call (and the missing-status
+            // fallback infers it), so flipping before dispatch would run ordinary chat turns
+            // under the reduced Reflect tool allowlist and bypass the tool-round cap
+            // (see the news:today / mail:write regression from the doc-summarize experiment).
+            // Genuine Reflect entries remain: condensation above and ShiftToReflection.
             let directive = self.directive_from_parsed(parsed);
             tracing::info!(directive = ?directive, "Directive from LLM response");
             let tool_cap_final = self.tool_round_cap_final_pass_pending;
@@ -568,10 +574,6 @@ impl<E: LlmEngine> Orchestrator<E> {
             }
             match transition {
                 StateTransition::ExecuteTools(tools) => {
-                    if model_declared_reflect && self.state != AgentState::Reflect {
-                        self.state = AgentState::Reflect;
-                        self.broadcast_state().await;
-                    }
                     let decision = self
                         .execute_tool_batch(
                             tools,
