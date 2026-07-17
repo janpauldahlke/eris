@@ -6,7 +6,9 @@
 
 **A local-first agent in a single Rust binary: your Markdown vault as memory, grammar-enforced tool calls on llama.cpp, and nothing leaves your machine unless you say so.**
 
-Eris (Episodic Reasoning & Inference System) runs a local LLM as a personal agent over a plain-Markdown vault (Obsidian-compatible). It reads and writes your notes, remembers across sessions through tiered semantic memory, manages reminders and alarms, and calls its tools through a JSON protocol that is **structurally enforced by a GBNF grammar** — no function-calling API required, and no cloud in the loop.
+**Eris** runs a local LLM as a personal agent over a plain-Markdown vault (Obsidian-compatible). It reads and writes your notes, remembers across sessions through tiered semantic memory, manages reminders and alarms, and calls its tools through a JSON protocol that is **structurally enforced by a GBNF grammar** — no function-calling API required, and no cloud in the loop.
+
+Named for [Eris](https://en.wikipedia.org/wiki/Eris_(mythology)) — the Greek goddess of strife and the golden apple of discord. The name is mythological, not an acronym: a local agent meant to productively disturb your vault (read, write, remember, remind).
 
 <!-- TODO: 30–60s TUI demo GIF here before public launch -->
 
@@ -63,7 +65,7 @@ The first-run wizard writes `.fcp/config.toml` (backend, model paths, GPU layers
 
 ## Status
 
-Alpha. Single-user, single-process, developed and dogfooded daily on macOS. Honest known limitations:
+Alpha. Single-user, single-process. Dogfooded on **macOS** (Apple Silicon / unified memory, Metal) and **Linux** (ideally NVIDIA GPU). Windows should run; it is less exercised and packaging is not a priority yet. Honest known limitations:
 
 - Long-context sessions can still degrade JSON discipline on the Ollama backend (grammar-less path).
 - Installation is manual (build from source + fetch models); installers and prebuilt binaries are planned.
@@ -71,11 +73,13 @@ Alpha. Single-user, single-process, developed and dogfooded daily on macOS. Hone
 
 ## Documentation
 
+Everything under [`docs/`](docs/) is **my working notes** — design diaries, reviews, how-tos, and TODOs I keep in-repo so the thinking stays visible and I can sync across machines. I curate them when I can; they are **not** a guarantee of being fully up to date with `main`. Prefer the code, this README, [`SECURITY.md`](SECURITY.md), and [`CONTRIBUTING.md`](CONTRIBUTING.md) when something conflicts.
+
 | Doc | Contents |
 |---|---|
-| [docs/REFERENCE.md](docs/REFERENCE.md) | Complete setup & operations reference (models, config keys, benchmark suite, tool roster) |
+| [docs/REFERENCE.md](docs/REFERENCE.md) | Setup & operations reference (models, config keys, benchmark suite, tool roster) |
 | [docs/HOW_TO/](docs/HOW_TO/) | llama.cpp setup, vision, audio, adding a tool, operator manual |
-| [docs/updated_architecture/](docs/updated_architecture/README.md) | Code-aligned architecture guide for contributors |
+| [docs/updated_architecture/](docs/updated_architecture/README.md) | Architecture notes and self-reviews for contributors |
 
 ## Contributing
 
