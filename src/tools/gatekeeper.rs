@@ -60,6 +60,9 @@ impl Gatekeeper {
                     | "agenda:remove"
                     | "agenda:remind_at"
                     | "agenda:remind_self"
+                    | "plan:read"
+                    | "plan:set"
+                    | "plan:update"
                     | "web:find"
                     | "vision:see"
                     | "vision:display"
@@ -111,6 +114,9 @@ impl Gatekeeper {
                     | "agenda:remove"
                     | "agenda:remind_at"
                     | "agenda:remind_self"
+                    | "plan:read"
+                    | "plan:set"
+                    | "plan:update"
                     | "web:fetch"
                     | "web:search"
                     | "news:today"
@@ -947,6 +953,9 @@ mod tests {
             "agenda:remove",
             "agenda:remind_at",
             "agenda:remind_self",
+            "plan:read",
+            "plan:set",
+            "plan:update",
             "web:fetch",
             "web:search",
             "news:today",
