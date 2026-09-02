@@ -52,6 +52,12 @@ pub fn fallback_triggers(tool_name: &str) -> &'static str {
         "plan:update" => {
             "mark step done, advance the plan, next step, update the plan, step finished, append scratch note, plan progress, update working plan, current step pointer"
         }
+        "plan:advance" => {
+            "advance the plan, mark current step done, next step, move to next step, plan step finished, continue the plan"
+        }
+        "plan:clear" => {
+            "clear the working plan, abandon the mission, cancel the plan, plan finished clear, reset working plan, done with the plan"
+        }
         "web:fetch" => {
             "fetching URLs, open this link, check this website, browse this page, read this article, get content from URL"
         }

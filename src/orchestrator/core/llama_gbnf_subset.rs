@@ -82,7 +82,7 @@ pub(crate) fn slim_offered_tool_names(
     moltbook_overlay_latched: bool,
     gatekeeper: &Gatekeeper,
     state: &AgentState,
-    pin_plan_tools: bool,
+    plan_pin: crate::orchestrator::routing::PlanPinMode,
 ) -> Vec<String> {
     crate::orchestrator::routing::apply_offer_overlays(
         pre_llm_matched_tools,
@@ -90,7 +90,7 @@ pub(crate) fn slim_offered_tool_names(
         moltbook_overlay_latched,
         gatekeeper,
         state,
-        pin_plan_tools,
+        plan_pin,
     )
 }
 
@@ -199,7 +199,14 @@ mod tests {
         let mut gk = Gatekeeper::new();
         gk.register(Arc::new(SystemHealthStub));
         let pre = vec!["system:health".to_string()];
-        let out = slim_offered_tool_names(&pre, 10, true, &gk, &AgentState::Chat, false);
+        let out = slim_offered_tool_names(
+            &pre,
+            10,
+            true,
+            &gk,
+            &AgentState::Chat,
+            crate::orchestrator::routing::PlanPinMode::None,
+        );
         assert_eq!(out, vec!["system:health".to_string()]);
     }
 
@@ -234,7 +241,14 @@ mod tests {
         }));
         gk.register(Arc::new(WebSearchTool { ctx }));
         let pre = vec!["web:fetch".to_string()];
-        let out = slim_offered_tool_names(&pre, 10, false, &gk, &AgentState::Chat, false);
+        let out = slim_offered_tool_names(
+            &pre,
+            10,
+            false,
+            &gk,
+            &AgentState::Chat,
+            crate::orchestrator::routing::PlanPinMode::None,
+        );
         assert!(out.contains(&"web:fetch".to_string()));
         assert!(out.contains(&"web:find".to_string()));
     }
@@ -246,7 +260,14 @@ mod tests {
         // cap, so it must ride along whenever vision:see is offered.
         let gk = Gatekeeper::new();
         let pre = vec!["vision:see".to_string()];
-        let out = slim_offered_tool_names(&pre, 10, false, &gk, &AgentState::Chat, false);
+        let out = slim_offered_tool_names(
+            &pre,
+            10,
+            false,
+            &gk,
+            &AgentState::Chat,
+            crate::orchestrator::routing::PlanPinMode::None,
+        );
         assert!(out.contains(&"vision:see".to_string()));
         assert!(
             out.contains(&"media:catalog".to_string()),
@@ -259,7 +280,14 @@ mod tests {
         // Guard: the pairing must not fire when vision:see is absent.
         let gk = Gatekeeper::new();
         let pre = vec!["system:health".to_string()];
-        let out = slim_offered_tool_names(&pre, 10, false, &gk, &AgentState::Chat, false);
+        let out = slim_offered_tool_names(
+            &pre,
+            10,
+            false,
+            &gk,
+            &AgentState::Chat,
+            crate::orchestrator::routing::PlanPinMode::None,
+        );
         assert!(!out.contains(&"media:catalog".to_string()));
     }
 }
