@@ -260,6 +260,45 @@ rationale = "Step ids come from plan:read; unknown ids are rejected."
 name = "long_content_in_scratch"
 args = { scratch_append = "paste the full fetched article here" }
 rationale = "Scratch holds short notes only; long content belongs in memory:stage / vault."
+
+[[examples_bad]]
+name = "duplicate_title_steps_add"
+args = { steps_add = [{ title = "Write working-plan-test.md" }] }
+rationale = "Do not re-add a step title that already exists — mark it done and advance, or use plan:advance."
+"#,
+    r#"descriptor_version = 1
+tool_name = "plan:advance"
+short_description = "Mark the current working-plan step done and move current_step_id to the next open step."
+when_to_use = "Prefer after finishing the current mission step: cheaper and safer than a partial plan:update. Optional scratch_append for short findings. When no open steps remain, the plan auto-archives and clears."
+when_not_to_use = "Do not use to create a plan (plan:set). Do not use to rewrite goal/outcome or add new steps (plan:update). Do not use for operator todos (agenda:*)."
+routing_hints = ["advance the plan", "mark current step done", "next step", "move to next step", "plan step finished", "continue the plan"]
+
+[[examples_good]]
+name = "advance_with_scratch"
+args = { scratch_append = "Listed 8 top-level vault dirs" }
+rationale = "Closes the current step and points at the next; short scratch only."
+
+[[examples_bad]]
+name = "invented_step_id"
+args = { scratch_append = "ok" }
+rationale = "No id args — plan:advance uses the plan's current_step_id automatically."
+"#,
+    r#"descriptor_version = 1
+tool_name = "plan:clear"
+short_description = "Clear the active working plan (archives under .fcp/tools/working_plan_archive/ by default)."
+when_to_use = "Call when the mission is finished or abandoned so Status UI and plan tool pinning drop. Also runs automatically when the last open step is marked done."
+when_not_to_use = "Do not use mid-mission while open steps remain unless the user abandons the work. Do not use for agenda todos."
+routing_hints = ["clear the working plan", "abandon the mission", "cancel the plan", "plan finished clear", "reset working plan", "done with the plan"]
+
+[[examples_good]]
+name = "clear_default_archive"
+args = {}
+rationale = "Archives then removes the active working_plan.json."
+
+[[examples_bad]]
+name = "clear_as_todo_complete"
+args = {}
+rationale = "Operator todo completion is agenda:complete, not plan:clear."
 "#,
     r#"descriptor_version = 1
 tool_name = "memory:commit"
@@ -1455,7 +1494,13 @@ mod tests {
     #[test]
     fn plan_descriptors_cover_plan_tools() {
         let registry = ToolDescriptorRegistry::load_embedded().expect("embedded descriptors");
-        for name in ["plan:read", "plan:set", "plan:update"] {
+        for name in [
+            "plan:read",
+            "plan:set",
+            "plan:update",
+            "plan:advance",
+            "plan:clear",
+        ] {
             let desc = registry
                 .get(name)
                 .unwrap_or_else(|| panic!("missing descriptor for {name}"));

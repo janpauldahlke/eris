@@ -63,6 +63,8 @@ impl Gatekeeper {
                     | "plan:read"
                     | "plan:set"
                     | "plan:update"
+                    | "plan:advance"
+                    | "plan:clear"
                     | "web:find"
                     | "vision:see"
                     | "vision:display"
@@ -117,6 +119,8 @@ impl Gatekeeper {
                     | "plan:read"
                     | "plan:set"
                     | "plan:update"
+                    | "plan:advance"
+                    | "plan:clear"
                     | "web:fetch"
                     | "web:search"
                     | "news:today"
@@ -948,6 +952,8 @@ mod tests {
             "plan:read",
             "plan:set",
             "plan:update",
+            "plan:advance",
+            "plan:clear",
             "web:fetch",
             "web:search",
             "news:today",

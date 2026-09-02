@@ -43,7 +43,7 @@ async fn autonomous_injection_prompt(workspace_root: &std::path::Path) -> String
             .map(|s| s.title.trim().to_string())
             .unwrap_or_default();
         return format!(
-            "You are operating autonomously. Continue the working plan: {}. Current step ({open_count} open): {current}. Execute the current step only, then advance with plan:update (mark done, set current_step_id, append short findings to scratch).",
+            "You are operating autonomously. Continue the working plan: {}. Current step ({open_count} open): {current}. Execute the current step only, then advance with plan:advance (or plan:update: mark done, set current_step_id, scratch_append). When finished, plan:clear if not auto-archived.",
             plan.goal.trim()
         );
     }
@@ -212,7 +212,6 @@ impl<E: LlmEngine> Orchestrator<E> {
             &self.context_assembler.workspace_root,
         )
         .await;
-        let pin_plan_tools = active_open_plan || chain_suggests_plan;
         self.context_assembler.set_runtime_plan_hints(
             chain_suggests_plan,
             active_open_plan,
@@ -235,6 +234,8 @@ impl<E: LlmEngine> Orchestrator<E> {
             // URL scorecard (Phase 3): set each hop when fetch is offered with a URL in user text.
             let mut url_fetch_offered_this_hop = false;
             let mut url_soft_compel_injected = false;
+            // Slim offer for this hop (shared by phrase map + GBNF); rebuilt when plan-scoped.
+            let mut slim_offered_this_hop: Option<Vec<String>> = None;
             // 1. Bailout Checks
             if self.recovery_count >= self.max_recovery_attempts {
                 tracing::warn!(
@@ -333,23 +334,30 @@ impl<E: LlmEngine> Orchestrator<E> {
             } else if slim_assembly {
                 // Single source of truth shared with the GBNF subset path below, so the
                 // grammar and the slim tool map can never drift apart.
+                // With an open plan, re-scope seeds to the *current step* each tool round.
+                let (offer_seeds, plan_pin) = self
+                    .resolve_plan_scoped_offer_seeds(&pre_llm_matched_tools, chain_suggests_plan)
+                    .await;
                 let offered = slim_offered_tool_names(
-                    &pre_llm_matched_tools,
+                    &offer_seeds,
                     self.tool_map_offer_cap,
                     moltbook_overlay_latched,
                     &self.gatekeeper,
                     &self.state,
-                    pin_plan_tools,
+                    plan_pin,
                 );
                 tracing::info!(
                     event = "fcp.tool_prompt.assembly",
                     mode = "slim_phrase_map",
                     offered_count = offered.len(),
-                    router_hit_count = pre_llm_matched_tools.len(),
+                    router_hit_count = offer_seeds.len(),
+                    turn_router_hit_count = pre_llm_matched_tools.len(),
                     cap = self.tool_map_offer_cap,
+                    plan_pin = ?plan_pin,
                     moltbook_overlay_latched,
                     "Slim tool prompt assembly"
                 );
+                slim_offered_this_hop = Some(offered.clone());
                 let descriptors = self.descriptor_registry.as_deref();
                 self.context_assembler
                     .assemble_slim_tool_map(
@@ -497,14 +505,25 @@ impl<E: LlmEngine> Orchestrator<E> {
                     .get_or_compile_subset(&self.gatekeeper, &names)?;
                 (Some(g), true)
             } else if slim_assembly {
-                let offered = slim_offered_tool_names(
-                    &pre_llm_matched_tools,
-                    self.tool_map_offer_cap,
-                    moltbook_overlay_latched,
-                    &self.gatekeeper,
-                    &self.state,
-                    pin_plan_tools,
-                );
+                let offered = match slim_offered_this_hop.as_ref() {
+                    Some(names) => names.clone(),
+                    None => {
+                        let (offer_seeds, plan_pin) = self
+                            .resolve_plan_scoped_offer_seeds(
+                                &pre_llm_matched_tools,
+                                chain_suggests_plan,
+                            )
+                            .await;
+                        slim_offered_tool_names(
+                            &offer_seeds,
+                            self.tool_map_offer_cap,
+                            moltbook_overlay_latched,
+                            &self.gatekeeper,
+                            &self.state,
+                            plan_pin,
+                        )
+                    }
+                };
                 if offered.is_empty() {
                     (None, true)
                 } else {

@@ -4,16 +4,21 @@
 //! Splits **mission state** from operator todos (`agenda.json`): the plan is what
 //! the agent is *doing now*; the agenda is what the operator queued for later.
 
+pub mod advance;
 pub mod chain_hints;
+pub mod clear;
 pub mod read;
 pub mod set;
 pub mod update;
 
 pub use chain_hints::{
-    format_plan_checklist, format_tui_summary, has_open_working_plan, runtime_hint_block,
+    current_step_offer_seed, extract_registered_tool_refs, format_plan_checklist,
+    format_tui_summary, has_open_working_plan, merge_step_offer_seeds, runtime_hint_block,
     user_message_suggests_plan,
 };
 
+pub use advance::PlanAdvanceTool;
+pub use clear::PlanClearTool;
 pub use read::PlanReadTool;
 pub use set::PlanSetTool;
 pub use update::PlanUpdateTool;
@@ -21,6 +26,7 @@ pub use update::PlanUpdateTool;
 use serde::{Deserialize, Serialize};
 use schemars::JsonSchema;
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
 
 use crate::executive::error::{FcpError, Result};
@@ -186,6 +192,76 @@ impl WorkingPlan {
             .filter(|s| !matches!(s.status, PlanStepStatus::Done | PlanStepStatus::Skipped))
             .collect()
     }
+
+    /// The step pointed at by `current_step_id`, or the first open step.
+    #[must_use]
+    pub fn current_step(&self) -> Option<&PlanStep> {
+        if let Some(id) = self.current_step_id.as_deref() {
+            if let Some(step) = self.steps.iter().find(|s| s.id == id) {
+                return Some(step);
+            }
+        }
+        self.open_steps().into_iter().next()
+    }
+
+    /// True when there is at least one step and none remain open.
+    #[must_use]
+    pub fn is_complete(&self) -> bool {
+        !self.steps.is_empty() && self.open_steps().is_empty()
+    }
+
+    /// Mark the current step done and point `current_step_id` at the next open step.
+    /// Returns `(done_id, next_id)` where `next_id` is `None` when the mission is finished.
+    pub fn advance_current(&mut self) -> Result<(String, Option<String>)> {
+        let current_id = self
+            .current_step_id
+            .clone()
+            .or_else(|| self.open_steps().first().map(|s| s.id.clone()))
+            .ok_or_else(|| {
+                FcpError::SchemaViolation(
+                    "plan:advance: no current step (plan empty or already complete)".into(),
+                )
+            })?;
+
+        let Some(idx) = self.steps.iter().position(|s| s.id == current_id) else {
+            return Err(FcpError::SchemaViolation(format!(
+                "plan:advance: current_step_id {current_id:?} not found"
+            )));
+        };
+
+        if !matches!(
+            self.steps[idx].status,
+            PlanStepStatus::Done | PlanStepStatus::Skipped
+        ) {
+            self.steps[idx].status = PlanStepStatus::Done;
+        }
+
+        let next_id = self
+            .steps
+            .iter()
+            .skip(idx + 1)
+            .find(|s| !matches!(s.status, PlanStepStatus::Done | PlanStepStatus::Skipped))
+            .map(|s| s.id.clone())
+            .or_else(|| {
+                self.steps
+                    .iter()
+                    .find(|s| !matches!(s.status, PlanStepStatus::Done | PlanStepStatus::Skipped))
+                    .map(|s| s.id.clone())
+            });
+
+        if let Some(ref nid) = next_id {
+            if let Some(step) = self.steps.iter_mut().find(|s| &s.id == nid) {
+                if matches!(step.status, PlanStepStatus::Pending) {
+                    step.status = PlanStepStatus::Active;
+                }
+            }
+            self.current_step_id = Some(nid.clone());
+        } else {
+            self.current_step_id = None;
+        }
+
+        Ok((current_id, next_id))
+    }
 }
 
 /// Last up to `n` characters of `s` (char-boundary safe).
@@ -226,6 +302,67 @@ pub async fn save(workspace_root: &Path, plan: &WorkingPlan) -> Result<()> {
     Ok(())
 }
 
+/// Remove the active working plan file if present (no archive).
+pub async fn clear(workspace_root: &Path) -> Result<bool> {
+    let path = crate::vault_layout::working_plan_json(workspace_root);
+    if !path.exists() {
+        return Ok(false);
+    }
+    fs::remove_file(&path).await.map_err(FcpError::Io)?;
+    Ok(true)
+}
+
+/// Copy the active plan into `working_plan_archive/`, then remove the active file.
+/// Returns `None` when there was no active plan; otherwise the archive file name.
+pub async fn archive_and_clear(workspace_root: &Path) -> Result<Option<String>> {
+    let path = crate::vault_layout::working_plan_json(workspace_root);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content = fs::read_to_string(&path).await.map_err(FcpError::Io)?;
+    if content.trim().is_empty() {
+        let _ = fs::remove_file(&path).await;
+        return Ok(None);
+    }
+
+    let archive_dir = crate::vault_layout::working_plan_archive_dir(workspace_root);
+    fs::create_dir_all(&archive_dir)
+        .await
+        .map_err(FcpError::Io)?;
+
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let file_name = format!("working_plan_{stamp}.json");
+    let dest = archive_dir.join(&file_name);
+    fs::write(&dest, &content).await.map_err(FcpError::Io)?;
+    fs::remove_file(&path).await.map_err(FcpError::Io)?;
+    tracing::info!(
+        event = "working_plan.archived",
+        archive = %file_name,
+        "Working plan archived and active file cleared"
+    );
+    Ok(Some(file_name))
+}
+
+/// After a mutating tool: if the plan has no open steps, archive + clear.
+/// Returns a note to append to the tool success string when archived.
+pub async fn maybe_auto_archive_if_complete(
+    workspace_root: &Path,
+    plan: &WorkingPlan,
+) -> Result<Option<String>> {
+    if !plan.is_complete() {
+        return Ok(None);
+    }
+    match archive_and_clear(workspace_root).await? {
+        Some(name) => Ok(Some(format!(
+            " Mission complete — archived as {name} and cleared active plan."
+        ))),
+        None => Ok(None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,6 +374,37 @@ mod tests {
             status,
             kind: None,
         }
+    }
+
+    #[test]
+    fn advance_current_marks_done_and_activates_next() {
+        let mut plan = WorkingPlan {
+            goal: "g".into(),
+            steps: vec![
+                step("a", "A", PlanStepStatus::Active),
+                step("b", "B", PlanStepStatus::Pending),
+            ],
+            current_step_id: Some("a".into()),
+            ..Default::default()
+        };
+        let (done, next) = plan.advance_current().unwrap();
+        assert_eq!(done, "a");
+        assert_eq!(next.as_deref(), Some("b"));
+        assert_eq!(plan.steps[0].status, PlanStepStatus::Done);
+        assert_eq!(plan.steps[1].status, PlanStepStatus::Active);
+        assert!(plan.is_complete() == false);
+    }
+
+    #[test]
+    fn is_complete_when_all_done() {
+        let plan = WorkingPlan {
+            steps: vec![
+                step("a", "A", PlanStepStatus::Done),
+                step("b", "B", PlanStepStatus::Skipped),
+            ],
+            ..Default::default()
+        };
+        assert!(plan.is_complete());
     }
 
     #[test]

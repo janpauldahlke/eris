@@ -599,6 +599,11 @@ pub struct LlamaCppConfig {
     /// Chat `llama-server --cache-type-v` (e.g. `iq4_nl`, `q4_0`, `f16`). `None` = omit (server default).
     #[serde(default)]
     pub cache_type_v: Option<String>,
+    /// Chat `llama-server` KV placement. `Some(true)` → `--kv-offload` (KV on GPU; llama.cpp default).
+    /// `Some(false)` → `--no-kv-offload` (KV in system RAM — frees VRAM for weights / larger `num_ctx`,
+    /// at the cost of slower attention). `None` = omit (server default: GPU).
+    #[serde(default)]
+    pub kv_offload: Option<bool>,
     /// Chat `llama-server` mmproj GPU offload. `Some(true)` → `--mmproj-offload`, `Some(false)` →
     /// `--no-mmproj-offload` (projector stays in system RAM; useful on tight VRAM when vision is rare).
     /// `None` = omit (server default: GPU offload enabled).
@@ -655,6 +660,7 @@ impl Default for LlamaCppConfig {
             flash_attn: None,
             cache_type_k: None,
             cache_type_v: None,
+            kv_offload: None,
             mmproj_offload: None,
             spec_type: None,
             spec_draft_n_max: None,
@@ -2483,6 +2489,7 @@ mod tests {
             flash_attn: Some("on".into()),
             cache_type_k: Some("q8_0".into()),
             cache_type_v: Some("q8_0".into()),
+            kv_offload: Some(false),
             ..Default::default()
         });
 
@@ -2490,12 +2497,14 @@ mod tests {
         assert!(toml_str.contains("flash_attn"), "{toml_str}");
         assert!(toml_str.contains("cache_type_k"), "{toml_str}");
         assert!(toml_str.contains("cache_type_v"), "{toml_str}");
+        assert!(toml_str.contains("kv_offload"), "{toml_str}");
 
         let deserialized: AppConfig = toml::from_str(&toml_str).expect("deserialize");
         let lc = deserialized.llama_cpp.expect("llama_cpp section");
         assert_eq!(lc.flash_attn.as_deref(), Some("on"));
         assert_eq!(lc.cache_type_k.as_deref(), Some("q8_0"));
         assert_eq!(lc.cache_type_v.as_deref(), Some("q8_0"));
+        assert_eq!(lc.kv_offload, Some(false));
     }
 
     #[test]
@@ -2566,6 +2575,7 @@ mod tests {
         assert_eq!(lc.flash_attn, None);
         assert_eq!(lc.cache_type_k, None);
         assert_eq!(lc.cache_type_v, None);
+        assert_eq!(lc.kv_offload, None);
     }
 
     #[test]

@@ -178,4 +178,85 @@ impl<E: LlmEngine> Orchestrator<E> {
             self.recent_successful_tools.drain(0..drain);
         }
     }
+
+    /// Rank tools for an arbitrary seed string (same policy path as pre-LLM routing).
+    pub(super) async fn match_tools_for_offer_seed(&self, seed: &str) -> Vec<String> {
+        let Some(router) = self.tool_router.as_ref() else {
+            return Vec::new();
+        };
+        let Ok(matches) = router.match_tools(seed).await else {
+            return Vec::new();
+        };
+        if matches.is_empty() {
+            return Vec::new();
+        }
+        let registered = self.gatekeeper.registered_tool_names();
+        let knobs = RoutingPolicyKnobs {
+            single_hit_floor: self.config.tool_single_hit_floor,
+            match_margin: self.config.tool_match_margin,
+            unsure_fallback: UnsureFallback::parse(&self.config.tool_unsure_fallback),
+        };
+        let decision =
+            apply_routing_policy(seed, &matches, &self.recent_successful_tools, &registered, knobs);
+        decision.matched_tool_names()
+    }
+
+    /// Rebuild slim-offer seeds from the current working-plan step (each tool round).
+    ///
+    /// Keeps the slim roster: re-aims ranking at the active step title, merges any
+    /// explicit `domain:verb` tokens from that title, and chooses bootstrap vs mid-mission
+    /// plan pin mode.
+    pub(super) async fn resolve_plan_scoped_offer_seeds(
+        &self,
+        turn_matched_tools: &[String],
+        chain_suggests_plan: bool,
+    ) -> (Vec<String>, crate::orchestrator::routing::PlanPinMode) {
+        use crate::orchestrator::routing::PlanPinMode;
+        use crate::tools::working_plan::{
+            current_step_offer_seed, extract_registered_tool_refs, load, merge_step_offer_seeds,
+        };
+
+        let plan = match load(&self.context_assembler.workspace_root).await {
+            Ok(Some(plan)) if !plan.open_steps().is_empty() => plan,
+            _ => {
+                let pin = if chain_suggests_plan {
+                    PlanPinMode::Bootstrap
+                } else {
+                    PlanPinMode::None
+                };
+                return (turn_matched_tools.to_vec(), pin);
+            }
+        };
+
+        let Some(seed) = current_step_offer_seed(&plan) else {
+            return (turn_matched_tools.to_vec(), PlanPinMode::MidMission);
+        };
+
+        let registered = self.gatekeeper.registered_tool_names();
+        let explicit = extract_registered_tool_refs(&seed, &registered);
+        let ranked = self.match_tools_for_offer_seed(&seed).await;
+        let merged = merge_step_offer_seeds(explicit, ranked);
+
+        if merged.is_empty() {
+            tracing::info!(
+                event = "routing.offer.plan_step_scoped_fallback",
+                seed = %seed,
+                "Current-step offer seed empty; falling back to turn-level ranking"
+            );
+            return (turn_matched_tools.to_vec(), PlanPinMode::MidMission);
+        }
+
+        let step_id = plan
+            .current_step()
+            .map(|s| s.id.as_str())
+            .unwrap_or("");
+        tracing::info!(
+            event = "routing.offer.plan_step_scoped",
+            step_id,
+            seed = %seed,
+            seeds = ?merged,
+            "Re-scoped slim tool offer to current working-plan step"
+        );
+        (merged, PlanPinMode::MidMission)
+    }
 }

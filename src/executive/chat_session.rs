@@ -566,6 +566,12 @@ pub async fn start_chat_session(
     gatekeeper.register(Arc::new(crate::tools::working_plan::PlanUpdateTool {
         workspace_root: workspace_root.clone(),
     }));
+    gatekeeper.register(Arc::new(crate::tools::working_plan::PlanAdvanceTool {
+        workspace_root: workspace_root.clone(),
+    }));
+    gatekeeper.register(Arc::new(crate::tools::working_plan::PlanClearTool {
+        workspace_root: workspace_root.clone(),
+    }));
     let _ = presentation_tx
         .send(SessionEvent::SystemError(
             "[startup] Preparing web stack (browser39, vault operator files)...".into(),

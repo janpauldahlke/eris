@@ -6,7 +6,8 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{
-    load, new_step_id, save, PlanStep, PlanStepInput, PlanStepKind, PlanStepStatus, WorkingPlan,
+    load, maybe_auto_archive_if_complete, new_step_id, save, PlanStep, PlanStepInput, PlanStepKind,
+    PlanStepStatus, WorkingPlan,
 };
 use crate::executive::error::{FcpError, Result};
 use crate::tools::traits::Tool;
@@ -60,6 +61,14 @@ impl PlanUpdateArgs {
     }
 }
 
+fn normalize_title(title: &str) -> String {
+    title
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
+}
+
 fn apply_patch(plan: &mut WorkingPlan, args: PlanUpdateArgs) -> Result<Vec<String>> {
     let mut changed: Vec<String> = Vec::new();
 
@@ -89,6 +98,22 @@ fn apply_patch(plan: &mut WorkingPlan, args: PlanUpdateArgs) -> Result<Vec<Strin
         if plan.steps.iter().any(|s| s.id == id) {
             return Err(FcpError::SchemaViolation(format!(
                 "plan:update: steps_add id {id:?} already exists"
+            )));
+        }
+        let title_key = normalize_title(&input.title);
+        if title_key.is_empty() {
+            return Err(FcpError::SchemaViolation(
+                "plan:update: steps_add title must be non-empty".into(),
+            ));
+        }
+        if plan
+            .steps
+            .iter()
+            .any(|s| normalize_title(&s.title) == title_key)
+        {
+            return Err(FcpError::SchemaViolation(format!(
+                "plan:update: steps_add title {:?} duplicates an existing step — mark that step done and set current_step_id (or use plan:advance) instead of adding a twin",
+                input.title.trim()
             )));
         }
         plan.steps.push(PlanStep {
@@ -139,9 +164,10 @@ impl Tool for PlanUpdateTool {
         "plan:update"
     }
     fn description(&self) -> &'static str {
-        "Patch the working plan: step statuses/titles/kinds, append steps, goal/outcome, \
-         scratch_append, and current_step_id. Call after each significant step so the plan \
-         survives context condensation."
+        "Patch the working plan: step statuses/titles/kinds, append *new* steps (not duplicates), \
+         goal/outcome, scratch_append, and current_step_id. Prefer plan:advance to mark the current \
+         step done and move the pointer. Call after each significant step so the plan survives \
+         context condensation. When all steps are done the plan auto-archives and clears."
     }
     fn parameters_schema(&self) -> schemars::schema::RootSchema {
         schemars::schema_for!(PlanUpdateArgs)
@@ -179,10 +205,14 @@ impl Tool for PlanUpdateTool {
         } else {
             changed.join(", ")
         };
-        Ok(format!(
+        let mut msg = format!(
             "SUCCESS: Working plan updated (version {}): {}.",
             plan.version, summary
-        ))
+        );
+        if let Some(note) = maybe_auto_archive_if_complete(&self.workspace_root, &plan).await? {
+            msg.push_str(&note);
+        }
+        Ok(msg)
     }
 }
 
@@ -331,6 +361,48 @@ mod tests {
             .await
             .expect_err("unknown current_step_id must be rejected");
         assert!(matches!(err, FcpError::SchemaViolation(_)));
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_plan_update_rejects_duplicate_title_steps_add() -> Result<()> {
+        let dir = tempdir().unwrap();
+        seed(dir.path()).await;
+        let tool = PlanUpdateTool {
+            workspace_root: dir.path().to_path_buf(),
+        };
+        let err = tool
+            .execute(serde_json::json!({
+                "steps_add": [{ "title": "Step A" }]
+            }))
+            .await
+            .expect_err("duplicate title must be rejected");
+        match err {
+            FcpError::SchemaViolation(msg) => {
+                assert!(msg.contains("duplicates"), "msg: {msg}");
+            }
+            other => panic!("expected SchemaViolation, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_plan_update_completing_all_steps_auto_archives() -> Result<()> {
+        let dir = tempdir().unwrap();
+        seed(dir.path()).await;
+        let tool = PlanUpdateTool {
+            workspace_root: dir.path().to_path_buf(),
+        };
+        let result = tool
+            .execute(serde_json::json!({
+                "steps": [
+                    { "id": "a", "status": "done" },
+                    { "id": "b", "status": "done" }
+                ]
+            }))
+            .await?;
+        assert!(result.contains("Mission complete"), "result: {result}");
+        assert!(load(dir.path()).await?.is_none());
         Ok(())
     }
 }
