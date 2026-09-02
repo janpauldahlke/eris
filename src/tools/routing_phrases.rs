@@ -29,7 +29,7 @@ pub fn fallback_triggers(tool_name: &str) -> &'static str {
             "ephemeral staging with ttl, no vault write until commit, hold fact until user wants disk save"
         }
         "agenda:push" => {
-            "adding tasks, to-do list, add to agenda queue, schedule, plan, new task without setting a time, queue work, background task, add to my list, track this for later"
+            "adding tasks, to-do list, add to agenda queue, schedule, new task without setting a time, queue work, background task, add to my list, track this for later"
         }
         "agenda:list" => {
             "show tasks, what is on my list, pending items, show agenda, my schedule, what do I have to do"
@@ -42,6 +42,15 @@ pub fn fallback_triggers(tool_name: &str) -> &'static str {
         }
         "agenda:complete" => {
             "finishing tasks, mark done, complete task, check off the task, task finished, finished the reminded task, I did it"
+        }
+        "plan:read" => {
+            "show the working plan, what are we doing, where are we in this, current step, mission status, plan progress, what is left to do, read the plan"
+        }
+        "plan:set" => {
+            "multi-step request, first then, workflow, sequence, step by step, after that, numbered list of steps, do X then Y then Z, validate then send, break into steps, chain of dependent steps, plan out this task, several steps later, orchestrate this"
+        }
+        "plan:update" => {
+            "mark step done, advance the plan, next step, update the plan, step finished, append scratch note, plan progress, update working plan, current step pointer"
         }
         "web:fetch" => {
             "fetching URLs, open this link, check this website, browse this page, read this article, get content from URL"

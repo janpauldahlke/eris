@@ -438,6 +438,11 @@ impl ContextAssembler {
             - [RELEVANT_LEARNED_MEMORY] (when present) is auto-injected from indexed vault knowledge when your message matches semantically; use it directly; call memory:query only for more detail, filters, or recency ordering.\n\
             - [RELEVANT_DOCUMENT_CONTEXT] (when present) is auto-injected from ingested document chunks; use it directly; call doc:query for deeper drill-down or doc:read for sequential page-through.\n\
             - Web fetch content is stored under 20_Discourse/web/missions/ on disk; use web:find to search fetched pages.\n\n\
+            Working plan rules (follow exactly):\n\
+            - Triggers for plan first: multiple actions in one message; \"first / then / after / next / and also\"; numbered lists; dependencies between steps (e.g. send mail only after getting the address from memory); validate/assert/check between tool steps.\n\
+            - When those triggers are present, call plan:set (new mission) or plan:update (existing mission) BEFORE other tools unless the request is a trivial single tool. Execute the current step only; after significant tool results call plan:update (mark done, advance current_step_id, append short findings to scratch).\n\
+            - Ambiguous middles (\"wait for zara\"): encode as a step with kind clarify or human_wait and keep unresolved meaning in scratch; literal timed waits use agenda:remind_at or clock alarms, not plan steps.\n\
+            - Separation: working plan = mission and step ordering (goal, ordered steps, short scratch); memory:stage = facts and snippets — do not duplicate long content in both. Operator todos and reminders are agenda:*, not the working plan.\n\n\
             Vault taxonomy — use the 'kind' field in memory:stage to route to the correct root:\n\
             - kind=topology → 10_Topology/ (environment, config, infrastructure)\n\
             - kind=discourse → 20_Discourse/ (raw interaction, append-only stream)\n\
@@ -972,6 +977,33 @@ mod tests {
             section.chars().count() <= 120 + 20,
             "plan section over cap: {} chars",
             section.chars().count()
+        );
+    }
+
+    /// `build_tool_prompt` must carry the working-plan NL policy (plan-first triggers,
+    /// execute-current-step, mission-vs-facts separation).
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_build_tool_prompt_includes_working_plan_nl_policy() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let workspace = "test_workspace";
+        let (_tx, rx) = tokio::sync::watch::channel(Arc::from("identity"));
+        let assembler = ContextAssembler::new(dir.path(), workspace, rx, 3500, 1200);
+        let ephemeral = EphemeralMemory::new(workspace.to_string());
+        let state = AgentState::Chat;
+        let gatekeeper = gatekeeper_with_health_tool();
+
+        let prompt = assembler
+            .assemble(&state, &ephemeral, &gatekeeper, false)
+            .await
+            .expect("assemble");
+        assert!(prompt.contains("Working plan rules"), "prompt: {prompt}");
+        assert!(
+            prompt.contains("BEFORE other tools"),
+            "plan-first ordering missing from prompt"
+        );
+        assert!(
+            prompt.contains("memory:stage = facts and snippets"),
+            "mission-vs-facts separation missing from prompt"
         );
     }
 }

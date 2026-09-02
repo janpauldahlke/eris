@@ -28,6 +28,43 @@ pub(crate) fn trailing_json_recovery_triggered(config: &AppConfig, content: &str
     !config.is_llamacpp() && trailing_content_after_valid_llm_json(content)
 }
 
+/// Autonomous-continuation prompt pushed when the user interrupts mid-loop.
+/// Prefers the live working plan (mission state) when it has open steps;
+/// falls back to the operator's agenda queue, then `IDLE_STATE`.
+async fn autonomous_injection_prompt(workspace_root: &std::path::Path) -> String {
+    if let Ok(Some(plan)) = crate::tools::working_plan::load(workspace_root).await
+        && !plan.open_steps().is_empty()
+    {
+        let open_count = plan.open_steps().len();
+        let current = plan
+            .current_step_id
+            .as_deref()
+            .and_then(|id| plan.steps.iter().find(|s| s.id == id))
+            .or_else(|| plan.open_steps().first().copied())
+            .map(|s| s.title.trim().to_string())
+            .unwrap_or_default();
+        return format!(
+            "You are operating autonomously. Continue the working plan: {}. Current step ({open_count} open): {current}. Execute the current step only, then advance with plan:update (mark done, set current_step_id, append short findings to scratch).",
+            plan.goal.trim()
+        );
+    }
+
+    let agenda_path = crate::vault_layout::agenda_json(workspace_root);
+    let mut active_task = None;
+    if let Ok(content) = tokio::fs::read_to_string(&agenda_path).await
+        && let Ok(tasks) = serde_json::from_str::<Vec<serde_json::Value>>(&content)
+            && let Some(desc) = tasks.first().and_then(|first| first.get("description")).and_then(|d| d.as_str()) {
+                active_task = Some(desc.to_string());
+            }
+
+    match active_task {
+        Some(task) => format!(
+            "You are operating autonomously. Execute this task: {task}. When finished, use agenda:complete."
+        ),
+        None => "IDLE_STATE".to_string(),
+    }
+}
+
 /// Scorecard: URL in user text, `web:fetch` offered, model did not call it this hop.
 fn maybe_log_url_skip_fetch(
     url_fetch_offered: bool,
@@ -546,20 +583,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                     self.chat_stack.clear();
 
                     let workspace_root = self.context_assembler.core_dir.parent().unwrap_or(&self.context_assembler.core_dir);
-                    let agenda_path = crate::vault_layout::agenda_json(workspace_root);
-
-                    let mut active_task = None;
-                    if let Ok(content) = tokio::fs::read_to_string(&agenda_path).await
-                        && let Ok(tasks) = serde_json::from_str::<Vec<serde_json::Value>>(&content)
-                            && let Some(desc) = tasks.first().and_then(|first| first.get("description")).and_then(|d| d.as_str()) {
-                                active_task = Some(desc.to_string());
-                            }
-
-                    let prompt = if let Some(task) = active_task {
-                        format!("You are operating autonomously. Execute this task: {}. When finished, use agenda:complete.", task)
-                    } else {
-                        "IDLE_STATE".to_string()
-                    };
+                    let prompt = autonomous_injection_prompt(workspace_root).await;
 
                     self.chat_stack.push(crate::engine::Message::system(prompt));
                     self.state = AgentState::Idle;
@@ -840,5 +864,83 @@ mod trailing_json_recovery_tests {
 
 # Extra"#;
         assert!(trailing_json_recovery_triggered(&c, raw));
+    }
+}
+
+#[cfg(test)]
+mod autonomous_injection_tests {
+    use super::autonomous_injection_prompt;
+    use crate::tools::working_plan::{save, PlanStep, PlanStepStatus, WorkingPlan};
+
+    fn open_step(id: &str, title: &str) -> PlanStep {
+        PlanStep {
+            id: id.to_string(),
+            title: title.to_string(),
+            status: PlanStepStatus::Pending,
+            kind: None,
+        }
+    }
+
+    async fn write_agenda(dir: &std::path::Path, task: &str) {
+        tokio::fs::create_dir_all(crate::vault_layout::tools_dir(dir))
+            .await
+            .expect("tools dir");
+        let json = format!("[{{\"id\":\"t1\",\"description\":\"{task}\"}}]");
+        tokio::fs::write(crate::vault_layout::agenda_json(dir), json)
+            .await
+            .expect("write agenda");
+    }
+
+    /// Live plan with open steps beats the agenda queue for autonomous injection.
+    #[tokio::test(flavor = "current_thread")]
+    async fn plan_preferred_over_agenda() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let plan = WorkingPlan {
+            goal: "Mail zara the price".into(),
+            steps: vec![open_step("a", "Get price"), open_step("b", "Send mail")],
+            current_step_id: Some("a".into()),
+            ..Default::default()
+        };
+        save(dir.path(), &plan).await.expect("save plan");
+        write_agenda(dir.path(), "agenda task").await;
+
+        let prompt = autonomous_injection_prompt(dir.path()).await;
+        assert!(prompt.contains("working plan"), "prompt: {prompt}");
+        assert!(prompt.contains("Mail zara the price"), "prompt: {prompt}");
+        assert!(prompt.contains("Get price"), "prompt: {prompt}");
+        assert!(prompt.contains("2 open"), "prompt: {prompt}");
+        assert!(!prompt.contains("Execute this task"), "prompt: {prompt}");
+    }
+
+    /// Fully-done plan (no open steps) falls back to the agenda queue.
+    #[tokio::test(flavor = "current_thread")]
+    async fn agenda_fallback_when_plan_has_no_open_steps() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let plan = WorkingPlan {
+            goal: "done mission".into(),
+            steps: vec![PlanStep {
+                id: "a".into(),
+                title: "Ship".into(),
+                status: PlanStepStatus::Done,
+                kind: None,
+            }],
+            ..Default::default()
+        };
+        save(dir.path(), &plan).await.expect("save plan");
+        write_agenda(dir.path(), "agenda task").await;
+
+        let prompt = autonomous_injection_prompt(dir.path()).await;
+        assert!(prompt.contains("Execute this task: agenda task"), "prompt: {prompt}");
+        assert!(prompt.contains("agenda:complete"), "prompt: {prompt}");
+    }
+
+    /// Nothing on disk → the stock idle marker.
+    #[tokio::test(flavor = "current_thread")]
+    async fn idle_state_when_neither_present() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert_eq!(
+            autonomous_injection_prompt(dir.path()).await,
+            "IDLE_STATE"
+        );
     }
 }
