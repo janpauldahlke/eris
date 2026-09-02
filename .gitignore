@@ -6,3 +6,8 @@
 /vaults
 .cursor/
 .idea/
+.ota/state/
+.ota/contracts/
+.ota/receipts/
+.ota/proof/
+.ota/cache/

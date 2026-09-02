@@ -1,0 +1,306 @@
+version: 1
+metadata:
+  ota:
+    minimum_version: "1.6.27"
+
+project:
+  name: eris
+  description: Local-first Rust agent with explicit Gatekeeper authorization boundaries
+  type: application
+
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+      env:
+        CARGO_HOME: .ota/cache/cargo-native
+    rust:
+      backend: container
+      lifecycle: ephemeral
+      env:
+        CARGO_HOME: /workspace/.ota/cache/cargo-container
+      container:
+        image: rust:1.95-bookworm@sha256:6258907abe69656e41cd992e0b705cdcfabcbbe3db374f92ed2d47121282d4a1
+        platform: linux/amd64
+        engines:
+          - docker
+      attachments:
+        isolated_paths:
+          - .ota/cache/cargo-container
+
+toolchains:
+  rust:
+    version: ">=1.85"
+
+tasks:
+  setup:cargo:native:
+    description: Hydrate Cargo dependencies from the committed lockfile into Ota's native cache
+    category: setup
+    command:
+      exe: cargo
+      args: [fetch, --locked]
+    requirements:
+      toolchains: [rust]
+    effects:
+      writes: [.ota/cache/cargo-native]
+      network: true
+      network_kind: dependency_hydration
+    safe_for_agent: true
+
+  setup:cargo:container:
+    description: Hydrate Cargo dependencies from the committed lockfile into the isolated container cache
+    category: setup
+    command:
+      exe: cargo
+      args: [fetch, --locked]
+    requirements:
+      toolchains: [rust]
+    effects:
+      writes: [.ota/cache/cargo-container]
+      network: true
+      network_kind: dependency_hydration
+    execution:
+      default_mode: container
+      modes:
+        container:
+          context: rust
+    safe_for_agent: true
+
+  format:
+    description: Verify canonical Rust formatting without changing files
+    notes: |
+      The current upstream tree has known formatting drift. This task remains useful as an
+      advisory baseline and is intentionally excluded from the default verify closure.
+    category: lint
+    command:
+      exe: cargo
+      args: [fmt, --all, --, --check]
+    requirements:
+      toolchains: [rust]
+    safe_for_agent: true
+
+  lint:
+    description: Run the repository's production-binary Clippy gate
+    category: lint
+    command:
+      exe: cargo
+      args: [clippy, --bin, eris]
+    depends_on: [setup:cargo:native]
+    requirements:
+      toolchains: [rust]
+    effects:
+      writes: [target]
+    safe_for_agent: true
+
+  build:
+    description: Compile the production binary and test targets without executing them
+    category: build
+    command:
+      exe: cargo
+      args: [build, --bin, eris, --tests]
+    depends_on: [setup:cargo:native]
+    requirements:
+      toolchains: [rust]
+    effects:
+      writes: [target]
+    safe_for_agent: true
+
+  test:cargo-matrix-batch:
+    description: Run the complete repository test surface through Eris's bounded batch runner
+    notes: |
+      This invokes the repository-owned cargo test-full shell runner. Ota retains its 47 batch
+      results and terminal outcome but does not independently model every command inside it.
+    category: test
+    command:
+      exe: cargo
+      args: [test-full]
+    depends_on: [setup:cargo:native]
+    requirements:
+      toolchains: [rust]
+    effects:
+      writes: [target]
+    safe_for_agent: true
+
+  test:gatekeeper:allowed:
+    description: Exercise one registered operation accepted by the Gatekeeper
+    notes: |
+      This is an isolated Rust fixture. Success does not prove live model execution, operator
+      configuration, or effective runtime policy outside the fixture.
+    category: test
+    command:
+      exe: cargo
+      args:
+        - test
+        - --bin
+        - eris
+        - tools::gatekeeper::tests::test_gatekeeper_executes_registered_tool
+        - --
+        - --exact
+        - --test-threads=1
+    requirements:
+      toolchains: [rust]
+    effects:
+      writes: [target]
+    execution:
+      default_mode: native
+      modes:
+        native:
+          context: host
+          depends_on: [setup:cargo:native]
+        container:
+          context: rust
+          depends_on: [setup:cargo:container]
+    safe_for_agent: true
+
+  test:vault:read:
+    description: Exercise a Markdown read through an isolated disposable vault fixture
+    notes: |
+      This is an isolated disposable Rust fixture. Success does not prove access to, mutation of,
+      or policy enforcement for a configured operator vault.
+    category: test
+    command:
+      exe: cargo
+      args:
+        - test
+        - --bin
+        - eris
+        - tools::vault::read::tests::test_vault_read_normal
+        - --
+        - --exact
+        - --test-threads=1
+    requirements:
+      toolchains: [rust]
+    effects:
+      writes: [target]
+    execution:
+      default_mode: native
+      modes:
+        native:
+          context: host
+          depends_on: [setup:cargo:native]
+        container:
+          context: rust
+          depends_on: [setup:cargo:container]
+    safe_for_agent: true
+
+  test:gatekeeper:refused:
+    description: Exercise one operation the Gatekeeper refuses in the selected state
+    notes: |
+      This is an isolated Rust negative-control fixture. Success proves its expected refusal, not
+      that a live model or every Eris tool path is governed by the same boundary.
+    category: test
+    command:
+      exe: cargo
+      args:
+        - test
+        - --bin
+        - eris
+        - tools::gatekeeper::tests::test_gatekeeper_blocks_agenda_complete_in_chat
+        - --
+        - --exact
+        - --test-threads=1
+    requirements:
+      toolchains: [rust]
+    effects:
+      writes: [target]
+    execution:
+      default_mode: native
+      modes:
+        native:
+          context: host
+          depends_on: [setup:cargo:native]
+        container:
+          context: rust
+          depends_on: [setup:cargo:container]
+    safe_for_agent: true
+
+  verify:portable:
+    description: Run the native disposable-vault and Gatekeeper control slice
+    category: verify
+    aggregate:
+      tasks:
+        - test:vault:read
+        - test:gatekeeper:allowed
+        - test:gatekeeper:refused
+    safe_for_agent: true
+
+  verify:
+    description: Run the repository's canonical non-credentialed CI verification surface
+    notes: |
+      Success is bounded to compilation, Clippy, the source-owned test runner, and the three exact
+      vault/Gatekeeper fixtures. It does not establish model, Qdrant, live-session, hardware,
+      shipping, or repository-wide readiness.
+    category: verify
+    aggregate:
+      tasks:
+        - build
+        - lint
+        - test:vault:read
+        - test:gatekeeper:allowed
+        - test:gatekeeper:refused
+        - test:cargo-matrix-batch
+    safe_for_agent: true
+
+workflows:
+  default: verify
+  verify:
+    intent: ci_validation
+    description: Validate Eris source quality and exact Gatekeeper allow/refuse controls
+    run:
+      task: verify
+    notes: |
+      This workflow is intentionally non-credentialed. It does not start llama-server, download
+      models, contact Qdrant, exercise live chat, validate hardware profiles, or prove the
+      feature/shipping distribution lifecycle. Its vault and Gatekeeper controls are isolated Rust
+      fixtures, not evidence about a configured operator vault or a live model-driven session. The
+      native pressure preview selects `--native` explicitly because this contract also declares an
+      optional container context. The separate container pressure lane invokes each portable task
+      directly because aggregates do not own execution-mode selection. Hosted Windows execution
+      remains unproved because the current upstream tree contains a documentation filename that
+      NTFS cannot check out. Hosted evidence retains exact Rust, Cargo, and Ota versions, streams
+      the source-owned batch runner, and rejects tracked-file or Cargo.lock drift.
+
+agent:
+  posture: readiness_strict
+  entrypoint: verify
+  default_task: verify
+  safe_tasks:
+    - setup:cargo:container
+    - setup:cargo:native
+    - format
+    - build
+    - lint
+    - test:cargo-matrix-batch
+    - test:vault:read
+    - test:gatekeeper:allowed
+    - test:gatekeeper:refused
+    - verify:portable
+    - verify
+  verify_after_changes:
+    - verify
+  writable_paths:
+    - src
+    - tests
+    - docs
+    - .ota/cache
+    - target
+  protected_paths:
+    - .github/workflows
+    - Cargo.lock
+  notes: |
+    Use `ota tasks --safe --use` before selecting work. Run agent-authorized tasks with `--agent`.
+    The Cargo hydration tasks are intentionally agent-authorized because they hydrate the committed
+    lockfile only. `Cargo.lock` remains protected and the pressure lane rejects lockfile drift;
+    native hydration uses an ignored repository-local cache and container hydration uses an
+    Ota-managed isolated cache; neither task mutates the developer's global Cargo cache. The
+    structured commands retain `--locked` because Ota v1.6.27's typed Cargo hydration does not yet
+    expose lock enforcement.
+    The default `verify` task is bounded to non-credentialed source and Gatekeeper controls; do not
+    infer model, Qdrant, live-chat, hardware, or shipping readiness from a green result.
+  bootstrap:
+    ota:
+      note: Install Ota only when it is missing and installation is approved.
+      source:
+        kind: version
+        version: v1.6.27
