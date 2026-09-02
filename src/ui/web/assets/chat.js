@@ -384,7 +384,9 @@
         ' <span class="k">·</span> ' +
         chipPair("Avg", fmtTpsMilli(u.llm_tps_ewma_milli) + " tok/s");
     }
-    setToolsActivity(u.activity_line || "");
+    setToolsActivity(
+      [u.active_task, u.activity_line].filter(Boolean).join("\n")
+    );
     const queued = Number(u.queued_inputs) || 0;
     setComposeBusy(isBusyState(st) || queued > 0);
   }

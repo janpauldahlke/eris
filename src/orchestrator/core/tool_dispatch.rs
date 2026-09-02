@@ -97,7 +97,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         let mut targeted_recovery_requested = false;
         let mut schema_retry_rows: Vec<(String, String)> = Vec::new();
         let mut executed_success_count = 0usize;
-        let mut suppressed_duplicate_count = 0usize;
+        let mut suppressed_batch_count = 0usize;
         let mut recoverable_fail_count = 0usize;
         let mut recoverable_failed_tools: Vec<String> = Vec::new();
         let mut fatal_fail_count = 0usize;
@@ -182,7 +182,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             ) {
                 let cap = self.config.web.max_web_tool_calls_per_turn;
                 if self.web_tool_calls_this_turn >= cap {
-                    suppressed_duplicate_count += 1;
+                    suppressed_batch_count += 1;
                     let msg = format!(
                         "[SYSTEM] Web tool cap reached ({cap}/turn). Answer from existing artifacts via web:find or ask the user to continue."
                     );
@@ -498,7 +498,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         let batch_had_tool_activity = executed_success_count > 0
             || recoverable_fail_count > 0
             || fatal_fail_count > 0
-            || suppressed_duplicate_count > 0
+            || suppressed_batch_count > 0
             || suppressed_repeat_failure_streak > 0;
         if batch_had_tool_activity {
             if let Some(ledger) = self.moltbook_browse_ledger.as_mut() {
@@ -548,7 +548,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         tracing::info!(
             event = "orchestrator.tools.batch.summary",
             executed_success_count,
-            suppressed_duplicate_count,
+            suppressed_batch_count,
             suppressed_repeat_failure_streak,
             recoverable_fail_count,
             fatal_fail_count,
@@ -558,15 +558,15 @@ impl<E: LlmEngine> Orchestrator<E> {
         if executed_success_count == 0
             && recoverable_fail_count == 0
             && fatal_fail_count == 0
-            && (suppressed_duplicate_count > 0 || suppressed_repeat_failure_streak > 0)
+            && (suppressed_batch_count > 0 || suppressed_repeat_failure_streak > 0)
         {
             tracing::info!(
-                suppressed_duplicate_count,
+                suppressed_batch_count,
                 suppressed_repeat_failure_streak,
-                "All tool intents in batch were suppressed (duplicates or repeat-failure streak); forcing user-facing reply via recover"
+                "All tool intents in batch were suppressed (cap or repeat-failure streak); forcing user-facing reply"
             );
             return Ok(ToolBatchDecision::SuppressOnlyIdlePass {
-                message: crate::orchestrator::llm_support::post_tool_guidance::DUPLICATE_SUPPRESS_IDLE_GUIDANCE
+                message: crate::orchestrator::llm_support::post_tool_guidance::BATCH_SUPPRESS_IDLE_GUIDANCE
                     .to_string(),
             });
         }

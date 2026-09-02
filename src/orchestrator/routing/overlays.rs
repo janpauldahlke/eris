@@ -25,6 +25,7 @@ pub fn apply_offer_overlays(
     moltbook_overlay_latched: bool,
     gatekeeper: &Gatekeeper,
     state: &AgentState,
+    pin_plan_tools: bool,
 ) -> Vec<String> {
     let registered = gatekeeper.registered_tool_names();
 
@@ -78,7 +79,48 @@ pub fn apply_offer_overlays(
         offered.push("media:catalog".to_string());
     }
 
+    if pin_plan_tools {
+        pin_plan_domain_verbs(&mut offered, gatekeeper, state);
+    }
+
     offered
+}
+
+/// When a mission is active or the user message looks multi-step, always offer the full
+/// plan verb set so domain-cluster routing cannot amputate `plan:*` from the slim palette.
+fn pin_plan_domain_verbs(
+    offered: &mut Vec<String>,
+    gatekeeper: &Gatekeeper,
+    state: &AgentState,
+) {
+    let plan_verbs: [&str; 3] = ["plan:read", "plan:set", "plan:update"];
+    let mut pinned = Vec::new();
+    for name in plan_verbs {
+        if Gatekeeper::state_allows_tool(state, name)
+            && gatekeeper.registered_tool_names().iter().any(|n| n == name)
+        {
+            pinned.push(name.to_string());
+        }
+    }
+    if pinned.is_empty() {
+        return;
+    }
+
+    offered.retain(|n| !n.starts_with("plan:"));
+    let mut merged = pinned.clone();
+    for name in offered.iter() {
+        if !merged.contains(name) {
+            merged.push(name.clone());
+        }
+    }
+    *offered = merged.clone();
+
+    tracing::info!(
+        event = "routing.offer.plan_pinned",
+        pinned = ?pinned,
+        offered_count = offered.len(),
+        "Pinned plan:* tools at front of slim offer"
+    );
 }
 
 /// For each domain represented in `seeds` (rank order), emit that domain's full
@@ -202,6 +244,35 @@ mod tests {
         }
     }
 
+    fn register_plan_tools(gk: &mut Gatekeeper) {
+        for name in ["plan:read", "plan:set", "plan:update"] {
+            gk.register(Arc::new(NamedStub(name)));
+        }
+    }
+
+    #[test]
+    fn pin_plan_tools_front_when_requested() {
+        let mut gk = Gatekeeper::new();
+        register_vault_memory(&mut gk);
+        register_plan_tools(&mut gk);
+
+        // Turn-5 shape from logs: vault domain seats, plan tools dropped.
+        let pre = vec![
+            "vault:search".into(),
+            "vault:list".into(),
+            "memory:query".into(),
+        ];
+        let without = apply_offer_overlays(&pre, 8, false, &gk, &AgentState::Chat, false);
+        assert!(!without.iter().any(|n| n.starts_with("plan:")));
+
+        let with_pin = apply_offer_overlays(&pre, 8, false, &gk, &AgentState::Chat, true);
+        assert!(with_pin[0].starts_with("plan:"));
+        assert!(with_pin.contains(&"plan:read".to_string()));
+        assert!(with_pin.contains(&"plan:set".to_string()));
+        assert!(with_pin.contains(&"plan:update".to_string()));
+        assert!(with_pin.contains(&"vault:search".to_string()));
+    }
+
     #[test]
     fn vault_seed_completes_all_vault_verbs_past_cap() {
         let mut gk = Gatekeeper::new();
@@ -219,7 +290,7 @@ mod tests {
             "web:fetch".into(),
             "web:search".into(),
         ];
-        let out = apply_offer_overlays(&pre, 8, false, &gk, &AgentState::Chat);
+        let out = apply_offer_overlays(&pre, 8, false, &gk, &AgentState::Chat, false);
 
         assert!(
             out.contains(&"vault:write".to_string()),
@@ -243,7 +314,7 @@ mod tests {
         register_vault_memory(&mut gk);
 
         let pre = vec!["vault:search".into(), "memory:query".into()];
-        let out = apply_offer_overlays(&pre, 8, false, &gk, &AgentState::Chat);
+        let out = apply_offer_overlays(&pre, 8, false, &gk, &AgentState::Chat, false);
 
         let search_i = out
             .iter()
@@ -263,7 +334,7 @@ mod tests {
         register_vault_memory(&mut gk);
 
         let pre = vec!["web:fetch".into(), "web:search".into()];
-        let out = apply_offer_overlays(&pre, 5, false, &gk, &AgentState::Chat);
+        let out = apply_offer_overlays(&pre, 5, false, &gk, &AgentState::Chat, false);
 
         assert!(out.contains(&"web:find".to_string())); // pairing overlay
         assert!(!out.contains(&"vault:write".to_string()));
@@ -276,7 +347,7 @@ mod tests {
         register_vault_memory(&mut gk);
 
         let pre = vec!["vault:search".into()];
-        let out = apply_offer_overlays(&pre, 0, false, &gk, &AgentState::Chat);
+        let out = apply_offer_overlays(&pre, 0, false, &gk, &AgentState::Chat, false);
         assert!(out.contains(&"vault:write".to_string()));
         assert_eq!(out.iter().filter(|n| n.starts_with("vault:")).count(), 5);
     }

@@ -77,6 +77,8 @@ pub struct ContextAssembler {
     /// Phrase-map description column cap (`slim_tool_description_preview_chars`; `0` = no truncation).
     slim_tool_description_preview_chars: usize,
     working_plan_prompt_max_chars: usize,
+    /// When set, append `[RUNTIME_HINT]` after `[WORKING_PLAN]` (multi-step message, open plan, or both).
+    runtime_plan_hint: Option<(bool, bool)>,
     /// When true, append field-order instructions to the system prompt
     /// (the llama.cpp GBNF grammar requires a fixed key order).
     is_grammar_constrained: bool,
@@ -105,6 +107,7 @@ impl ContextAssembler {
             staged_memory_prompt_max_chars,
             slim_tool_description_preview_chars: 120,
             working_plan_prompt_max_chars,
+            runtime_plan_hint: None,
             is_grammar_constrained: false,
             turn_prefetch_block: None,
             turn_document_prefetch_block: None,
@@ -117,6 +120,14 @@ impl ContextAssembler {
 
     pub fn set_turn_document_prefetch_block(&mut self, block: Option<String>) {
         self.turn_document_prefetch_block = block;
+    }
+
+    pub fn set_runtime_plan_hints(&mut self, multi_step_message: bool, active_open_plan: bool, enabled: bool) {
+        self.runtime_plan_hint = if enabled && (multi_step_message || active_open_plan) {
+            Some((multi_step_message, active_open_plan))
+        } else {
+            None
+        };
     }
 
     pub fn with_grammar_constraint(mut self, enabled: bool) -> Self {
@@ -231,6 +242,15 @@ impl ContextAssembler {
             out.push_str("\n\n");
             out.push_str(&block);
             out.push('\n');
+        }
+        if let Some((multi_step, active_open)) = self.runtime_plan_hint {
+            if let Some(hint) =
+                crate::tools::working_plan::runtime_hint_block(multi_step, active_open)
+            {
+                out.push_str("\n\n");
+                out.push_str(&hint);
+                out.push('\n');
+            }
         }
         out
     }
@@ -442,7 +462,9 @@ impl ContextAssembler {
             - Triggers for plan first: multiple actions in one message; \"first / then / after / next / and also\"; numbered lists; dependencies between steps (e.g. send mail only after getting the address from memory); validate/assert/check between tool steps.\n\
             - When those triggers are present, call plan:set (new mission) or plan:update (existing mission) BEFORE other tools unless the request is a trivial single tool. Execute the current step only; after significant tool results call plan:update (mark done, advance current_step_id, append short findings to scratch).\n\
             - Ambiguous middles (\"wait for zara\"): encode as a step with kind clarify or human_wait and keep unresolved meaning in scratch; literal timed waits use agenda:remind_at or clock alarms, not plan steps.\n\
-            - Separation: working plan = mission and step ordering (goal, ordered steps, short scratch); memory:stage = facts and snippets — do not duplicate long content in both. Operator todos and reminders are agenda:*, not the working plan.\n\n\
+            - Separation: working plan = mission and step ordering (goal, ordered steps, short scratch); memory:stage = facts and snippets — do not duplicate long content in both. Operator todos and timed reminders are agenda:*, not the working plan.\n\
+            - Agenda vs plan: agenda:push / agenda:remind_at queue operator errands and timed reminders for later; plan:set / plan:update track what you are executing now in this conversation. Multi-step requests (\"first then\", numbered lists, dependencies) use plan:* — not agenda:*.\n\
+            - plan:set step kind must be one of: tool, validate, clarify, human_wait (never \"action\" or other values). Step ids are auto-generated UUIDs — read them from the plan:set success line or plan:read; never invent ids like \"step-1\".\n\n\
             Vault taxonomy — use the 'kind' field in memory:stage to route to the correct root:\n\
             - kind=topology → 10_Topology/ (environment, config, infrastructure)\n\
             - kind=discourse → 20_Discourse/ (raw interaction, append-only stream)\n\

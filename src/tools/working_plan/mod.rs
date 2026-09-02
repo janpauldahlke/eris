@@ -4,9 +4,15 @@
 //! Splits **mission state** from operator todos (`agenda.json`): the plan is what
 //! the agent is *doing now*; the agenda is what the operator queued for later.
 
+pub mod chain_hints;
 pub mod read;
 pub mod set;
 pub mod update;
+
+pub use chain_hints::{
+    format_plan_checklist, format_tui_summary, has_open_working_plan, runtime_hint_block,
+    user_message_suggests_plan,
+};
 
 pub use read::PlanReadTool;
 pub use set::PlanSetTool;

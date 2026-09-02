@@ -43,7 +43,7 @@ rationale = "Tool does not require args."
 tool_name = "agenda:push"
 short_description = "Queue a background agenda task."
 when_to_use = "Use to create a new background task for later completion."
-when_not_to_use = "Do not use to read tasks, mark completion, remove, cancel, or schedule reminders; use agenda:list, agenda:complete, agenda:remove, or agenda:remind_at."
+when_not_to_use = "Do not use to read tasks, mark completion, remove, cancel, or schedule reminders; use agenda:list, agenda:complete, agenda:remove, or agenda:remind_at. Do not use for multi-step missions the agent should execute now (use plan:set / plan:update)."
 routing_hints = [
     "add task",
     "todo",
@@ -96,7 +96,7 @@ rationale = "Provide only one of task_id or description_match."
 tool_name = "agenda:remind_at"
 short_description = "Create or update an agenda row and link it to a fire time in .fcp/tools/alarms.json (task + alarm). Default for user reminders, including wall time (e.g. remind me at 3pm to call X)."
 when_to_use = "Use when the user ties the reminder to a todo or new description: task_id or new description, plus minutes or hour:minute. After AGENDA_CONFIRM, snooze with same task_id. This is the only tool that writes both agenda and linked alarm. Prefer this over clock:alarm for phrasing like remind me at, remind me in, remind me about, or anything that is a task/errand to track."
-when_not_to_use = "Do not use for a generic relative timer with no task meaning (use clock:timer). Do not use for a wake-only or alarm-clock-only ping with no todo (use clock:alarm). Do not use for listing or completing tasks alone; use agenda:list or agenda:complete."
+when_not_to_use = "Do not use for a generic relative timer with no task meaning (use clock:timer). Do not use for a wake-only or alarm-clock-only ping with no todo (use clock:alarm). Do not use for listing or completing tasks alone; use agenda:list or agenda:complete. Do not use for multi-step work the agent should run now (first/then, numbered steps, dependencies) — use plan:set instead."
 routing_hints = [
     "remind me at",
     "remind me in",
@@ -119,12 +119,7 @@ routing_hints = [
     "on my todo list",
     "task_id reminder",
     "agenda item",
-    "multi-step task",
-    "several steps later",
-    "then send email",
-    "after that do",
-    "remind yourself to",
-    "delayed checklist",
+    "schedule this reminder",
 ]
 
 [[examples_good]]
@@ -233,6 +228,11 @@ rationale = "plan:set first, before the first dependent tool; steps are ordered 
 name = "todo_queue"
 args = { goal = "Water the plants", steps = [{ title = "Water the plants" }] }
 rationale = "A single errand to track for later is agenda:push, not a working plan."
+
+[[examples_bad]]
+name = "invalid_kind_action"
+args = { goal = "Search then write", steps = [{ title = "Search", kind = "action" }] }
+rationale = "kind must be tool, validate, clarify, or human_wait — never action."
 "#,
     r#"descriptor_version = 1
 tool_name = "plan:update"

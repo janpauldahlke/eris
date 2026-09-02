@@ -231,7 +231,7 @@ impl Gatekeeper {
         names
     }
 
-    /// Returns `true` if the named tool opts out of per-turn duplicate suppression.
+    /// Returns `true` when the tool opts into repeat-within-turn (Moltbook browse streak policy).
     pub fn tool_allows_repeat(&self, name: &str) -> bool {
         self.registry
             .get(name)

@@ -132,6 +132,8 @@ impl<E: LlmEngine> Orchestrator<E> {
         self.context_assembler.set_turn_prefetch_block(None);
         self.context_assembler
             .set_turn_document_prefetch_block(None);
+        self.context_assembler
+            .set_runtime_plan_hints(false, false, false);
         let mut web_tool_activity = false;
         self.web_tool_calls_this_turn = 0;
         if let Some(ledger) = &self.web_ledger {
@@ -208,6 +210,20 @@ impl<E: LlmEngine> Orchestrator<E> {
         }
 
         // ── Pre-LLM semantic routing ─────────────────────────────────
+        let user_text_for_plan = self.last_user_content();
+        let chain_suggests_plan =
+            crate::tools::working_plan::user_message_suggests_plan(&user_text_for_plan);
+        let active_open_plan = crate::tools::working_plan::has_open_working_plan(
+            &self.context_assembler.workspace_root,
+        )
+        .await;
+        let pin_plan_tools = active_open_plan || chain_suggests_plan;
+        self.context_assembler.set_runtime_plan_hints(
+            chain_suggests_plan,
+            active_open_plan,
+            self.config.working_plan_runtime_hints,
+        );
+
         let routing = self.run_pre_llm_routing().await;
         let mut tools_needed = routing.tools_needed();
         let pre_llm_matched_tools = routing.matched_tool_names();
@@ -324,6 +340,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                     moltbook_overlay_latched,
                     &self.gatekeeper,
                     &self.state,
+                    pin_plan_tools,
                 );
                 tracing::info!(
                     event = "fcp.tool_prompt.assembly",
@@ -484,6 +501,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                     moltbook_overlay_latched,
                     &self.gatekeeper,
                     &self.state,
+                    pin_plan_tools,
                 );
                 if offered.is_empty() {
                     (None, true)
@@ -786,8 +804,8 @@ impl<E: LlmEngine> Orchestrator<E> {
                         }
                         ToolBatchDecision::SuppressOnlyIdlePass { message } => {
                             tracing::info!(
-                                event = "orchestrator.tools.duplicate_suppress_idle_pass",
-                                "Duplicate-only tool batch; forcing conversational pass without Recover"
+                                event = "orchestrator.tools.batch_suppress_idle_pass",
+                                "Suppressed-only tool batch; forcing conversational pass without Recover"
                             );
                             self.state = AgentState::Chat;
                             self.chat_stack

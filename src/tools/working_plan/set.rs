@@ -95,7 +95,16 @@ impl Tool for PlanSetTool {
         save(&self.workspace_root, &plan).await?;
         let step_count = plan.steps.len();
         let current = plan.current_step_id.as_deref().unwrap_or("-");
-        Ok(format!("SUCCESS: Working plan set ({step_count} steps, current: {current})."))
+        let id_lines: Vec<String> = plan
+            .steps
+            .iter()
+            .map(|s| format!("  id={}  title={}", s.id, s.title.trim()))
+            .collect();
+        Ok(format!(
+            "SUCCESS: Working plan set ({step_count} steps). current_step_id={current}. \
+             Use these step ids in plan:update (never invent ids):\n{}",
+            id_lines.join("\n")
+        ))
     }
 }
 

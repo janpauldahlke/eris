@@ -29,7 +29,7 @@ pub fn fallback_triggers(tool_name: &str) -> &'static str {
             "ephemeral staging with ttl, no vault write until commit, hold fact until user wants disk save"
         }
         "agenda:push" => {
-            "adding tasks, to-do list, add to agenda queue, schedule, new task without setting a time, queue work, background task, add to my list, track this for later"
+            "adding tasks, to-do list, add to agenda queue, schedule, new task without setting a time, queue work, background task, add to my list, track this for later, single errand reminder"
         }
         "agenda:list" => {
             "show tasks, what is on my list, pending items, show agenda, my schedule, what do I have to do"
@@ -38,7 +38,7 @@ pub fn fallback_triggers(tool_name: &str) -> &'static str {
             "remove task, cancel agenda item, delete agenda item, drop task, never mind that reminder, cancel that task, take off my todo list, scratch that task"
         }
         "agenda:remind_at" => {
-            "remind me at, remind me in, remind me about, remind me tomorrow, remember to, nudge me at, todo reminder, snooze task, agenda-linked reminder, remind me about this task, errand reminder, at 3pm for this, on my agenda, on my todo list, task_id reminder, in two minutes for this task, multi-step task, several steps later, then send email, remind yourself to, delayed checklist"
+            "remind me at, remind me in, remind me about, remind me tomorrow, remember to, nudge me at, todo reminder, snooze task, agenda-linked reminder, remind me about this task, errand reminder, at 3pm for this, on my agenda, on my todo list, task_id reminder, in two minutes for this task"
         }
         "agenda:complete" => {
             "finishing tasks, mark done, complete task, check off the task, task finished, finished the reminded task, I did it"

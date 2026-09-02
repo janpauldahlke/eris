@@ -148,13 +148,17 @@ impl<E: LlmEngine> Orchestrator<E> {
                 .as_ref()
                 .map(|rx| rx.borrow().clone())
                 .unwrap_or_default();
+            let active_task = crate::tools::working_plan::format_tui_summary(
+                &self.context_assembler.workspace_root,
+            )
+            .await;
             let update = AgentStateUpdate {
                 state: self.state,
                 tool_rounds: self.tool_rounds,
                 max_tool_rounds: self.max_tool_rounds,
                 recovery_count: self.recovery_count,
                 max_recovery_attempts: self.max_recovery_attempts,
-                active_task: None,
+                active_task,
                 activity_line: self.activity_line.clone(),
                 queued_inputs: self.queued_inputs,
                 router_ms: self.last_router_ms,

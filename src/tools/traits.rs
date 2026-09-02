@@ -17,10 +17,9 @@ pub trait Tool: Send + Sync {
         ToolContextViewHint::Default
     }
 
-    /// If `true`, the orchestrator will NOT suppress duplicate calls to this
-    /// tool within a single `step()`.  Override for polling/refresh tools
-    /// whose response changes between invocations even with identical args
-    /// (e.g. dashboards, feeds, notification inboxes).
+    /// If `true`, identical failed calls may repeat within one `step()`; after consecutive
+    /// failures during a Moltbook browse session the orchestrator suppresses further identical
+    /// attempts. Override for polling/refresh tools (feeds, inboxes, agenda reschedule).
     fn allow_repeat_in_turn(&self) -> bool {
         false
     }

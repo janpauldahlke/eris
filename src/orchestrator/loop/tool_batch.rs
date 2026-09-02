@@ -15,6 +15,7 @@ pub enum ToolBatchDecision {
     /// Enter recover state with a recoverable failure message.
     Recover { message: String },
     /// Duplicate-only batch: stay in Chat, disable tools for one reply (no Recover budget).
+    /// Used when web turn cap or Moltbook repeat-failure streak suppresses the whole batch.
     SuppressOnlyIdlePass { message: String },
     /// Successful Chat batch on OpenRouter: omit tools for the next hop so the model
     /// must answer from the results (no dummy follow-up `memory:stage`). Local GBNF
