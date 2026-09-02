@@ -336,6 +336,12 @@ pub fn draw(f: &mut Frame, app: &TuiApp, llm_tokens: &LlmTokenSnapshot) {
         .as_deref()
         .map(|s| truncate_status_line(s, STATUS_ACTIVITY_MAX_CHARS));
 
+    let plan_block = app
+        .state
+        .active_task
+        .as_deref()
+        .map(|s| truncate_status_line(s, 220));
+
     let max_t = app.state.max_tool_rounds.max(1);
     let max_r = app.state.max_recovery_attempts.max(1);
 
@@ -346,11 +352,50 @@ pub fn draw(f: &mut Frame, app: &TuiApp, llm_tokens: &LlmTokenSnapshot) {
     let tok_status = format_token_status_line(engine_name, llm_tokens);
 
     let status_text = if let Some(ref act) = activity_line {
+        if let Some(ref plan) = plan_block {
+            format!(
+                "{}\n{}\n{}\n{}\nT:{}/{} R:{}/{}\nQ:{}\nrt:{}ms llm:{}ms\ntool:{}ms total:{}ms\nmatch:{}\n{}",
+                pulse_str,
+                state_label,
+                plan,
+                act,
+                app.state.tool_rounds,
+                max_t,
+                app.state.recovery_count,
+                max_r,
+                queued,
+                app.state.router_ms,
+                app.state.llm_ms,
+                app.state.tool_ms,
+                app.state.total_ms,
+                app.state.top_tool_match.as_deref().unwrap_or("-"),
+                tok_status,
+            )
+        } else {
+            format!(
+                "{}\n{}\n{}\nT:{}/{} R:{}/{}\nQ:{}\nrt:{}ms llm:{}ms\ntool:{}ms total:{}ms\nmatch:{}\n{}",
+                pulse_str,
+                state_label,
+                act,
+                app.state.tool_rounds,
+                max_t,
+                app.state.recovery_count,
+                max_r,
+                queued,
+                app.state.router_ms,
+                app.state.llm_ms,
+                app.state.tool_ms,
+                app.state.total_ms,
+                app.state.top_tool_match.as_deref().unwrap_or("-"),
+                tok_status,
+            )
+        }
+    } else if let Some(ref plan) = plan_block {
         format!(
             "{}\n{}\n{}\nT:{}/{} R:{}/{}\nQ:{}\nrt:{}ms llm:{}ms\ntool:{}ms total:{}ms\nmatch:{}\n{}",
             pulse_str,
             state_label,
-            act,
+            plan,
             app.state.tool_rounds,
             max_t,
             app.state.recovery_count,

@@ -23,6 +23,7 @@ pub mod vision;
 pub mod weather;
 pub mod web;
 pub mod wiki;
+pub mod working_plan;
 
 pub use context_view_hint::ToolContextViewHint;
 pub use descriptors::ToolDescriptorRegistry;

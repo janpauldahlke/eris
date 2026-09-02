@@ -553,6 +553,9 @@ impl PeripheralLifecycle {
                 port = chat_port,
                 model = %lc.chat_model_path.display(),
                 enable_reasoning_fsm = config.enable_reasoning_fsm,
+                kv_offload = ?lc.kv_offload,
+                cache_type_k = ?lc.cache_type_k,
+                cache_type_v = ?lc.cache_type_v,
                 "Spawning llama-server"
             );
             let mut cmd = Command::new(&binary);
@@ -577,6 +580,16 @@ impl PeripheralLifecycle {
             }
             if let Some(ref ctv) = lc.cache_type_v {
                 cmd.arg("--cache-type-v").arg(ctv);
+            }
+            // llama.cpp: --kv-offload = KV on GPU; --no-kv-offload = KV in system RAM.
+            match lc.kv_offload {
+                Some(true) => {
+                    cmd.arg("--kv-offload");
+                }
+                Some(false) => {
+                    cmd.arg("--no-kv-offload");
+                }
+                None => {}
             }
             if let Some(ref spec) = lc.spec_type {
                 cmd.arg("--spec-type").arg(spec);
@@ -628,6 +641,7 @@ impl PeripheralLifecycle {
                     "speculative decoding flags applied"
                 );
             }
+            sanitize_llama_server_child_env(&mut cmd);
             apply_unix_sidecar_process_group(&mut cmd);
 
             let chat_child = cmd.spawn().map_err(|e| {
@@ -683,6 +697,7 @@ impl PeripheralLifecycle {
             ])
             .stdout(Stdio::null())
             .stderr(Stdio::null());
+            sanitize_llama_server_child_env(&mut cmd);
             apply_unix_sidecar_process_group(&mut cmd);
 
             let embed_child = cmd.spawn().map_err(|e| {
@@ -897,6 +912,24 @@ fn apply_unix_sidecar_process_group(cmd: &mut Command) {
     {
         // New session leader: SIGTERM/SIGKILL on `-pid` reaches `ollama serve` and its runners.
         cmd.process_group(0);
+    }
+}
+
+/// Drop host `LLAMA_API_KEY` (and file variant) so managed `llama-server` stays open.
+///
+/// Operators often export `LLAMA_API_KEY=local` in `.zshrc` for DeepSeek Harness / llama-dsh.
+/// llama-server treats that env as `--api-key`, then Eris (no Bearer header) gets 401 / a key prompt.
+fn sanitize_llama_server_child_env(cmd: &mut Command) {
+    let had_key = std::env::var_os("LLAMA_API_KEY").is_some();
+    let had_file = std::env::var_os("LLAMA_API_KEY_FILE").is_some();
+    cmd.env_remove("LLAMA_API_KEY");
+    cmd.env_remove("LLAMA_API_KEY_FILE");
+    if had_key || had_file {
+        tracing::info!(
+            had_LLAMA_API_KEY = had_key,
+            had_LLAMA_API_KEY_FILE = had_file,
+            "Stripped LLAMA_API_KEY* from managed llama-server env (local Eris needs no auth)"
+        );
     }
 }
 

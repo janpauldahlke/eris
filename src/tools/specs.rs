@@ -43,7 +43,7 @@ rationale = "Tool does not require args."
 tool_name = "agenda:push"
 short_description = "Queue a background agenda task."
 when_to_use = "Use to create a new background task for later completion."
-when_not_to_use = "Do not use to read tasks, mark completion, remove, cancel, or schedule reminders; use agenda:list, agenda:complete, agenda:remove, or agenda:remind_at."
+when_not_to_use = "Do not use to read tasks, mark completion, remove, cancel, or schedule reminders; use agenda:list, agenda:complete, agenda:remove, or agenda:remind_at. Do not use for multi-step missions the agent should execute now (use plan:set / plan:update)."
 routing_hints = [
     "add task",
     "todo",
@@ -96,7 +96,7 @@ rationale = "Provide only one of task_id or description_match."
 tool_name = "agenda:remind_at"
 short_description = "Create or update an agenda row and link it to a fire time in .fcp/tools/alarms.json (task + alarm). Default for user reminders, including wall time (e.g. remind me at 3pm to call X)."
 when_to_use = "Use when the user ties the reminder to a todo or new description: task_id or new description, plus minutes or hour:minute. After AGENDA_CONFIRM, snooze with same task_id. This is the only tool that writes both agenda and linked alarm. Prefer this over clock:alarm for phrasing like remind me at, remind me in, remind me about, or anything that is a task/errand to track."
-when_not_to_use = "Do not use for a generic relative timer with no task meaning (use clock:timer). Do not use for a wake-only or alarm-clock-only ping with no todo (use clock:alarm). Do not use for listing or completing tasks alone; use agenda:list or agenda:complete."
+when_not_to_use = "Do not use for a generic relative timer with no task meaning (use clock:timer). Do not use for a wake-only or alarm-clock-only ping with no todo (use clock:alarm). Do not use for listing or completing tasks alone; use agenda:list or agenda:complete. Do not use for multi-step work the agent should run now (first/then, numbered steps, dependencies) — use plan:set instead."
 routing_hints = [
     "remind me at",
     "remind me in",
@@ -119,12 +119,7 @@ routing_hints = [
     "on my todo list",
     "task_id reminder",
     "agenda item",
-    "multi-step task",
-    "several steps later",
-    "then send email",
-    "after that do",
-    "remind yourself to",
-    "delayed checklist",
+    "schedule this reminder",
 ]
 
 [[examples_good]]
@@ -184,6 +179,126 @@ rationale = "plan is required."
 name = "both_schedules"
 args = { description = "continue", plan = "x", minutes = 10, hour = 9, minute = 0 }
 rationale = "Provide either minutes or hour+minute, not both."
+"#,
+    r#"descriptor_version = 1
+tool_name = "plan:read"
+short_description = "Read the full active working plan (goal, outcome, ordered steps, scratch) as JSON."
+when_to_use = "Use to inspect the current mission state — current step, remaining steps, scratch — before continuing multi-step work, or when the user asks for progress (\"where are we?\", \"what is the plan?\"). The working plan is the agent's live mission state (goal, ordered steps, scratch), not the operator's todo list."
+when_not_to_use = "Do not use to create or modify the plan (use plan:set / plan:update). Do not use for operator todos or reminders (use agenda:list)."
+routing_hints = ["show the plan", "what are we doing", "where are we", "current step", "mission status", "plan progress", "what is left to do"]
+
+[[examples_good]]
+name = "read_full_plan"
+args = {}
+rationale = "No parameters; returns the full plan JSON (soft message when no plan is set)."
+
+[[examples_bad]]
+name = "unknown_arg"
+args = { path = "working_plan.json" }
+rationale = "plan:read takes no args; the path is fixed at .fcp/tools/working_plan.json."
+"#,
+    r#"descriptor_version = 1
+tool_name = "plan:set"
+short_description = "Replace the entire working plan (goal, outcome, ordered steps) for the active mission."
+when_to_use = "Use BEFORE executing a multi-step or dependent request: several actions in one message, \"first / then / after / next\", numbered lists, dependencies between steps (e.g. send mail only after getting the address from memory), or validate/assert between tool steps. Define goal, outcome, and ordered steps, then execute the current step only. The working plan is mission state (what the agent is doing now) — not operator todos or timed reminders (those are agenda:*) and not stored facts (those are memory:stage)."
+when_not_to_use = "Do not use for a trivial single-tool request. Do not use to queue operator todos or timed reminders (agenda:push / agenda:remind_at). Do not use to store facts or long content (memory:stage / vault:write)."
+routing_hints = [
+    "first then",
+    "multi-step",
+    "workflow",
+    "sequence",
+    "step by step",
+    "after that",
+    "validate then",
+    "then send",
+    "numbered list of steps",
+    "do X then Y then Z",
+    "break into steps",
+    "chain of dependent steps",
+    "plan out this task",
+    "several steps later",
+]
+
+[[examples_good]]
+name = "set_dependent_chain"
+args = { goal = "Get the flight price and mail it to zara", outcome = "zara has the price in her inbox", steps = [{ title = "Look up flight price", kind = "tool" }, { title = "Get zara's address from memory", kind = "tool" }, { title = "Validate price and address", kind = "validate" }, { title = "Send email", kind = "tool" }] }
+rationale = "plan:set first, before the first dependent tool; steps are ordered and current_step_id defaults to the first step."
+
+[[examples_bad]]
+name = "todo_queue"
+args = { goal = "Water the plants", steps = [{ title = "Water the plants" }] }
+rationale = "A single errand to track for later is agenda:push, not a working plan."
+
+[[examples_bad]]
+name = "invalid_kind_action"
+args = { goal = "Search then write", steps = [{ title = "Search", kind = "action" }] }
+rationale = "kind must be tool, validate, clarify, or human_wait — never action."
+"#,
+    r#"descriptor_version = 1
+tool_name = "plan:update"
+short_description = "Patch the active working plan: step statuses/titles/kinds, append steps, goal/outcome, scratch_append, current_step_id."
+when_to_use = "Call after each significant tool result while executing a mission: mark the step done, advance current_step_id explicitly, and append short findings via scratch_append. Use kind clarify/human_wait for ambiguous middles (\"wait for zara\") and keep unresolved meaning in scratch."
+when_not_to_use = "Do not use to create a plan from scratch (use plan:set). Do not use for operator todos or reminders (agenda:*). Do not use scratch for long content — short notes only; long content goes to memory:stage or the vault."
+routing_hints = ["mark step done", "advance the plan", "next step", "update the plan", "step finished", "append scratch note", "plan progress update", "current step"]
+
+[[examples_good]]
+name = "advance_after_step"
+args = { steps = [{ id = "a1b2", status = "done" }], current_step_id = "c3d4", scratch_append = "Price 412 EUR; zara = zara@example.com" }
+rationale = "Marks the finished step, advances the pointer, appends short findings."
+
+[[examples_good]]
+name = "clarify_ambiguous_middle"
+args = { steps_add = [{ title = "Wait for zara to confirm the address", kind = "human_wait" }] }
+rationale = "Ambiguous middles become explicit clarify/human_wait steps; unresolved meaning goes to scratch."
+
+[[examples_bad]]
+name = "unknown_step_id"
+args = { steps = [{ id = "nope", status = "done" }] }
+rationale = "Step ids come from plan:read; unknown ids are rejected."
+
+[[examples_bad]]
+name = "long_content_in_scratch"
+args = { scratch_append = "paste the full fetched article here" }
+rationale = "Scratch holds short notes only; long content belongs in memory:stage / vault."
+
+[[examples_bad]]
+name = "duplicate_title_steps_add"
+args = { steps_add = [{ title = "Write working-plan-test.md" }] }
+rationale = "Do not re-add a step title that already exists — mark it done and advance, or use plan:advance."
+"#,
+    r#"descriptor_version = 1
+tool_name = "plan:advance"
+short_description = "Mark the current working-plan step done and move current_step_id to the next open step."
+when_to_use = "Prefer after finishing the current mission step: cheaper and safer than a partial plan:update. Optional scratch_append for short findings. When no open steps remain, the plan auto-archives and clears."
+when_not_to_use = "Do not use to create a plan (plan:set). Do not use to rewrite goal/outcome or add new steps (plan:update). Do not use for operator todos (agenda:*)."
+routing_hints = ["advance the plan", "mark current step done", "next step", "move to next step", "plan step finished", "continue the plan"]
+
+[[examples_good]]
+name = "advance_with_scratch"
+args = { scratch_append = "Listed 8 top-level vault dirs" }
+rationale = "Closes the current step and points at the next; short scratch only."
+
+[[examples_bad]]
+name = "invented_step_id"
+args = { scratch_append = "ok" }
+rationale = "No id args — plan:advance uses the plan's current_step_id automatically."
+"#,
+    r#"descriptor_version = 1
+tool_name = "plan:clear"
+short_description = "Clear the active working plan (archives under .fcp/tools/working_plan_archive/ by default)."
+when_to_use = "Call when the mission is finished or abandoned so Status UI and plan tool pinning drop. Also runs automatically when the last open step is marked done."
+when_not_to_use = "Do not use mid-mission while open steps remain unless the user abandons the work. Do not use for agenda todos."
+routing_hints = ["clear the working plan", "abandon the mission", "cancel the plan", "plan finished clear", "reset working plan", "done with the plan"]
+
+[[examples_good]]
+name = "clear_default_archive"
+args = {}
+rationale = "Archives then removes the active working_plan.json."
+
+[[examples_bad]]
+name = "clear_as_todo_complete"
+args = {}
+rationale = "Operator todo completion is agenda:complete, not plan:clear."
 "#,
     r#"descriptor_version = 1
 tool_name = "memory:commit"
@@ -1370,3 +1485,50 @@ args = {}
 rationale = "doc_id is required."
 "#,
 ];
+
+#[cfg(test)]
+mod tests {
+    use crate::tools::descriptors::ToolDescriptorRegistry;
+
+    /// plan:* descriptors must exist, parse, and carry routing hints + use-bounds.
+    #[test]
+    fn plan_descriptors_cover_plan_tools() {
+        let registry = ToolDescriptorRegistry::load_embedded().expect("embedded descriptors");
+        for name in [
+            "plan:read",
+            "plan:set",
+            "plan:update",
+            "plan:advance",
+            "plan:clear",
+        ] {
+            let desc = registry
+                .get(name)
+                .unwrap_or_else(|| panic!("missing descriptor for {name}"));
+            assert!(!desc.short_description.trim().is_empty(), "{name}");
+            assert!(desc.when_to_use.is_some(), "{name} missing when_to_use");
+            assert!(desc.when_not_to_use.is_some(), "{name} missing when_not_to_use");
+            assert!(!desc.routing_hints.is_empty(), "{name} missing routing_hints");
+        }
+    }
+
+    /// plan:set routing hints should carry workflow/sequence language (doc requirement).
+    #[test]
+    fn plan_set_descriptor_has_workflow_routing_hints() {
+        let registry = ToolDescriptorRegistry::load_embedded().expect("embedded descriptors");
+        let hints = registry.get("plan:set").expect("plan:set").routing_hints.clone();
+        for phrase in [
+            "first then",
+            "workflow",
+            "sequence",
+            "step by step",
+            "after that",
+            "multi-step",
+            "validate then",
+        ] {
+            assert!(
+                hints.iter().any(|h| h == phrase),
+                "plan:set routing_hints missing {phrase:?}: {hints:?}"
+            );
+        }
+    }
+}

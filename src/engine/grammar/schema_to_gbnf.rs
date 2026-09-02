@@ -54,6 +54,16 @@ fn compile_schema_object(
 ) -> Option<String> {
     if schema.subschemas.is_some() {
         let subs = schema.subschemas.as_ref()?;
+        if let Some(ref one_of) = subs.one_of {
+            if let Some(expr) = try_compile_nullable_union(one_of, parent_rule_name, ctx) {
+                return Some(expr);
+            }
+        }
+        if let Some(ref any_of) = subs.any_of {
+            if let Some(expr) = try_compile_nullable_union(any_of, parent_rule_name, ctx) {
+                return Some(expr);
+            }
+        }
         if subs.one_of.is_some() || subs.any_of.is_some() || subs.all_of.is_some() {
             tracing::warn!(
                 rule = parent_rule_name,
@@ -107,6 +117,60 @@ fn compile_schema_object(
                 None
             }
         }
+    }
+}
+
+fn try_compile_nullable_union(
+    variants: &[Schema],
+    parent_rule_name: &str,
+    ctx: &mut CompileCtx<'_>,
+) -> Option<String> {
+    if variants.is_empty() {
+        return None;
+    }
+
+    let mut null_present = false;
+    let mut non_null_exprs: Vec<String> = Vec::new();
+
+    for variant in variants {
+        match variant {
+            Schema::Bool(_) => continue,
+            Schema::Object(obj) => {
+                if matches!(
+                    &obj.instance_type,
+                    Some(SingleOrVec::Single(t)) if **t == InstanceType::Null
+                ) {
+                    null_present = true;
+                    continue;
+                }
+                if let Some(expr) = compile_schema_object(obj, parent_rule_name, ctx) {
+                    if !non_null_exprs.contains(&expr) {
+                        non_null_exprs.push(expr);
+                    }
+                } else {
+                    return None;
+                }
+            }
+        }
+    }
+
+    if non_null_exprs.is_empty() {
+        return None;
+    }
+
+    let non_null_count = non_null_exprs.len();
+    let inner = if non_null_count == 1 {
+        non_null_exprs.into_iter().next()?
+    } else {
+        format!("({})", non_null_exprs.join(" | "))
+    };
+
+    if null_present {
+        Some(format!("({inner} | \"null\")"))
+    } else if variants.len() == non_null_count {
+        Some(inner)
+    } else {
+        None
     }
 }
 
@@ -517,6 +581,44 @@ mod tests {
         }));
         let result = schema_to_gbnf_rule("test:unsupported", &root);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn plan_set_real_schema_includes_step_kind_enum() {
+        use crate::tools::working_plan::set::PlanSetArgs;
+        let schema = schemars::schema_for!(PlanSetArgs);
+        let result = schema_to_gbnf_rule("plan:set", &schema);
+        assert!(result.is_some(), "plan:set should compile to GBNF");
+        let rules = &result.unwrap().1;
+        let combined: String = rules.iter().map(|(_, b)| b.as_str()).collect();
+        assert!(
+            combined.contains("tool") && combined.contains("validate"),
+            "plan step kind enum should appear in grammar: {combined}"
+        );
+        assert!(
+            combined.contains("human_wait"),
+            "plan step kind should include human_wait: {combined}"
+        );
+    }
+
+    #[test]
+    fn nullable_enum_any_of_compiles() {
+        use schemars::JsonSchema;
+        #[derive(JsonSchema)]
+        #[serde(rename_all = "snake_case")]
+        enum Kind {
+            Tool,
+            Validate,
+        }
+        #[derive(JsonSchema)]
+        struct Args {
+            kind: Option<Kind>,
+        }
+        let result = compile_for::<Args>("test:nullable-enum");
+        assert!(result.is_some(), "Option<enum> should compile");
+        let body = get_main_rule(&result);
+        assert!(body.contains("tool"));
+        assert!(body.contains("null"));
     }
 
     #[test]

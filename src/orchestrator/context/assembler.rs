@@ -69,8 +69,14 @@ enum ToolPromptTooling {
 
 pub struct ContextAssembler {
     pub core_dir: PathBuf,
+    /// Effective root for `.fcp/` tool state (working plan, …). Chat sessions use
+    /// `workspace == ""`, so this equals the vault root.
+    pub workspace_root: PathBuf,
     identity: tokio::sync::watch::Receiver<Arc<str>>,
     staged_memory_prompt_max_chars: usize,
+    working_plan_prompt_max_chars: usize,
+    /// When set, append `[RUNTIME_HINT]` after `[WORKING_PLAN]` (multi-step message, open plan, or both).
+    runtime_plan_hint: Option<(bool, bool)>,
     /// When true, append field-order instructions to the system prompt
     /// (the llama.cpp GBNF grammar requires a fixed key order).
     is_grammar_constrained: bool,
@@ -86,11 +92,19 @@ impl ContextAssembler {
         workspace: &str,
         identity: tokio::sync::watch::Receiver<Arc<str>>,
         staged_memory_prompt_max_chars: usize,
+        working_plan_prompt_max_chars: usize,
     ) -> Self {
         Self {
             core_dir: vault_root.join(workspace).join("00_Invariants"),
+            workspace_root: if workspace.is_empty() {
+                vault_root.to_path_buf()
+            } else {
+                vault_root.join(workspace)
+            },
             identity,
             staged_memory_prompt_max_chars,
+            working_plan_prompt_max_chars,
+            runtime_plan_hint: None,
             is_grammar_constrained: false,
             turn_prefetch_block: None,
             turn_document_prefetch_block: None,
@@ -103,6 +117,14 @@ impl ContextAssembler {
 
     pub fn set_turn_document_prefetch_block(&mut self, block: Option<String>) {
         self.turn_document_prefetch_block = block;
+    }
+
+    pub fn set_runtime_plan_hints(&mut self, multi_step_message: bool, active_open_plan: bool, enabled: bool) {
+        self.runtime_plan_hint = if enabled && (multi_step_message || active_open_plan) {
+            Some((multi_step_message, active_open_plan))
+        } else {
+            None
+        };
     }
 
     pub fn with_grammar_constraint(mut self, enabled: bool) -> Self {
@@ -183,6 +205,44 @@ impl ContextAssembler {
         out
     }
 
+    /// `[WORKING_PLAN]` block for the active mission (`.fcp/tools/working_plan.json`),
+    /// or `None` when the file is missing, empty, or fails to parse (warn, never fail assembly).
+    async fn working_plan_block(&self) -> Option<String> {
+        let plan = crate::tools::working_plan::load(&self.workspace_root)
+            .await
+            .ok()
+            .flatten()?;
+        let block = plan.render_prompt_block(self.working_plan_prompt_max_chars);
+        if block.is_empty() {
+            return None;
+        }
+        Some(format!("[WORKING_PLAN]\n{block}"))
+    }
+
+    /// Identity + staged digest + prefetch blocks + `[WORKING_PLAN]` (when the file exists).
+    async fn identity_plus_staged_sidebar_with_plan(
+        &self,
+        identity: String,
+        ephemeral: &EphemeralMemory,
+    ) -> String {
+        let mut out = self.identity_plus_staged_sidebar(identity, ephemeral);
+        if let Some(block) = self.working_plan_block().await {
+            out.push_str("\n\n");
+            out.push_str(&block);
+            out.push('\n');
+        }
+        if let Some((multi_step, active_open)) = self.runtime_plan_hint {
+            if let Some(hint) =
+                crate::tools::working_plan::runtime_hint_block(multi_step, active_open)
+            {
+                out.push_str("\n\n");
+                out.push_str(&hint);
+                out.push('\n');
+            }
+        }
+        out
+    }
+
     /// Reads Identity.md and formats the Ephemeral cache into a single string.
     /// CRITICAL: `ephemeral.cache` is an async moka cache. You must iterate it safely.
     pub async fn assemble(
@@ -195,7 +255,9 @@ impl ContextAssembler {
         let identity_content = self
             .identity_with_optional_moltbook_overlay(include_moltbook_overlay)
             .await?;
-        let identity_block = self.identity_plus_staged_sidebar(identity_content, ephemeral);
+        let identity_block = self
+            .identity_plus_staged_sidebar_with_plan(identity_content, ephemeral)
+            .await;
         let allowed_tools = gatekeeper.get_allowed_tools(state);
         let prompt = Self::build_tool_prompt(
             identity_block,
@@ -220,7 +282,9 @@ impl ContextAssembler {
         let identity_content = self
             .identity_with_optional_moltbook_overlay(include_moltbook_overlay)
             .await?;
-        let identity_block = self.identity_plus_staged_sidebar(identity_content, ephemeral);
+        let identity_block = self
+            .identity_plus_staged_sidebar_with_plan(identity_content, ephemeral)
+            .await;
         let allowed = gatekeeper.get_allowed_tools(state);
         let filtered = filter_tools_by_offered_order(allowed, offered_tool_names);
         let tool_rows: Vec<(String, String)> =
@@ -253,7 +317,9 @@ impl ContextAssembler {
         let identity_content = self
             .identity_with_optional_moltbook_overlay(include_moltbook_overlay)
             .await?;
-        let identity_block = self.identity_plus_staged_sidebar(identity_content, ephemeral);
+        let identity_block = self
+            .identity_plus_staged_sidebar_with_plan(identity_content, ephemeral)
+            .await;
 
         // Schema-fault recovery runs in `Recover`, but targeted tools (e.g. web:search) are
         // authorized in `Chat`/`Idle` only — use Chat's roster when filtering by name.
@@ -376,6 +442,13 @@ impl ContextAssembler {
             - [RELEVANT_LEARNED_MEMORY] (when present) is auto-injected from indexed vault knowledge when your message matches semantically; use it directly; call memory:query only for more detail, filters, or recency ordering.\n\
             - [RELEVANT_DOCUMENT_CONTEXT] (when present) is auto-injected from ingested document chunks; use it directly; call doc:query for deeper drill-down or doc:read for sequential page-through.\n\
             - Web fetch content is stored under 20_Discourse/web/missions/ on disk; use web:find to search fetched pages.\n\n\
+            Working plan rules (follow exactly):\n\
+            - Triggers for plan first: multiple actions in one message; \"first / then / after / next / and also\"; numbered lists; dependencies between steps (e.g. send mail only after getting the address from memory); validate/assert/check between tool steps.\n\
+            - When those triggers are present, call plan:set (new mission) or plan:update (existing mission) BEFORE other tools unless the request is a trivial single tool. Execute the current step only; after significant tool results call plan:advance (preferred) or plan:update (mark done, advance current_step_id, append short findings to scratch). When the mission is finished or abandoned, call plan:clear (auto-archive also runs when all steps are done).\n\
+            - Ambiguous middles (\"wait for zara\"): encode as a step with kind clarify or human_wait and keep unresolved meaning in scratch; literal timed waits use agenda:remind_at or clock alarms, not plan steps.\n\
+            - Separation: working plan = mission and step ordering (goal, ordered steps, short scratch); memory:stage = facts and snippets — do not duplicate long content in both. Operator todos and timed reminders are agenda:*, not the working plan.\n\
+            - Agenda vs plan: agenda:push / agenda:remind_at queue operator errands and timed reminders for later; plan:set / plan:update / plan:advance track what you are executing now in this conversation. Multi-step requests (\"first then\", numbered lists, dependencies) use plan:* — not agenda:*.\n\
+            - plan:set step kind must be one of: tool, validate, clarify, human_wait (never \"action\" or other values). Step ids are auto-generated UUIDs — read them from the plan:set success line or plan:read; never invent ids like \"step-1\". Do not steps_add a title that already exists — advance the existing step instead.\n\n\
             Vault taxonomy — use the 'kind' field in memory:stage to route to the correct root:\n\
             - kind=topology → 10_Topology/ (environment, config, infrastructure)\n\
             - kind=discourse → 20_Discourse/ (raw interaction, append-only stream)\n\
@@ -406,7 +479,9 @@ impl ContextAssembler {
         let identity_content = self
             .identity_with_optional_moltbook_overlay(include_moltbook_overlay)
             .await?;
-        let identity_block = self.identity_plus_staged_sidebar(identity_content, ephemeral);
+        let identity_block = self
+            .identity_plus_staged_sidebar_with_plan(identity_content, ephemeral)
+            .await;
         let state_focus = runtime_state_json_contract_focus(state);
 
         let system_prompt = format!(
@@ -518,7 +593,7 @@ mod tests {
         let vault_root = std::path::Path::new("/tmp/unused_for_snapshot_test");
         let workspace = "test_workspace";
         let (_tx, rx) = tokio::sync::watch::channel(Arc::from("I am the test agent."));
-        let assembler = ContextAssembler::new(vault_root, workspace, rx, 3500);
+        let assembler = ContextAssembler::new(vault_root, workspace, rx, 3500, 1200);
         let ephemeral = EphemeralMemory::new(workspace.to_string());
 
         ephemeral
@@ -545,7 +620,7 @@ mod tests {
         let vault_root = std::path::Path::new("/tmp/unused_for_snapshot_test");
         let workspace = "test_workspace";
         let (_tx, rx) = tokio::sync::watch::channel(Arc::from("identity"));
-        let assembler = ContextAssembler::new(vault_root, workspace, rx, 3500);
+        let assembler = ContextAssembler::new(vault_root, workspace, rx, 3500, 1200);
         let ephemeral = EphemeralMemory::new(workspace.to_string());
         let state = AgentState::Recover;
         let gatekeeper = crate::tools::gatekeeper::Gatekeeper::new();
@@ -568,7 +643,7 @@ mod tests {
         let vault_root = std::path::Path::new("/tmp/unused_for_snapshot_test");
         let workspace = "test_workspace";
         let (tx, rx) = tokio::sync::watch::channel(Arc::from("I am version 1."));
-        let assembler = ContextAssembler::new(vault_root, workspace, rx, 3500);
+        let assembler = ContextAssembler::new(vault_root, workspace, rx, 3500, 1200);
         let ephemeral = EphemeralMemory::new(workspace.to_string());
         let state = AgentState::Idle;
         let gatekeeper = crate::tools::gatekeeper::Gatekeeper::new();
@@ -602,7 +677,7 @@ mod tests {
             .await
             .expect("write moltbook overlay");
         let (_tx, rx) = tokio::sync::watch::channel(Arc::from("Base identity"));
-        let assembler = ContextAssembler::new(dir.path(), workspace, rx, 3500);
+        let assembler = ContextAssembler::new(dir.path(), workspace, rx, 3500, 1200);
         let ephemeral = EphemeralMemory::new(workspace.to_string());
         let state = AgentState::Idle;
         let gatekeeper = crate::tools::gatekeeper::Gatekeeper::new();
@@ -635,7 +710,7 @@ mod tests {
         let vault_root = std::path::Path::new("/tmp/unused_for_snapshot_test");
         let workspace = "test_workspace";
         let (_tx, rx) = tokio::sync::watch::channel(Arc::from("I am the test agent."));
-        let assembler = ContextAssembler::new(vault_root, workspace, rx, 3500);
+        let assembler = ContextAssembler::new(vault_root, workspace, rx, 3500, 1200);
         let ephemeral = EphemeralMemory::new(workspace.to_string());
         let state = AgentState::Chat;
         let mut gatekeeper = crate::tools::gatekeeper::Gatekeeper::new();
@@ -703,5 +778,239 @@ mod tests {
         let allowed = vec![a, b];
         let out = super::filter_tools_by_offered_order(allowed, &[]);
         assert_eq!(out.len(), 2);
+    }
+
+    async fn seed_working_plan(vault_root: &std::path::Path, workspace: &str) {
+        let root = if workspace.is_empty() {
+            vault_root.to_path_buf()
+        } else {
+            vault_root.join(workspace)
+        };
+        crate::tools::working_plan::save(
+            &root,
+            &crate::tools::working_plan::WorkingPlan {
+                goal: "Ship the slice".into(),
+                outcome: "tests green".into(),
+                steps: vec![crate::tools::working_plan::PlanStep {
+                    id: "a".into(),
+                    title: "Implement tools".into(),
+                    status: crate::tools::working_plan::PlanStepStatus::Active,
+                    kind: None,
+                }],
+                current_step_id: Some("a".into()),
+                scratch: "wip".into(),
+                updated_at: 1,
+                version: 1,
+            },
+        )
+        .await
+        .expect("seed plan");
+    }
+
+    fn gatekeeper_with_health_tool() -> crate::tools::gatekeeper::Gatekeeper {
+        let mut gatekeeper = crate::tools::gatekeeper::Gatekeeper::new();
+        gatekeeper.register(Arc::new(
+            crate::tools::system::health::SystemHealthTool {
+                config: Arc::new(crate::config::AppConfig::default()),
+            },
+        ));
+        gatekeeper
+    }
+
+    /// The `[WORKING_PLAN]` block must appear in all four assemble paths when the file exists.
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_working_plan_injected_in_all_assemble_paths_when_file_exists() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let workspace = "test_workspace";
+        seed_working_plan(dir.path(), workspace).await;
+        let (_tx, rx) = tokio::sync::watch::channel(Arc::from("identity"));
+        let assembler = ContextAssembler::new(dir.path(), workspace, rx, 3500, 1200);
+        let ephemeral = EphemeralMemory::new(workspace.to_string());
+        let state = AgentState::Chat;
+        let gatekeeper = gatekeeper_with_health_tool();
+
+        let full = assembler
+            .assemble(&state, &ephemeral, &gatekeeper, false)
+            .await
+            .expect("assemble");
+        assert!(full.contains("[WORKING_PLAN]"), "assemble: {full}");
+        assert!(full.contains("Goal: Ship the slice"), "assemble: {full}");
+        assert!(full.contains("Current: [a] Implement tools"), "assemble: {full}");
+
+        let slim = assembler
+            .assemble_slim_tool_map(&state, &ephemeral, &gatekeeper, None, &[], false)
+            .await
+            .expect("assemble_slim");
+        assert!(slim.contains("[WORKING_PLAN]"), "slim: {slim}");
+        assert!(slim.contains("Goal: Ship the slice"), "slim: {slim}");
+
+        let selected = assembler
+            .assemble_with_selected_tools(
+                &state,
+                &ephemeral,
+                &gatekeeper,
+                &["system:health".to_string()],
+                false,
+            )
+            .await
+            .expect("assemble_selected");
+        assert!(selected.contains("[WORKING_PLAN]"), "selected: {selected}");
+        assert!(selected.contains("Goal: Ship the slice"), "selected: {selected}");
+
+        let conversational = assembler
+            .assemble_conversational(&state, &ephemeral, false)
+            .await
+            .expect("assemble_conversational");
+        assert!(
+            conversational.contains("[WORKING_PLAN]"),
+            "conversational: {conversational}"
+        );
+        assert!(
+            conversational.contains("Goal: Ship the slice"),
+            "conversational: {conversational}"
+        );
+    }
+
+    /// No `[WORKING_PLAN]` marker when the file does not exist.
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_working_plan_absent_when_no_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let workspace = "test_workspace";
+        let (_tx, rx) = tokio::sync::watch::channel(Arc::from("identity"));
+        let assembler = ContextAssembler::new(dir.path(), workspace, rx, 3500, 1200);
+        let ephemeral = EphemeralMemory::new(workspace.to_string());
+        let state = AgentState::Chat;
+        let gatekeeper = gatekeeper_with_health_tool();
+
+        for prompt in [
+            assembler
+                .assemble(&state, &ephemeral, &gatekeeper, false)
+                .await
+                .expect("assemble"),
+            assembler
+                .assemble_slim_tool_map(&state, &ephemeral, &gatekeeper, None, &[], false)
+                .await
+                .expect("assemble_slim"),
+            assembler
+                .assemble_with_selected_tools(
+                    &state,
+                    &ephemeral,
+                    &gatekeeper,
+                    &["system:health".to_string()],
+                    false,
+                )
+                .await
+                .expect("assemble_selected"),
+            assembler
+                .assemble_conversational(&state, &ephemeral, false)
+                .await
+                .expect("assemble_conversational"),
+        ] {
+            assert!(
+                !prompt.contains("[WORKING_PLAN]"),
+                "no plan file, but marker leaked"
+            );
+        }
+    }
+
+    /// A corrupt plan file must not fail assembly (block simply omitted).
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_working_plan_corrupt_file_does_not_break_assembly() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let workspace = "test_workspace";
+        let root = dir.path().join(workspace);
+        tokio::fs::create_dir_all(crate::vault_layout::tools_dir(&root))
+            .await
+            .expect("create tools dir");
+        tokio::fs::write(
+            crate::vault_layout::working_plan_json(&root),
+            "{invalid json",
+        )
+        .await
+        .expect("write corrupt plan");
+        let (_tx, rx) = tokio::sync::watch::channel(Arc::from("identity"));
+        let assembler = ContextAssembler::new(dir.path(), workspace, rx, 3500, 1200);
+        let ephemeral = EphemeralMemory::new(workspace.to_string());
+        let state = AgentState::Chat;
+        let gatekeeper = gatekeeper_with_health_tool();
+
+        let assembled = assembler
+            .assemble(&state, &ephemeral, &gatekeeper, false)
+            .await
+            .expect("assemble with corrupt plan file");
+        assert!(!assembled.contains("[WORKING_PLAN]"));
+        assert!(assembled.contains("identity"));
+    }
+
+    /// `working_plan_prompt_max_chars` caps the injected block.
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_working_plan_injection_respects_max_chars() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let workspace = "test_workspace";
+        let root = dir.path().join(workspace);
+        crate::tools::working_plan::save(
+            &root,
+            &crate::tools::working_plan::WorkingPlan {
+                goal: "g".into(),
+                outcome: String::new(),
+                steps: vec![],
+                current_step_id: None,
+                scratch: "x".repeat(5000),
+                updated_at: 1,
+                version: 1,
+            },
+        )
+        .await
+        .expect("seed plan");
+        let (_tx, rx) = tokio::sync::watch::channel(Arc::from("identity"));
+        let assembler = ContextAssembler::new(dir.path(), workspace, rx, 3500, 120);
+        let ephemeral = EphemeralMemory::new(workspace.to_string());
+        let state = AgentState::Chat;
+
+        let assembled = assembler
+            .assemble_conversational(&state, &ephemeral, false)
+            .await
+            .expect("assemble");
+        assert!(
+            assembled.contains("[WORKING_PLAN]"),
+            "block must still appear"
+        );
+        let block = assembled
+            .split("[WORKING_PLAN]")
+            .nth(1)
+            .expect("marker present");
+        let section: String = block.lines().take_while(|l| !l.is_empty()).skip(1).collect::<Vec<_>>().join("\n");
+        assert!(
+            section.chars().count() <= 120 + 20,
+            "plan section over cap: {} chars",
+            section.chars().count()
+        );
+    }
+
+    /// `build_tool_prompt` must carry the working-plan NL policy (plan-first triggers,
+    /// execute-current-step, mission-vs-facts separation).
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_build_tool_prompt_includes_working_plan_nl_policy() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let workspace = "test_workspace";
+        let (_tx, rx) = tokio::sync::watch::channel(Arc::from("identity"));
+        let assembler = ContextAssembler::new(dir.path(), workspace, rx, 3500, 1200);
+        let ephemeral = EphemeralMemory::new(workspace.to_string());
+        let state = AgentState::Chat;
+        let gatekeeper = gatekeeper_with_health_tool();
+
+        let prompt = assembler
+            .assemble(&state, &ephemeral, &gatekeeper, false)
+            .await
+            .expect("assemble");
+        assert!(prompt.contains("Working plan rules"), "prompt: {prompt}");
+        assert!(
+            prompt.contains("BEFORE other tools"),
+            "plan-first ordering missing from prompt"
+        );
+        assert!(
+            prompt.contains("memory:stage = facts and snippets"),
+            "mission-vs-facts separation missing from prompt"
+        );
     }
 }

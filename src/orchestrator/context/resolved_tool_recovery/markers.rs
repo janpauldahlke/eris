@@ -6,15 +6,15 @@ pub const PROTOCOL_FAULT_PREFIX: &str = "[SYSTEM] Invalid model output";
 pub const JSON_REPAIR_TELEMETRY: &str = "[SYSTEM] JSON repair";
 /// Schema-targeted retry ([`crate::orchestrator::core::tool_dispatch`]).
 pub const SYSTEM_RECOVERY_PREFIX: &str = "[SYSTEM] Recovery";
-/// Duplicate tool batch suppression (starts with this exact phrase).
-pub const DUPLICATE_TOOL_BATCH_PREFIX: &str = "[SYSTEM] Tool batch suppressed";
+/// Batch-suppressed idle pass guidance ([`crate::orchestrator::loop::tool_batch::ToolBatchDecision::SuppressOnlyIdlePass`]).
+pub const BATCH_SUPPRESS_IDLE_PREFIX: &str = "[FCP BATCH SUPPRESSED";
 
 pub fn is_recovery_system_content(content: &str) -> bool {
     let t = content.trim_start();
     t.starts_with(PROTOCOL_FAULT_PREFIX)
         || t.starts_with(JSON_REPAIR_TELEMETRY)
         || t.starts_with(SYSTEM_RECOVERY_PREFIX)
-        || t.starts_with(DUPLICATE_TOOL_BATCH_PREFIX)
+        || t.starts_with(BATCH_SUPPRESS_IDLE_PREFIX)
 }
 
 #[cfg(test)]
@@ -22,7 +22,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn detects_protocol_fault_recovery_and_duplicate() {
+    fn detects_protocol_fault_recovery_and_batch_suppress() {
         assert!(is_recovery_system_content(
             "[SYSTEM] Invalid model output: trailing comma"
         ));
@@ -33,7 +33,7 @@ mod tests {
             "[SYSTEM] Recovery — schema retry"
         ));
         assert!(is_recovery_system_content(
-            "[SYSTEM] Tool batch suppressed — duplicates"
+            "[FCP BATCH SUPPRESSED — USER REPLY]\nAll tool_calls skipped"
         ));
     }
 

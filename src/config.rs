@@ -599,6 +599,11 @@ pub struct LlamaCppConfig {
     /// Chat `llama-server --cache-type-v` (e.g. `iq4_nl`, `q4_0`, `f16`). `None` = omit (server default).
     #[serde(default)]
     pub cache_type_v: Option<String>,
+    /// Chat `llama-server` KV placement. `Some(true)` → `--kv-offload` (KV on GPU; llama.cpp default).
+    /// `Some(false)` → `--no-kv-offload` (KV in system RAM — frees VRAM for weights / larger `num_ctx`,
+    /// at the cost of slower attention). `None` = omit (server default: GPU).
+    #[serde(default)]
+    pub kv_offload: Option<bool>,
     /// Chat `llama-server` mmproj GPU offload. `Some(true)` → `--mmproj-offload`, `Some(false)` →
     /// `--no-mmproj-offload` (projector stays in system RAM; useful on tight VRAM when vision is rare).
     /// `None` = omit (server default: GPU offload enabled).
@@ -655,6 +660,7 @@ impl Default for LlamaCppConfig {
             flash_attn: None,
             cache_type_k: None,
             cache_type_v: None,
+            kv_offload: None,
             mmproj_offload: None,
             spec_type: None,
             spec_draft_n_max: None,
@@ -783,6 +789,12 @@ pub struct AppConfig {
     /// Max characters for the `[ACTIVE_STAGED_MEMORY]` block injected into system prompts; `0` disables.
     #[serde(default = "default_staged_memory_prompt_max_chars")]
     pub staged_memory_prompt_max_chars: usize,
+    /// Max characters for the `[WORKING_PLAN]` block injected into system prompts; `0` disables.
+    #[serde(default = "default_working_plan_prompt_max_chars")]
+    pub working_plan_prompt_max_chars: usize,
+    /// When true, append `[RUNTIME_HINT]` on multi-step user text and/or open working-plan steps.
+    #[serde(default = "default_working_plan_runtime_hints")]
+    pub working_plan_runtime_hints: bool,
     /// When false, `news:today` is not registered.
     #[serde(default = "default_news_today_enabled")]
     pub news_today_enabled: bool,
@@ -1160,6 +1172,15 @@ fn default_turn_end_mention_enabled() -> bool {
 /// Max size of the `[ACTIVE_STAGED_MEMORY]` block in the system prompt; `0` disables.
 fn default_staged_memory_prompt_max_chars() -> usize {
     1500
+}
+
+/// Max size of the `[WORKING_PLAN]` block in the system prompt; `0` disables.
+fn default_working_plan_prompt_max_chars() -> usize {
+    1200
+}
+
+fn default_working_plan_runtime_hints() -> bool {
+    true
 }
 
 /// When true, build a slimmer copy of history for the LLM via [`crate::orchestrator::context::build_llm_view`].
@@ -1808,6 +1829,8 @@ impl Default for AppConfig {
             promotion_stage_boost: default_promotion_stage_boost(),
             turn_end_mention_enabled: default_turn_end_mention_enabled(),
             staged_memory_prompt_max_chars: default_staged_memory_prompt_max_chars(),
+            working_plan_prompt_max_chars: default_working_plan_prompt_max_chars(),
+            working_plan_runtime_hints: default_working_plan_runtime_hints(),
             news_today_enabled: default_news_today_enabled(),
             weather_enabled: default_weather_enabled(),
             wiki_enabled: default_wiki_enabled(),
@@ -2466,6 +2489,7 @@ mod tests {
             flash_attn: Some("on".into()),
             cache_type_k: Some("q8_0".into()),
             cache_type_v: Some("q8_0".into()),
+            kv_offload: Some(false),
             ..Default::default()
         });
 
@@ -2473,12 +2497,14 @@ mod tests {
         assert!(toml_str.contains("flash_attn"), "{toml_str}");
         assert!(toml_str.contains("cache_type_k"), "{toml_str}");
         assert!(toml_str.contains("cache_type_v"), "{toml_str}");
+        assert!(toml_str.contains("kv_offload"), "{toml_str}");
 
         let deserialized: AppConfig = toml::from_str(&toml_str).expect("deserialize");
         let lc = deserialized.llama_cpp.expect("llama_cpp section");
         assert_eq!(lc.flash_attn.as_deref(), Some("on"));
         assert_eq!(lc.cache_type_k.as_deref(), Some("q8_0"));
         assert_eq!(lc.cache_type_v.as_deref(), Some("q8_0"));
+        assert_eq!(lc.kv_offload, Some(false));
     }
 
     #[test]
@@ -2549,6 +2575,7 @@ mod tests {
         assert_eq!(lc.flash_attn, None);
         assert_eq!(lc.cache_type_k, None);
         assert_eq!(lc.cache_type_v, None);
+        assert_eq!(lc.kv_offload, None);
     }
 
     #[test]

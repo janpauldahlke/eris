@@ -1,7 +1,8 @@
 //! Slim-offer overlays shared by prompt assembly and GBNF subset selection.
 //!
 //! Single source of truth for: offer cap, **domain verb completion**, Moltbook latch,
-//! `web:find` pairing, `doc:read` → `vault:write`, and `vision:see` → `media:catalog`.
+//! `web:find` pairing, `doc:read` → `vault:write`, `vision:see` → `media:catalog`,
+//! and working-plan pin modes (bootstrap vs mid-mission).
 //!
 //! ## Domain verb completion
 //!
@@ -17,6 +18,18 @@ use super::clusters::{cluster_members, tool_domain};
 use crate::orchestrator::state::AgentState;
 use crate::tools::Gatekeeper;
 
+/// How aggressively to pin `plan:*` into the slim offer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PlanPinMode {
+    /// No plan pin.
+    #[default]
+    None,
+    /// Multi-step user text before/without an open plan — include `plan:set`.
+    Bootstrap,
+    /// Open working plan — progress verbs only (`plan:set` excluded so step tools keep seats).
+    MidMission,
+}
+
 /// Build the final offered-tool list for slim phrase map + subset grammar.
 #[must_use]
 pub fn apply_offer_overlays(
@@ -25,6 +38,7 @@ pub fn apply_offer_overlays(
     moltbook_overlay_latched: bool,
     gatekeeper: &Gatekeeper,
     state: &AgentState,
+    plan_pin: PlanPinMode,
 ) -> Vec<String> {
     let registered = gatekeeper.registered_tool_names();
 
@@ -76,7 +90,61 @@ pub fn apply_offer_overlays(
         offered.push("media:catalog".to_string());
     }
 
+    if plan_pin != PlanPinMode::None {
+        pin_plan_domain_verbs(&mut offered, gatekeeper, state, plan_pin);
+    }
+
     offered
+}
+
+/// When a mission is active or the user message looks multi-step, always offer plan verbs
+/// so domain-cluster routing cannot amputate `plan:*` from the slim palette.
+fn pin_plan_domain_verbs(
+    offered: &mut Vec<String>,
+    gatekeeper: &Gatekeeper,
+    state: &AgentState,
+    mode: PlanPinMode,
+) {
+    let plan_verbs: &[&str] = match mode {
+        PlanPinMode::None => return,
+        PlanPinMode::Bootstrap => &[
+            "plan:read",
+            "plan:set",
+            "plan:update",
+            "plan:advance",
+            "plan:clear",
+        ],
+        // Mid-mission: keep progress controls, drop plan:set so step tools keep slim seats.
+        PlanPinMode::MidMission => &["plan:read", "plan:update", "plan:advance", "plan:clear"],
+    };
+    let mut pinned = Vec::new();
+    for name in plan_verbs {
+        if Gatekeeper::state_allows_tool(state, name)
+            && gatekeeper.registered_tool_names().iter().any(|n| n == *name)
+        {
+            pinned.push((*name).to_string());
+        }
+    }
+    if pinned.is_empty() {
+        return;
+    }
+
+    offered.retain(|n| !n.starts_with("plan:"));
+    let mut merged = pinned.clone();
+    for name in offered.iter() {
+        if !merged.contains(name) {
+            merged.push(name.clone());
+        }
+    }
+    *offered = merged.clone();
+
+    tracing::info!(
+        event = "routing.offer.plan_pinned",
+        plan_pin = ?mode,
+        pinned = ?pinned,
+        offered_count = offered.len(),
+        "Pinned plan:* tools at front of slim offer"
+    );
 }
 
 /// For each domain represented in `seeds` (rank order), emit that domain's full
@@ -200,6 +268,78 @@ mod tests {
         }
     }
 
+    fn register_plan_tools(gk: &mut Gatekeeper) {
+        for name in [
+            "plan:read",
+            "plan:set",
+            "plan:update",
+            "plan:advance",
+            "plan:clear",
+        ] {
+            gk.register(Arc::new(NamedStub(name)));
+        }
+    }
+
+    #[test]
+    fn pin_plan_tools_front_when_requested() {
+        let mut gk = Gatekeeper::new();
+        register_vault_memory(&mut gk);
+        register_plan_tools(&mut gk);
+
+        // Turn-5 shape from logs: vault domain seats, plan tools dropped.
+        let pre = vec![
+            "vault:search".into(),
+            "vault:list".into(),
+            "memory:query".into(),
+        ];
+        let without = apply_offer_overlays(
+            &pre,
+            8,
+            false,
+            &gk,
+            &AgentState::Chat,
+            PlanPinMode::None,
+        );
+        assert!(!without.iter().any(|n| n.starts_with("plan:")));
+
+        let with_pin = apply_offer_overlays(
+            &pre,
+            8,
+            false,
+            &gk,
+            &AgentState::Chat,
+            PlanPinMode::Bootstrap,
+        );
+        assert!(with_pin[0].starts_with("plan:"));
+        assert!(with_pin.contains(&"plan:read".to_string()));
+        assert!(with_pin.contains(&"plan:set".to_string()));
+        assert!(with_pin.contains(&"plan:update".to_string()));
+        assert!(with_pin.contains(&"plan:advance".to_string()));
+        assert!(with_pin.contains(&"plan:clear".to_string()));
+        assert!(with_pin.contains(&"vault:search".to_string()));
+    }
+
+    #[test]
+    fn mid_mission_pin_excludes_plan_set() {
+        let mut gk = Gatekeeper::new();
+        register_vault_memory(&mut gk);
+        register_plan_tools(&mut gk);
+
+        let pre = vec!["vault:list".into()];
+        let out = apply_offer_overlays(
+            &pre,
+            8,
+            false,
+            &gk,
+            &AgentState::Chat,
+            PlanPinMode::MidMission,
+        );
+        assert!(out.contains(&"plan:advance".to_string()));
+        assert!(out.contains(&"plan:update".to_string()));
+        assert!(!out.contains(&"plan:set".to_string()));
+        assert!(out.contains(&"vault:list".to_string()));
+    }
+
     #[test]
     fn vault_seed_completes_all_vault_verbs_past_cap() {
         let mut gk = Gatekeeper::new();
@@ -217,7 +357,14 @@ mod tests {
             "web:fetch".into(),
             "web:search".into(),
         ];
-        let out = apply_offer_overlays(&pre, 8, false, &gk, &AgentState::Chat);
+        let out = apply_offer_overlays(
+            &pre,
+            8,
+            false,
+            &gk,
+            &AgentState::Chat,
+            PlanPinMode::None,
+        );
 
         assert!(
             out.contains(&"vault:write".to_string()),
@@ -241,7 +388,14 @@ mod tests {
         register_vault_memory(&mut gk);
 
         let pre = vec!["vault:search".into(), "memory:query".into()];
-        let out = apply_offer_overlays(&pre, 8, false, &gk, &AgentState::Chat);
+        let out = apply_offer_overlays(
+            &pre,
+            8,
+            false,
+            &gk,
+            &AgentState::Chat,
+            PlanPinMode::None,
+        );
 
         let search_i = out.iter().position(|n| n == "vault:search").expect("search");
         let write_i = out.iter().position(|n| n == "vault:write").expect("write");
@@ -258,7 +412,14 @@ mod tests {
         register_vault_memory(&mut gk);
 
         let pre = vec!["web:fetch".into(), "web:search".into()];
-        let out = apply_offer_overlays(&pre, 5, false, &gk, &AgentState::Chat);
+        let out = apply_offer_overlays(
+            &pre,
+            5,
+            false,
+            &gk,
+            &AgentState::Chat,
+            PlanPinMode::None,
+        );
 
         assert!(out.contains(&"web:find".to_string())); // pairing overlay
         assert!(!out.contains(&"vault:write".to_string()));
@@ -271,7 +432,14 @@ mod tests {
         register_vault_memory(&mut gk);
 
         let pre = vec!["vault:search".into()];
-        let out = apply_offer_overlays(&pre, 0, false, &gk, &AgentState::Chat);
+        let out = apply_offer_overlays(
+            &pre,
+            0,
+            false,
+            &gk,
+            &AgentState::Chat,
+            PlanPinMode::None,
+        );
         assert!(out.contains(&"vault:write".to_string()));
         assert_eq!(out.iter().filter(|n| n.starts_with("vault:")).count(), 5);
     }

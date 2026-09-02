@@ -73,4 +73,38 @@ mod tests {
         assert!(c.contains("clock:now"));
         assert!(c.contains("[FCP_TOOL_PHRASE_MAP]"));
     }
+
+    /// plan:* fallback triggers exist (workflow/sequence language, not todo-queue language).
+    #[test]
+    fn typical_phrasing_fallback_for_plan_tools_is_nonempty() {
+        for (tool, expected) in [
+            ("plan:read", "working plan"),
+            ("plan:set", "multi-step"),
+            ("plan:update", "advance the plan"),
+        ] {
+            let s = typical_phrasing_for_tool(tool, "desc", None);
+            assert!(!s.is_empty(), "{tool} has empty fallback phrasing");
+            assert!(s.contains(expected), "{tool} fallback missing {expected:?}: {s}");
+        }
+    }
+
+    /// Descriptor `routing_hints` win over fallback triggers when the registry has them.
+    #[test]
+    fn typical_phrasing_prefers_descriptor_hints_for_plan_set() {
+        let registry = crate::tools::descriptors::ToolDescriptorRegistry::load_embedded()
+            .expect("embedded descriptors");
+        let s = typical_phrasing_for_tool("plan:set", "desc", Some(&registry));
+        assert!(
+            s.contains("first then"),
+            "descriptor routing_hints should win: {s}"
+        );
+    }
+
+    /// agenda:push must not keep the bare "plan" todo token — that phrasing now belongs to plan:*.
+    #[test]
+    fn agenda_push_fallback_dropped_bare_plan_token() {
+        let s = fallback_triggers("agenda:push");
+        let tokens: Vec<&str> = s.split(',').map(str::trim).collect();
+        assert!(!tokens.contains(&"plan"), "bare plan token still on agenda:push: {s}");
+    }
 }

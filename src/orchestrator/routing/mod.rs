@@ -16,7 +16,7 @@ pub use clusters::{
     tool_domain, union_clusters_for_tools,
 };
 pub use decision::{RoutingDecision, RoutingOffer, UnsureFallback};
-pub use overlays::apply_offer_overlays;
+pub use overlays::{apply_offer_overlays, PlanPinMode};
 pub use policy::{
     apply_routing_policy, decide, should_soft_compel_web_fetch, user_text_has_url,
     RoutingPolicyKnobs, URL_SOFT_COMPEL_HINT,
