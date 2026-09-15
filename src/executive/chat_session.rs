@@ -661,6 +661,7 @@ pub async fn start_chat_session(
         token_metrics: Some(crate::engine::TokenMetricsReader::new(
             token_metrics_rx.clone(),
         )),
+        openrouter_mode: engine.openrouter_mode_handle(),
     }));
 
     gatekeeper.register(Arc::new(crate::tools::media::MediaCatalogTool {

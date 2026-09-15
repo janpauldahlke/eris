@@ -194,6 +194,7 @@ pub async fn run_benchmark(
     gatekeeper.register(Arc::new(crate::tools::system::SystemHealthTool {
         config: config_arc.clone(),
         token_metrics: None,
+        openrouter_mode: None,
     }));
     gatekeeper.register(Arc::new(crate::tools::clock::ClockNowTool));
 

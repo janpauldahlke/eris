@@ -11,7 +11,7 @@ pub mod traits;
 
 pub use self::embedding::EmbeddingProvider;
 pub use self::llama_cpp::LlamaCppClient;
-pub use self::openrouter::OpenRouterClient;
+pub use self::openrouter::{OpenRouterClient, OpenRouterModeHandle};
 pub use self::token_metrics::{
     LlmTokenSnapshot, TokenMetricsReader, channel as token_metrics_channel,
     publish as publish_llm_token_snapshot,
@@ -39,6 +39,15 @@ impl AnyEngine {
         match self {
             Self::LlamaCpp(e) => e.set_grammar(grammar),
             Self::Ollama(_) | Self::OpenRouter(_) => {}
+        }
+    }
+
+    /// Live OpenRouter structured-output ladder, if this engine is the hosted backend.
+    #[must_use]
+    pub fn openrouter_mode_handle(&self) -> Option<OpenRouterModeHandle> {
+        match self {
+            Self::OpenRouter(e) => Some(e.mode_handle()),
+            Self::Ollama(_) | Self::LlamaCpp(_) => None,
         }
     }
 }

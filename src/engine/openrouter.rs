@@ -42,11 +42,35 @@ pub struct OpenRouterClient {
     token_metrics_tx: Option<watch::Sender<LlmTokenSnapshot>>,
     /// Effective [`ResponseFormatMode`] for this session; starts at the configured mode and is
     /// downgraded (json_schema → json_object → off) when a model rejects the richer form with
-    /// HTTP 400. Atomic because `generate` takes `&self` (no shared `Mutex` per `.cursorrules`).
-    effective_format_mode: AtomicU8,
+    /// HTTP 400. `Arc` so `system:health` can observe the live ladder without a `Mutex`.
+    effective_format_mode: Arc<AtomicU8>,
     /// When false, this session no longer sends `tools[]` and uses envelope `response_format`
     /// instead (model rejected native tools with HTTP 400).
-    native_tools_enabled: AtomicBool,
+    native_tools_enabled: Arc<AtomicBool>,
+}
+
+/// Live OpenRouter structured-output ladder for `system:health`.
+/// Labels: `native_tools` | `json_schema` | `json_object` | `off`.
+#[derive(Clone)]
+pub struct OpenRouterModeHandle {
+    native_tools_enabled: Arc<AtomicBool>,
+    effective_format_mode: Arc<AtomicU8>,
+}
+
+impl OpenRouterModeHandle {
+    /// Current session mode. Native tools win until a 400 downgrade disables them.
+    #[must_use]
+    pub fn report_label(&self) -> &'static str {
+        if self.native_tools_enabled.load(Ordering::SeqCst) {
+            "native_tools"
+        } else {
+            match self.effective_format_mode.load(Ordering::SeqCst) {
+                MODE_JSON_SCHEMA => "json_schema",
+                MODE_JSON_OBJECT => "json_object",
+                _ => "off",
+            }
+        }
+    }
 }
 
 fn mode_to_u8(mode: ResponseFormatMode) -> u8 {
@@ -107,7 +131,7 @@ impl OpenRouterClient {
             .map_err(|e| FcpError::NetworkFault(format!("HTTP client build: {e}")))?;
 
         let chat_url = format!("{}/chat/completions", or.base_url.trim_end_matches('/'));
-        let effective_format_mode = AtomicU8::new(mode_to_u8(or.response_format_mode));
+        let effective_format_mode = Arc::new(AtomicU8::new(mode_to_u8(or.response_format_mode)));
 
         Ok(Self {
             http,
@@ -116,8 +140,17 @@ impl OpenRouterClient {
             config,
             token_metrics_tx: None,
             effective_format_mode,
-            native_tools_enabled: AtomicBool::new(true),
+            native_tools_enabled: Arc::new(AtomicBool::new(true)),
         })
+    }
+
+    /// Cloneable view of the live structured-output ladder for `system:health`.
+    #[must_use]
+    pub fn mode_handle(&self) -> OpenRouterModeHandle {
+        OpenRouterModeHandle {
+            native_tools_enabled: Arc::clone(&self.native_tools_enabled),
+            effective_format_mode: Arc::clone(&self.effective_format_mode),
+        }
     }
 
     pub fn with_token_metrics(mut self, tx: watch::Sender<LlmTokenSnapshot>) -> Self {
@@ -763,7 +796,7 @@ mod tests {
             .timeout(Duration::from_secs(5))
             .build()
             .expect("http client");
-        let effective_format_mode = AtomicU8::new(mode_to_u8(or.response_format_mode));
+        let effective_format_mode = Arc::new(AtomicU8::new(mode_to_u8(or.response_format_mode)));
         OpenRouterClient {
             http,
             chat_url: format!("{}/chat/completions", mock_url),
@@ -771,7 +804,7 @@ mod tests {
             config: Arc::new(AppConfig::default()),
             token_metrics_tx: None,
             effective_format_mode,
-            native_tools_enabled: AtomicBool::new(true),
+            native_tools_enabled: Arc::new(AtomicBool::new(true)),
         }
     }
 
@@ -1474,5 +1507,25 @@ mod tests {
             Ok(_) => panic!("consent gate must block construction"),
         };
         assert!(err.contains("consent"), "{err}");
+    }
+
+    #[test]
+    fn mode_handle_reports_native_tools_then_envelope_ladder() {
+        let client = make_client("http://127.0.0.1:9", test_or_config());
+        let handle = client.mode_handle();
+        assert_eq!(handle.report_label(), "native_tools");
+
+        client.native_tools_enabled.store(false, Ordering::SeqCst);
+        assert_eq!(handle.report_label(), "json_schema");
+
+        client
+            .effective_format_mode
+            .store(MODE_JSON_OBJECT, Ordering::SeqCst);
+        assert_eq!(handle.report_label(), "json_object");
+
+        client
+            .effective_format_mode
+            .store(MODE_OFF, Ordering::SeqCst);
+        assert_eq!(handle.report_label(), "off");
     }
 }

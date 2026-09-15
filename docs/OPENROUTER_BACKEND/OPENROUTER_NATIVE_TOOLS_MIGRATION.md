@@ -1,6 +1,6 @@
 # OpenRouter Native Tool-Calling Migration
 
-Status: IN PROGRESS — Phase 0–2 DONE (native `tools`/`tool_choice` + SSE fragment assembly + envelope projection; HTTP 400 downgrades to `response_format`). Phase 3 (role:tool round-trip) and Phase 5 (docs/health) pending. Phase 4 Solution B landed with Phase 2.
+Status: DONE — Phases 0–5 landed (native `tools`/`tool_choice` + SSE fragment assembly + envelope projection; `role:tool` round-trip; HTTP 400 downgrades to `response_format`; health reports `native_tools | json_schema | json_object | off`). Ready for vault `billy` hand-test.
 Scope: OpenRouter backend only. Ollama (JSON-mode) and llama.cpp (GBNF) are untouched.
 Author handoff: this doc is self-contained so a small model can execute one phase at a time.
 
@@ -194,7 +194,7 @@ Make `OpenRouterClient` send `tools`/`tool_choice` and project the native respon
 
 ---
 
-## 9. Phase 3 — Tool-result round-trip (`role:"tool"`)
+## 9. Phase 3 — Tool-result round-trip (`role:"tool"`) — ✅ DONE
 
 Replace the "fold tool result into a system->user message" behavior with the native `role:"tool"` + `tool_call_id` round-trip for OpenRouter.
 
@@ -224,7 +224,7 @@ The UI channels (idle / chat / thought+reflect) are blocking, so streaming is us
 
 ---
 
-## 11. Phase 5 — Docs & health
+## 11. Phase 5 — Docs & health — ✅ DONE
 
 - Update `docs/HOW_TO/OPENROUTER_SETUP.md`: note native tool calling, `tools`/`tool_choice`, model capability requirement (`supported_parameters=tools`), and the downgrade-to-`response_format` behavior for models without tools.
 - `src/tools/system/health.rs`: report structured-output mode as `native_tools | json_schema | json_object | off`. Never the key.

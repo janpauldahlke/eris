@@ -73,20 +73,32 @@ stream_idle_timeout_secs = 90
 # stop = ["<END>"]
 ```
 
-## 4. Structured output modes & fallback ladder
+## 4. Native tool calling & fallback ladder
 
-Locally, llama.cpp enforces the JSON protocol with a GBNF grammar. Over OpenRouter, Eris
-instead sends `response_format: { type: "json_schema", strict: true, ... }` compiled
-per-turn from the same offered-tool schemas:
+OpenRouter turns attach OpenAI-native `tools[]` / `tool_choice` built from the **same**
+offered-tool schemas llama.cpp compiles into GBNF. The model returns
+`message.tool_calls`; Eris projects those into the FCP envelope and, on the next hop,
+sends `role: "tool"` result frames with matching `tool_call_id`.
 
-1. **`JsonSchema`** (default) — strict envelope + per-tool argument schemas.
-2. **`JsonObject`** — valid JSON guaranteed, shape enforced by prompt + recovery loop.
-3. **`Off`** — prompt-only, identical to the Ollama recovery behavior.
+The model must advertise `supported_parameters=tools` (OpenRouter model page / `/models`).
+When `tools` are attached, Eris does **not** also send the strict envelope
+`response_format` — they are mutually exclusive on a given request.
 
-If the chosen model rejects a mode with HTTP 400, Eris automatically downgrades one rung
-for the rest of the session and retries in place. `require_parameters = true` prevents
-the router from silently sending the request to a provider that ignores
-`response_format` (which would return unconstrained prose at HTTP 200).
+If a model rejects `tools` with HTTP 400, Eris disables native tools for the rest of
+the session and retries with the envelope `response_format` ladder:
+
+1. **`native_tools`** (default) — `tools[]` + `tool_choice` (`required` when the router is confident, else `auto`).
+2. **`json_schema`** — `response_format: { type: "json_schema", strict: true, ... }` from the offered-tool subset.
+3. **`json_object`** — valid JSON guaranteed, shape enforced by prompt + recovery loop.
+4. **`off`** — prompt-only, identical to the Ollama recovery behavior.
+
+`system:health` reports the live session mode as one of those four labels.
+`require_parameters = true` prevents the router from silently sending the request to a
+provider that ignores `tools` / `response_format` (which would return unconstrained
+prose at HTTP 200).
+
+Config `response_format_mode` (`JsonSchema` | `JsonObject` | `Off`) is the **envelope
+fallback** starting rung after a native-tools 400, not the first request.
 
 ## 5. Cost accounting
 
@@ -104,7 +116,8 @@ subsequent turn) and its summarizer call is billed and accounted like any other 
 | **401** | Invalid/revoked key | Re-issue key; check the right env var name (`api_key_env`) |
 | **402** | Out of credits | Top up at openrouter.ai |
 | **429** | Rate limited | Eris retries with backoff honoring `Retry-After`; persistent 429 = raise limits or slow down |
-| 400 on first turn | Model rejects strict `json_schema` | Automatic: Eris downgrades to `json_object`, then `Off`; or set `response_format_mode` explicitly |
+| 400 on first tool turn | Model rejects native `tools` | Automatic: session drops to envelope `json_schema`, then `json_object`, then `Off`; pick a model with `supported_parameters=tools` |
+| 400 on envelope turn | Model rejects strict `json_schema` | Automatic: Eris downgrades to `json_object`, then `Off`; or set `response_format_mode` explicitly |
 | "Consent not acknowledged" | Consent gate closed | Set `consent_acknowledged = true` in `[openrouter]` after reading the privacy note above |
 | Turn reports 0 tokens/cost | Provider omitted streamed usage | Rare; cost falls back to local pricing if configured |
 

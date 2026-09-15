@@ -724,6 +724,7 @@ mod tests {
         gatekeeper.register(Arc::new(SystemHealthTool {
             config: test_config(),
             token_metrics: None,
+            openrouter_mode: None,
         }));
         let ephemeral = Arc::new(EphemeralMemory::new("relay_ws".to_string()));
         let dir = tempfile::tempdir().expect("tempdir");

@@ -18,6 +18,8 @@ pub struct SystemHealthTool {
     pub config: Arc<AppConfig>,
     /// Live token/cost snapshot reader; surfaces cumulative session cost for hosted backends.
     pub token_metrics: Option<crate::engine::TokenMetricsReader>,
+    /// Live OpenRouter structured-output ladder (`native_tools` | `json_schema` | `json_object` | `off`).
+    pub openrouter_mode: Option<crate::engine::OpenRouterModeHandle>,
 }
 
 const REPORT_HINT_OLLAMA: &str = "When answering the user, always cover in order: (1) `llm_backend` and `fcp`: Ollama URL and chat + embed models; (2) `ollama.cli_ps`: whether the CLI ran and summarize stdout or error; (3) `cpu.usage_pct` and load averages; (4) `memory` used vs total and `used_pct`. If `gpu.nvidia_smi.available` is true, summarize per-GPU memory, utilization, and temperature from `gpus`; if `available` is false and `reason` is `not_on_path`, omit GPU detail; if `skipped` is present, omit GPU detail. Optionally mention `host` and `disks` if relevant.";
@@ -62,7 +64,7 @@ impl Tool for SystemHealthTool {
     }
 
     fn description(&self) -> &'static str {
-        "Structured host diagnostics JSON with stable sections: `report_hint` (how to summarize), `llm_backend`, `fcp` (Ollama or llama-server targets), optional `llama_cpp_health` when using llama.cpp, `cpu`, `memory`, `ollama` (`ollama ps` when Ollama is the LLM backend), `gpu.nvidia_smi` (optional), plus `host` and `disks`. Follow `report_hint`."
+        "Structured host diagnostics JSON with stable sections: `report_hint` (how to summarize), `llm_backend`, `fcp` (Ollama, llama-server, or OpenRouter targets including `structured_output_mode`), optional `llama_cpp_health` when using llama.cpp, `cpu`, `memory`, `ollama` (`ollama ps` when Ollama is the LLM or embed backend), `gpu.nvidia_smi` (optional), plus `host` and `disks`. Follow `report_hint`. Never includes API keys."
     }
 
     fn parameters_schema(&self) -> schemars::schema::RootSchema {
@@ -103,12 +105,17 @@ impl Tool for SystemHealthTool {
                 // Discloses the hosted target and privacy posture. The API key is env-only
                 // and must never appear here (asserted by test).
                 if let Some(or) = cfg.openrouter.as_ref() {
+                    let structured_output_mode = self
+                        .openrouter_mode
+                        .as_ref()
+                        .map(|h| h.report_label())
+                        .unwrap_or("native_tools");
                     json!({
                         "chat_model": or.model.as_str(),
                         "base_url": or.base_url.as_str(),
                         "embed_backend": format!("{:?}", cfg.resolved_embed_backend()),
                         "embed_model": cfg.embed_model_name.as_str(),
-                        "structured_output_mode": format!("{:?}", or.response_format_mode),
+                        "structured_output_mode": structured_output_mode,
                         "data_collection": format!("{:?}", or.data_collection),
                         "consent_acknowledged": or.consent_acknowledged,
                         "session_cost_usd": self
@@ -293,6 +300,7 @@ mod tests {
         let tool = SystemHealthTool {
             config: Arc::new(AppConfig::default()),
             token_metrics: None,
+            openrouter_mode: None,
         };
         let args = serde_json::json!({});
 
@@ -350,6 +358,7 @@ mod tests {
         let tool = SystemHealthTool {
             config: Arc::new(AppConfig::default()),
             token_metrics: None,
+            openrouter_mode: None,
         };
         let parsed: serde_json::Value =
             serde_json::from_str(&tool.execute(json!({})).await.expect("health")).expect("json");
@@ -390,6 +399,7 @@ mod tests {
         let tool = SystemHealthTool {
             config: Arc::new(cfg),
             token_metrics: None,
+            openrouter_mode: None,
         };
         let parsed: serde_json::Value =
             serde_json::from_str(&tool.execute(json!({})).await.expect("health")).expect("json");
@@ -421,6 +431,7 @@ mod tests {
         let tool = SystemHealthTool {
             config: Arc::new(cfg),
             token_metrics: None,
+            openrouter_mode: None,
         };
         let raw = tool.execute(json!({})).await.expect("health");
         let parsed: serde_json::Value = serde_json::from_str(&raw).expect("json");
@@ -434,6 +445,10 @@ mod tests {
         assert!(fcp.get("base_url").is_some());
         assert_eq!(fcp.get("embed_backend"), Some(&json!("Ollama")));
         assert_eq!(fcp.get("consent_acknowledged"), Some(&json!(true)));
+        assert_eq!(
+            fcp.get("structured_output_mode"),
+            Some(&json!("native_tools"))
+        );
 
         // No key material, header names, or key-shaped strings anywhere in the report.
         let lower = raw.to_lowercase();

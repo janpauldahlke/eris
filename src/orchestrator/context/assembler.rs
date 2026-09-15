@@ -643,6 +643,7 @@ mod tests {
         gatekeeper.register(Arc::new(crate::tools::system::health::SystemHealthTool {
             config: Arc::new(crate::config::AppConfig::default()),
             token_metrics: None,
+            openrouter_mode: None,
         }));
         let assembled = assembler
             .assemble_slim_tool_map(&state, &ephemeral, &gatekeeper, None, &[], false)
