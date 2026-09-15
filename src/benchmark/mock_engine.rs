@@ -204,7 +204,10 @@ mod tests {
         use ollama_rs::Ollama;
 
         let config = Arc::new(AppConfig::default());
-        let ollama = Ollama::builder().host("http://localhost").port(11434).build();
+        let ollama = Ollama::builder()
+            .host("http://localhost")
+            .port(11434)
+            .build();
         let client = OllamaClient::new(ollama, config);
         let metrics = Arc::new(Mutex::new(QualityMetrics::default()));
 
@@ -240,6 +243,7 @@ mod tests {
         let response = EngineResponse {
             content: r#"{"thought":"test","status":"Idle","message_to_user":"hi","tool_calls":[]}"#
                 .to_string(),
+            tool_calls: Vec::new(),
             prompt_tokens: 10,
             generated_tokens: 5,
             generation_ms: 0,
@@ -259,6 +263,7 @@ mod tests {
 
         let response = EngineResponse {
             content: "not valid json".to_string(),
+            tool_calls: Vec::new(),
             prompt_tokens: 10,
             generated_tokens: 5,
             generation_ms: 0,
@@ -288,7 +293,13 @@ mod tests {
         let metrics = Arc::new(Mutex::new(QualityMetrics::default()));
 
         record_tool_validation(&metrics, "memory:stage", true, None).await;
-        record_tool_validation(&metrics, "vault:read", false, Some(vec!["missing path".to_string()])).await;
+        record_tool_validation(
+            &metrics,
+            "vault:read",
+            false,
+            Some(vec!["missing path".to_string()]),
+        )
+        .await;
 
         let m = metrics.lock().await;
         assert_eq!(m.tool_calls_attempted, 2);

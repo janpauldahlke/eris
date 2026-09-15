@@ -221,9 +221,11 @@ mod tests {
             let r = parse(
                 r#"{"thought":"complex","status":"Reflect","message_to_user":null,"tool_calls":[{"name":"web:fetch","args":{"url":"https://example.com","options":{"timeout":5,"headers":{"Accept":"text/html"}}}}]}"#,
             );
-            assert!(r.tool_calls[0].args["options"]["headers"]["Accept"]
-                .as_str()
-                .is_some());
+            assert!(
+                r.tool_calls[0].args["options"]["headers"]["Accept"]
+                    .as_str()
+                    .is_some()
+            );
         }
 
         #[test]
@@ -236,9 +238,8 @@ mod tests {
 
         #[test]
         fn null_message_matches() {
-            let r = parse(
-                r#"{"thought":"x","status":"Task","message_to_user":null,"tool_calls":[]}"#,
-            );
+            let r =
+                parse(r#"{"thought":"x","status":"Task","message_to_user":null,"tool_calls":[]}"#);
             assert!(r.message_to_user.is_none());
         }
 
@@ -384,11 +385,7 @@ mod tests {
 
         #[test]
         fn dynamic_grammar_contains_all_status_values() {
-            let entries = vec![typed_entry(
-                "test:tool",
-                "test-tool-args",
-                "\"{\" ws \"}\"",
-            )];
+            let entries = vec![typed_entry("test:tool", "test-tool-args", "\"{\" ws \"}\"")];
             let grammar = compile_fcp_envelope_grammar_dynamic(&entries);
             for status in &["Task", "Reflect", "Idle", "Process"] {
                 assert!(grammar.contains(status));

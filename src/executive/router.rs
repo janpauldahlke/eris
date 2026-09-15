@@ -18,29 +18,28 @@ async fn cleanup_web_missions_on_chat_exit(workspace_root: &Path, config: &AppCo
         return;
     }
     let root = workspace_root.to_path_buf();
-    let removed = match tokio::task::spawn_blocking(move || {
-        WebMissionStore::new(&root).purge_all_missions()
-    })
-    .await
-    {
-        Ok(Ok(n)) => n,
-        Ok(Err(e)) => {
-            tracing::warn!(
-                event = "web.missions.cleanup_failed",
-                error = %e,
-                "Failed to purge web mission cache on chat exit"
-            );
-            return;
-        }
-        Err(e) => {
-            tracing::warn!(
-                event = "web.missions.cleanup_join_failed",
-                error = %e,
-                "spawn_blocking join failed while purging web missions"
-            );
-            return;
-        }
-    };
+    let removed =
+        match tokio::task::spawn_blocking(move || WebMissionStore::new(&root).purge_all_missions())
+            .await
+        {
+            Ok(Ok(n)) => n,
+            Ok(Err(e)) => {
+                tracing::warn!(
+                    event = "web.missions.cleanup_failed",
+                    error = %e,
+                    "Failed to purge web mission cache on chat exit"
+                );
+                return;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    event = "web.missions.cleanup_join_failed",
+                    error = %e,
+                    "spawn_blocking join failed while purging web missions"
+                );
+                return;
+            }
+        };
     if removed > 0 {
         tracing::info!(
             event = "web.missions.cleanup_ok",
@@ -375,12 +374,14 @@ pub async fn execute_command(
             if no_dry_run && !i_understand_risks {
                 return Err(FcpError::Config(
                     "Disabling dry-run mode requires --i-understand-risks flag. \
-                     This may allow external side effects.".to_string()
+                     This may allow external side effects."
+                        .to_string(),
                 ));
             }
 
             // Parse isolation mode
-            let isolation_mode = isolation.parse::<crate::benchmark::IsolationMode>()
+            let isolation_mode = isolation
+                .parse::<crate::benchmark::IsolationMode>()
                 .map_err(|e| FcpError::Config(format!("Invalid isolation mode: {}", e)))?;
 
             if diff.as_ref().is_some() && diff_files.as_ref().is_some() {
@@ -415,8 +416,7 @@ pub async fn execute_command(
 
                 let baseline_storage =
                     crate::benchmark::BenchmarkStorage::for_vault(&baseline_root)?;
-                let current_storage =
-                    crate::benchmark::BenchmarkStorage::for_vault(&current_root)?;
+                let current_storage = crate::benchmark::BenchmarkStorage::for_vault(&current_root)?;
 
                 let baseline = baseline_storage.load_latest().map_err(|e| {
                     FcpError::Config(format!(
@@ -463,13 +463,16 @@ pub async fn execute_command(
 
             // Handle list mode
             if list {
-                let storage = crate::benchmark::BenchmarkStorage::for_vault(&config.active_vault())?;
+                let storage =
+                    crate::benchmark::BenchmarkStorage::for_vault(&config.active_vault())?;
                 let reports = storage.list_reports()?;
 
                 println!("\nAvailable benchmark runs:");
                 println!("{}", "─".repeat(80));
-                println!("{:<25} {:<20} {:<12} {:<8} {}",
-                    "Timestamp", "Model", "Suite", "Quality", "Run ID");
+                println!(
+                    "{:<25} {:<20} {:<12} {:<8} {}",
+                    "Timestamp", "Model", "Suite", "Quality", "Run ID"
+                );
                 println!("{}", "─".repeat(80));
 
                 for info in reports {
@@ -478,26 +481,35 @@ pub async fn execute_command(
 
                 println!("{}", "─".repeat(80));
                 println!("\nSame vault:     eris benchmark --diff '<run-id-1>..<run-id-2>'");
-                println!("Sibling vaults: eris benchmark --diff-vaults <dir-a> <dir-b>   (from parent folder)");
+                println!(
+                    "Sibling vaults: eris benchmark --diff-vaults <dir-a> <dir-b>   (from parent folder)"
+                );
                 println!("Cross-file:     eris benchmark --diff-files BASELINE.json CURRENT.json");
                 return Ok(());
             }
 
             // Handle trend mode
             if let Some(count) = trend {
-                let storage = crate::benchmark::BenchmarkStorage::for_vault(&config.active_vault())?;
+                let storage =
+                    crate::benchmark::BenchmarkStorage::for_vault(&config.active_vault())?;
                 let reports = storage.get_trend_reports(count)?;
 
                 if reports.len() < 2 {
-                    println!("Need at least 2 runs for trend analysis (found {})", reports.len());
+                    println!(
+                        "Need at least 2 runs for trend analysis (found {})",
+                        reports.len()
+                    );
                     return Ok(());
                 }
 
-                let trend_output = crate::benchmark::reporter::ReportGenerator::generate_trend_report(&reports);
+                let trend_output =
+                    crate::benchmark::reporter::ReportGenerator::generate_trend_report(&reports);
                 println!("{}", trend_output);
 
                 if let Some(path) = output {
-                    let md = crate::benchmark::reporter::ReportGenerator::generate_trend_report(&reports);
+                    let md = crate::benchmark::reporter::ReportGenerator::generate_trend_report(
+                        &reports,
+                    );
                     tokio::fs::write(&path, md).await?;
                     println!("Trend report saved to: {}", path.display());
                 }
@@ -507,20 +519,25 @@ pub async fn execute_command(
 
             // Handle diff mode
             if let Some(diff_arg) = diff {
-                let storage = crate::benchmark::BenchmarkStorage::for_vault(&config.active_vault())?;
-                let (baseline_id, current_id) = crate::benchmark::storage::parse_diff_argument(&diff_arg)?;
+                let storage =
+                    crate::benchmark::BenchmarkStorage::for_vault(&config.active_vault())?;
+                let (baseline_id, current_id) =
+                    crate::benchmark::storage::parse_diff_argument(&diff_arg)?;
 
                 let baseline = storage.load_report(&baseline_id)?;
                 let current = storage.load_report(&current_id)?;
 
-                let comparison = crate::benchmark::reporter::ReportGenerator::comparison(&baseline, &current);
+                let comparison =
+                    crate::benchmark::reporter::ReportGenerator::comparison(&baseline, &current);
                 println!("{}", comparison);
                 return Ok(());
             }
 
             // Normal benchmark run
-            println!("Starting benchmark: suite={}, format={}, isolation={}",
-                suite, format, isolation);
+            println!(
+                "Starting benchmark: suite={}, format={}, isolation={}",
+                suite, format, isolation
+            );
 
             // Run the benchmark
             let report = crate::benchmark::run_benchmark(
@@ -530,7 +547,8 @@ pub async fn execute_command(
                 compare,
                 output.clone(),
                 isolation_mode,
-            ).await?;
+            )
+            .await?;
 
             // Save report to storage
             let storage = crate::benchmark::BenchmarkStorage::for_vault(&config.active_vault())?;
@@ -541,9 +559,10 @@ pub async fn execute_command(
                 match storage.load_latest() {
                     Ok(previous) => {
                         if previous.run_id != report.run_id {
-                            let comparison = crate::benchmark::reporter::ReportGenerator::comparison(
-                                &previous, &report
-                            );
+                            let comparison =
+                                crate::benchmark::reporter::ReportGenerator::comparison(
+                                    &previous, &report,
+                                );
                             println!("\n{}", comparison);
                         }
                     }
@@ -555,7 +574,9 @@ pub async fn execute_command(
 
             // Handle no_cleanup flag
             if no_cleanup {
-                tracing::warn!("--no-cleanup specified: benchmark artifacts retained for debugging");
+                tracing::warn!(
+                    "--no-cleanup specified: benchmark artifacts retained for debugging"
+                );
             }
 
             Ok(())
@@ -677,6 +698,7 @@ mod tests {
                     .expect("SeqEngine: unexpected extra generate call");
                 Ok(EngineResponse {
                     content,
+                    tool_calls: Vec::new(),
                     prompt_tokens: 0,
                     generated_tokens: 0,
                     generation_ms: 0,
@@ -785,10 +807,7 @@ mod tests {
                     saw_inject = true;
                     let trimmed = label.trim().to_string();
                     let content = format!("{}{}", SYSTEM_ALARM_PREFIX, trimmed);
-                    orchestrator.chat_stack.push(Message {
-                        role: crate::engine::Role::User,
-                        content,
-                    });
+                    orchestrator.chat_stack.push(Message::user(content));
                     orchestrator.state = AgentState::Chat;
                     orchestrator.step(None).await.expect("alarm step");
                 }
@@ -797,10 +816,7 @@ mod tests {
                 UserAction::AgendaSelfPrompt { .. } => {}
             }
             while let Some(msg) = pending.pop_front() {
-                orchestrator.chat_stack.push(Message {
-                    role: crate::engine::Role::User,
-                    content: msg,
-                });
+                orchestrator.chat_stack.push(Message::user(msg));
                 orchestrator.state = AgentState::Chat;
                 orchestrator.step(None).await.expect("user step");
             }

@@ -73,9 +73,8 @@ pub fn publish_with_cost(
         .unwrap_or_default()
         .as_millis() as u64;
     let last_tps_milli = if generation_ms > 0 && generated_tokens > 0 {
-        let v = (generated_tokens as u128)
-            .saturating_mul(1_000_000)
-            / u128::from(generation_ms.max(1));
+        let v =
+            (generated_tokens as u128).saturating_mul(1_000_000) / u128::from(generation_ms.max(1));
         u32::try_from(v.min(u128::from(u32::MAX))).unwrap_or(u32::MAX)
     } else {
         0

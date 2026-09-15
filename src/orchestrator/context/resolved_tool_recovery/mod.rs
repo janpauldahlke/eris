@@ -131,10 +131,9 @@ pub fn apply_omit_resolved_tool_recovery(messages: &[Message]) -> Vec<Message> {
             i += 1;
             continue;
         }
-        out.push(Message {
-            role: crate::engine::Role::System,
-            content: OMIT_RESOLVED_TOOL_RECOVERY_PLACEHOLDER.to_string(),
-        });
+        out.push(Message::system(
+            OMIT_RESOLVED_TOOL_RECOVERY_PLACEHOLDER.to_string(),
+        ));
         while i < messages.len() && remove_set.contains(&i) {
             i += 1;
         }
@@ -148,24 +147,15 @@ mod tests {
     use crate::orchestrator::context::stack_lines::format_tool_success_line;
 
     fn sys(s: &str) -> Message {
-        Message {
-            role: crate::engine::Role::System,
-            content: s.to_string(),
-        }
+        Message::system(s.to_string())
     }
 
     fn asst(s: &str) -> Message {
-        Message {
-            role: crate::engine::Role::Assistant,
-            content: s.to_string(),
-        }
+        Message::assistant(s.to_string())
     }
 
     fn user(s: &str) -> Message {
-        Message {
-            role: crate::engine::Role::User,
-            content: s.to_string(),
-        }
+        Message::user(s.to_string())
     }
 
     #[test]

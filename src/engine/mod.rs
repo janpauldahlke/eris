@@ -16,7 +16,9 @@ pub use self::token_metrics::{
     LlmTokenSnapshot, TokenMetricsReader, channel as token_metrics_channel,
     publish as publish_llm_token_snapshot,
 };
-pub use self::traits::{EngineResponse, LlmEngine, LlmGenerateOptions, Message, Role};
+pub use self::traits::{
+    EngineResponse, EngineToolCall, LlmEngine, LlmGenerateOptions, Message, Role,
+};
 
 use self::ollama::OllamaClient;
 use async_trait::async_trait;
@@ -51,9 +53,18 @@ impl LlmEngine for AnyEngine {
         options: LlmGenerateOptions,
     ) -> crate::executive::error::Result<EngineResponse> {
         match self {
-            Self::Ollama(e) => e.generate(stack, available_tools_json, stream_tx, options).await,
-            Self::LlamaCpp(e) => e.generate(stack, available_tools_json, stream_tx, options).await,
-            Self::OpenRouter(e) => e.generate(stack, available_tools_json, stream_tx, options).await,
+            Self::Ollama(e) => {
+                e.generate(stack, available_tools_json, stream_tx, options)
+                    .await
+            }
+            Self::LlamaCpp(e) => {
+                e.generate(stack, available_tools_json, stream_tx, options)
+                    .await
+            }
+            Self::OpenRouter(e) => {
+                e.generate(stack, available_tools_json, stream_tx, options)
+                    .await
+            }
         }
     }
 }

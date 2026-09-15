@@ -1,6 +1,6 @@
 # OpenRouter Native Tool-Calling Migration
 
-Status: PLANNED (not started)
+Status: IN PROGRESS — Phase 0 DONE, Phase 1 DONE (`EngineToolCall` / `EngineResponse.tool_calls` / `Role::Tool` + Message tool metadata; local backends always empty). Phases 2–5 pending.
 Scope: OpenRouter backend only. Ollama (JSON-mode) and llama.cpp (GBNF) are untouched.
 Author handoff: this doc is self-contained so a small model can execute one phase at a time.
 
@@ -66,7 +66,18 @@ flowchart TB
 
 ---
 
-## 6. Phase 0 — Fix `schema_to_openai` (PREREQUISITE, ships value alone)
+## 6. Phase 0 — Fix `schema_to_openai` (PREREQUISITE, ships value alone) — ✅ DONE
+
+> Implemented in `src/engine/structured/schema_to_openai.rs`: `lower_schema_object` now routes
+> `oneOf`/`anyOf`/`allOf` through `lower_subschemas` instead of hard-erroring. Handled shapes
+> (confirmed against real schemars 0.8 output): single-element `allOf: [T]` (annotated `$ref`
+> wrapper, e.g. `memory:query.memory_sort`, `db:find_connections.time_constraint`) unwraps and
+> lowers `T`; two-arm nullable `anyOf`/`oneOf` `[T, null]` (e.g. `memory:stage.kind`/`tier`,
+> `news:today.category`) → `Nullable(T)`. Genuinely unsupported unions (multi-element `allOf`,
+> >2-arm / non-nullable) still `Err` → per-tool `warn!` + empty-object fallback. Bare fieldless
+> enum `$ref` was already handled. Parity test `gbnf_and_json_schema_subsets_offer_identical_tools`
+> stays green. `doc:list` intentionally stays empty-object (free-form `serde_json::Value` args).
+> Added 8 tests; full `schema_to_openai` suite: 17 passed.
 
 This is required regardless of native tools, and independently fixes vault `billy`.
 
@@ -91,7 +102,13 @@ This is required regardless of native tools, and independently fixes vault `bill
 
 ---
 
-## 7. Phase 1 — Engine seam: structured tool-call return (additive)
+## 7. Phase 1 — Engine seam: structured tool-call return (additive) — ✅ DONE
+
+> Implemented: `EngineToolCall` + `EngineResponse.tool_calls` (empty on Ollama/llama.cpp/OpenRouter for now).
+> Option A: `Role::Tool`, `Message.tool_call_id` / `Message.tool_calls`, constructors `Message::tool` /
+> `assistant_with_tool_calls`. `openai_wire` serializes native `role:"tool"` frames and assistant
+> `tool_calls` (omitted when empty so llama.cpp JSON stays `{role, content}`); consecutive tool
+> frames are not coalesced. Fields unused on the chat stack until Phase 3.
 
 Extend the trait return and message model so a backend CAN carry native tool calls. Local backends leave the new field empty; nothing about them changes.
 

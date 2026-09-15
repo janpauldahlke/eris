@@ -314,15 +314,11 @@ pub fn build_summarization_stack(
     previous_rolling_json: Option<&str>,
     messages_to_fold: &[Message],
 ) -> Vec<Message> {
-    let mut out = vec![Message {
-        role: crate::engine::Role::System,
-        content: instruction,
-    }];
+    let mut out = vec![Message::system(instruction)];
     if let Some(prev) = previous_rolling_json.filter(|s| !s.trim().is_empty()) {
-        out.push(Message {
-            role: crate::engine::Role::System,
-            content: format!("[PRIOR_ROLLING_SUMMARY_JSON]\n{prev}\n[/PRIOR_ROLLING_SUMMARY_JSON]"),
-        });
+        out.push(Message::system(format!(
+            "[PRIOR_ROLLING_SUMMARY_JSON]\n{prev}\n[/PRIOR_ROLLING_SUMMARY_JSON]"
+        )));
     }
     for m in messages_to_fold {
         out.push(m.clone());
@@ -335,16 +331,11 @@ pub fn build_summarization_stack(
 /// (condensation stacks are often `system…` + folded `assistant` rows only). Append a
 /// single internal user line so the template always has an explicit query to answer.
 pub fn ensure_condensation_user_query_tail(stack: &mut Vec<Message>) {
-    let last_is_user = stack
-        .last()
-        .is_some_and(|m| m.role == "user");
+    let last_is_user = stack.last().is_some_and(|m| m.role == "user");
     if last_is_user {
         return;
     }
-    stack.push(Message {
-        role: crate::engine::Role::User,
-        content: "[FCP internal — condensation] Reply with exactly one JSON object as specified in the system instructions (rolling_summary_v1). No markdown fences, no prose before or after the object.".into(),
-    });
+    stack.push(Message::user("[FCP internal — condensation] Reply with exactly one JSON object as specified in the system instructions (rolling_summary_v1). No markdown fences, no prose before or after the object."));
 }
 
 pub fn normalize_rolling_summary_response(raw: &str) -> Result<String> {
@@ -363,10 +354,7 @@ pub fn normalize_rolling_summary_response(raw: &str) -> Result<String> {
 }
 
 pub fn rolling_summary_system_message(json: &str) -> Message {
-    Message {
-        role: crate::engine::Role::System,
-        content: json.to_string(),
-    }
+    Message::system(json.to_string())
 }
 
 #[cfg(test)]
@@ -376,22 +364,10 @@ mod tests {
     #[test]
     fn split_head_orders_jit_then_rolling() {
         let stack = vec![
-            Message {
-                role: crate::engine::Role::System,
-                content: "main".to_string(),
-            },
-            Message {
-                role: crate::engine::Role::System,
-                content: "[JIT TOOL GUIDANCE]\nx\n[/JIT TOOL GUIDANCE]".to_string(),
-            },
-            Message {
-                role: crate::engine::Role::System,
-                content: r#"{"kind":"rolling_summary_v1","summary":"s","key_facts":[],"open_threads":[],"last_updated":"2026-01-01T00:00:00+00:00"}"#.to_string(),
-            },
-            Message {
-                role: crate::engine::Role::User,
-                content: "hi".to_string(),
-            },
+            Message::system("main".to_string()),
+            Message::system("[JIT TOOL GUIDANCE]\nx\n[/JIT TOOL GUIDANCE]".to_string()),
+            Message::system(r#"{"kind":"rolling_summary_v1","summary":"s","key_facts":[],"open_threads":[],"last_updated":"2026-01-01T00:00:00+00:00"}"#.to_string()),
+            Message::user("hi".to_string()),
         ];
         let head = split_stack_head(&stack).expect("split");
         assert!(head.jit.is_some());
@@ -404,13 +380,15 @@ mod tests {
     #[test]
     fn retain_keeps_suffix_under_budget() {
         let tail: Vec<Message> = (0u8..6)
-            .map(|i| Message {
-                role: if i % 2 == 0 {
-                    crate::engine::Role::User
-                } else {
-                    crate::engine::Role::Assistant
-                },
-                content: "word ".repeat(20),
+            .map(|i| {
+                Message::new(
+                    if i % 2 == 0 {
+                        crate::engine::Role::User
+                    } else {
+                        crate::engine::Role::Assistant
+                    },
+                    "word ".repeat(20),
+                )
             })
             .collect();
         let budget = 50usize;
@@ -428,22 +406,10 @@ mod tests {
 
     #[test]
     fn hard_trim_drops_oldest_tail_under_ceiling() {
-        let main = Message {
-            role: crate::engine::Role::System,
-            content: "main".into(),
-        };
-        let u1 = Message {
-            role: crate::engine::Role::User,
-            content: "x".repeat(400),
-        };
-        let a1 = Message {
-            role: crate::engine::Role::Assistant,
-            content: "y".repeat(400),
-        };
-        let u2 = Message {
-            role: crate::engine::Role::User,
-            content: "current".into(),
-        };
+        let main = Message::system("main");
+        let u1 = Message::user("x".repeat(400));
+        let a1 = Message::assistant("y".repeat(400));
+        let u2 = Message::user("current");
         let mut stack = vec![main, u1, a1, u2];
         let ceiling = 80usize;
         let dropped = trim_chat_stack_to_est_token_ceiling(&mut stack, ceiling).expect("trim");
@@ -459,30 +425,12 @@ mod tests {
     fn split_keeps_last_user_turn_even_with_heavy_assistant_suffix() {
         let heavy = "w".repeat(500);
         let tail = vec![
-            Message {
-                role: crate::engine::Role::User,
-                content: "stale ask".into(),
-            },
-            Message {
-                role: crate::engine::Role::Assistant,
-                content: heavy.clone(),
-            },
-            Message {
-                role: crate::engine::Role::Assistant,
-                content: heavy.clone(),
-            },
-            Message {
-                role: crate::engine::Role::User,
-                content: "CURRENT_USER_GOAL".into(),
-            },
-            Message {
-                role: crate::engine::Role::Assistant,
-                content: heavy.clone(),
-            },
-            Message {
-                role: crate::engine::Role::Assistant,
-                content: "tiny".into(),
-            },
+            Message::user("stale ask"),
+            Message::assistant(heavy.clone()),
+            Message::assistant(heavy.clone()),
+            Message::user("CURRENT_USER_GOAL"),
+            Message::assistant(heavy.clone()),
+            Message::assistant("tiny"),
         ];
         let budget = 120usize;
         let (old, kept) = split_tail_fold_and_keep(&tail, budget);
@@ -500,16 +448,7 @@ mod tests {
     #[test]
     fn condensation_user_tail_appended_when_last_not_user() {
         use super::ensure_condensation_user_query_tail;
-        let mut stack = vec![
-            Message {
-                role: crate::engine::Role::System,
-                content: "instr".into(),
-            },
-            Message {
-                role: crate::engine::Role::Assistant,
-                content: "{}".into(),
-            },
-        ];
+        let mut stack = vec![Message::system("instr"), Message::assistant("{}")];
         ensure_condensation_user_query_tail(&mut stack);
         assert_eq!(stack.len(), 3);
         assert_eq!(stack.last().map(|m| m.role.as_str()), Some("user"));
@@ -518,16 +457,7 @@ mod tests {
     #[test]
     fn condensation_user_tail_skipped_when_already_user() {
         use super::ensure_condensation_user_query_tail;
-        let mut stack = vec![
-            Message {
-                role: crate::engine::Role::System,
-                content: "instr".into(),
-            },
-            Message {
-                role: crate::engine::Role::User,
-                content: "hi".into(),
-            },
-        ];
+        let mut stack = vec![Message::system("instr"), Message::user("hi")];
         ensure_condensation_user_query_tail(&mut stack);
         assert_eq!(stack.len(), 2);
     }

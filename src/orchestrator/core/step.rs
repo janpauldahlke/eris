@@ -14,8 +14,8 @@ use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use super::{
-    llama_gbnf_subset::slim_offered_tool_names, Orchestrator, PromotionSuppressedDuringStep,
-    RECOVERY_BUDGET_EXHAUSTED_DECK_LINE, TOOL_ROUND_CAP_SYSTEM_GUIDANCE,
+    Orchestrator, PromotionSuppressedDuringStep, RECOVERY_BUDGET_EXHAUSTED_DECK_LINE,
+    TOOL_ROUND_CAP_SYSTEM_GUIDANCE, llama_gbnf_subset::slim_offered_tool_names,
 };
 use crate::config::AppConfig;
 
@@ -92,7 +92,8 @@ impl<E: LlmEngine> Orchestrator<E> {
         self.last_deck_message_body = None;
         self.last_prefetch_ms = 0;
         self.context_assembler.set_turn_prefetch_block(None);
-        self.context_assembler.set_turn_document_prefetch_block(None);
+        self.context_assembler
+            .set_turn_document_prefetch_block(None);
         let mut web_tool_activity = false;
         self.web_tool_calls_this_turn = 0;
         if let Some(ledger) = &self.web_ledger {
@@ -133,14 +134,16 @@ impl<E: LlmEngine> Orchestrator<E> {
 
             let memory_fut = async {
                 if let Some(semantic) = self.semantic.as_ref() {
-                    crate::memory::prefetch::run_turn_prefetch(semantic, &user_text, &self.config).await
+                    crate::memory::prefetch::run_turn_prefetch(semantic, &user_text, &self.config)
+                        .await
                 } else {
                     None
                 }
             };
             let doc_fut = async {
                 if let Some(ds) = self.document_store.as_ref() {
-                    crate::memory::prefetch::run_document_prefetch(ds, &user_text, &self.config).await
+                    crate::memory::prefetch::run_document_prefetch(ds, &user_text, &self.config)
+                        .await
                 } else {
                     None
                 }
@@ -158,7 +161,8 @@ impl<E: LlmEngine> Orchestrator<E> {
             if let Some(block) = doc_block {
                 let hit_count = block.matches("(from ").count().max(1);
                 activity_parts.push(format!("{hit_count} document passage(s)"));
-                self.context_assembler.set_turn_document_prefetch_block(Some(block));
+                self.context_assembler
+                    .set_turn_document_prefetch_block(Some(block));
             }
             if !activity_parts.is_empty() {
                 self.activity_line = Some(format!("Recalled {}", activity_parts.join(" + ")));
@@ -208,9 +212,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                 }
                 return Ok(());
             }
-            if self.tool_rounds >= self.max_tool_rounds
-                && self.state != AgentState::Reflect
-            {
+            if self.tool_rounds >= self.max_tool_rounds && self.state != AgentState::Reflect {
                 if !self.tool_round_cap_final_pass_pending {
                     self.tool_round_cap_final_pass_pending = true;
                     tracing::warn!(
@@ -231,10 +233,8 @@ impl<E: LlmEngine> Orchestrator<E> {
                         "{}\n\n(Current turn: {} successful tool executions; configured maximum per user turn is {}.)",
                         TOOL_ROUND_CAP_SYSTEM_GUIDANCE, self.tool_rounds, self.max_tool_rounds
                     );
-                    self.chat_stack.push(crate::engine::Message {
-                        role: crate::engine::Role::System,
-                        content: guidance,
-                    });
+                    self.chat_stack
+                        .push(crate::engine::Message::system(guidance));
                     tools_needed = false;
                     targeted_tools.clear();
                     continue;
@@ -358,14 +358,11 @@ impl<E: LlmEngine> Orchestrator<E> {
                 let user_line = self.last_user_content();
                 let fetch_offered = pre_llm_matched_tools.is_empty()
                     || pre_llm_matched_tools.iter().any(|n| n == "web:fetch");
-                if fetch_offered
-                    && crate::orchestrator::routing::user_text_has_url(user_line)
-                {
+                if fetch_offered && crate::orchestrator::routing::user_text_has_url(user_line) {
                     url_fetch_offered_this_hop = true;
                     if crate::orchestrator::routing::should_soft_compel_web_fetch(user_line) {
                         system_prompt.push_str("\n\n---\n\n");
-                        system_prompt
-                            .push_str(crate::orchestrator::routing::URL_SOFT_COMPEL_HINT);
+                        system_prompt.push_str(crate::orchestrator::routing::URL_SOFT_COMPEL_HINT);
                         url_soft_compel_injected = true;
                         tracing::info!(
                             category = routing_codes::CATEGORY_ROUTING,
@@ -536,10 +533,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                         "IDLE_STATE".to_string()
                     };
 
-                    self.chat_stack.push(crate::engine::Message {
-                        role: crate::engine::Role::System,
-                        content: prompt,
-                    });
+                    self.chat_stack.push(crate::engine::Message::system(prompt));
                     self.state = AgentState::Idle;
                     self.broadcast_state().await;
                     return Err(crate::executive::error::FcpError::Interrupted);
@@ -628,14 +622,11 @@ impl<E: LlmEngine> Orchestrator<E> {
                 Ok(p) => p,
             };
 
-            let deck_content =
-                self.stitch_pending_weather_report_into_content(&response.content);
+            let deck_content = self.stitch_pending_weather_report_into_content(&response.content);
             self.emit_optional_user_message(&deck_content).await;
 
-            self.chat_stack.push(crate::engine::Message {
-                role: crate::engine::Role::Assistant,
-                content: deck_content,
-            });
+            self.chat_stack
+                .push(crate::engine::Message::assistant(deck_content));
 
             let total_tokens = response.generated_tokens + response.prompt_tokens;
             let active_threshold_ratio = if web_tool_activity {
@@ -726,10 +717,8 @@ impl<E: LlmEngine> Orchestrator<E> {
                                 "Duplicate-only tool batch; forcing conversational pass without Recover"
                             );
                             self.state = AgentState::Chat;
-                            self.chat_stack.push(crate::engine::Message {
-                                role: crate::engine::Role::System,
-                                content: message,
-                            });
+                            self.chat_stack
+                                .push(crate::engine::Message::system(message));
                             tools_needed = false;
                             targeted_tools.clear();
                             self.force_full_tool_schemas_in_llm_view = false;

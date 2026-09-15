@@ -6,8 +6,8 @@
 //! Current policy: keep only the **most recent** success line for a given tool name; older
 //! results are replaced with a compact marker that preserves breadcrumb continuity for the model.
 
-use crate::engine::Message;
 use super::stack_lines::try_parse_tool_success_line;
+use crate::engine::Message;
 
 /// Replace all but the most recent `tool_name` success result with a compact marker.
 ///
@@ -45,8 +45,9 @@ pub fn prune_stale_tool_results(
             .unwrap_or("");
         let preview: String = snippet.chars().take(60).collect();
         let chars_freed = original.len();
-        chat_stack[idx].content =
-            format!("[{tool_name}: result pruned from context ({chars_freed} chars); began with: {preview}…]");
+        chat_stack[idx].content = format!(
+            "[{tool_name}: result pruned from context ({chars_freed} chars); began with: {preview}…]"
+        );
         pruned += 1;
     }
 
@@ -69,17 +70,11 @@ mod tests {
     use crate::orchestrator::context::format_tool_success_line;
 
     fn sys(content: &str) -> Message {
-        Message {
-            role: crate::engine::Role::System,
-            content: content.to_string(),
-        }
+        Message::system(content.to_string())
     }
 
     fn assistant(content: &str) -> Message {
-        Message {
-            role: crate::engine::Role::Assistant,
-            content: content.to_string(),
-        }
+        Message::assistant(content.to_string())
     }
 
     #[test]
@@ -105,9 +100,7 @@ mod tests {
         assert!(stack[2].content.contains("[doc:read: result pruned"));
         assert!(stack[5].content.contains("[doc:read: result pruned"));
 
-        assert!(stack[8]
-            .content
-            .starts_with("Tool 'doc:read' succeeded:"));
+        assert!(stack[8].content.starts_with("Tool 'doc:read' succeeded:"));
     }
 
     #[test]

@@ -4,7 +4,7 @@
 //! discriminated union (`anyOf` keyed on `name`) over the offered tools. An empty offered set
 //! constrains `tool_calls` to `[]`.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::schema_to_openai::OpenAiSchema;
 
@@ -113,7 +113,10 @@ mod tests {
     fn single_tool_items_is_direct_object_with_name_enum() {
         let v = build_envelope_json_schema(&[typed_entry("vault:read")]);
         let items = &v["properties"]["tool_calls"]["items"];
-        assert_eq!(items["properties"]["name"]["enum"], serde_json::json!(["vault:read"]));
+        assert_eq!(
+            items["properties"]["name"]["enum"],
+            serde_json::json!(["vault:read"])
+        );
         assert_eq!(
             items["properties"]["args"]["properties"]["relative_path"]["type"],
             "string"
@@ -138,9 +141,6 @@ mod tests {
             .collect();
         assert_eq!(names, vec!["vault:read", "memory:stage", "web:fetch"]);
         // Fallback tool gets the closed empty-object args.
-        assert_eq!(
-            alts[1]["properties"]["args"]["additionalProperties"],
-            false
-        );
+        assert_eq!(alts[1]["properties"]["args"]["additionalProperties"], false);
     }
 }

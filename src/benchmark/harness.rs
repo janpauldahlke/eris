@@ -1,8 +1,8 @@
 //! Benchmark harness for executing scenarios against the real orchestrator.
 
+use crate::benchmark::metrics::StepTiming;
 use crate::benchmark::suite::{CleanupAction, Scenario, ScenarioResult, Step, SuccessCriteria};
 use crate::benchmark::{CleanupReport, IsolationMode, QualityMetrics, SideEffectFilter};
-use crate::benchmark::metrics::StepTiming;
 use crate::engine::AnyEngine;
 use crate::engine::Message;
 use crate::executive::error::Result;
@@ -152,10 +152,9 @@ impl BenchmarkHarness {
 
         for step in &scenario.steps {
             let user_idx = orchestrator.chat_stack.len();
-            orchestrator.chat_stack.push(Message {
-                role: crate::engine::Role::User,
-                content: step.user_prompt.clone(),
-            });
+            orchestrator
+                .chat_stack
+                .push(Message::user(step.user_prompt.clone()));
             orchestrator.state = AgentState::Chat;
 
             if let Err(e) = orchestrator.step(None).await {
@@ -332,7 +331,8 @@ fn evaluate_success_criteria(
         SuccessCriteria::AllToolsCalled | SuccessCriteria::AnyToolCalled => true,
         SuccessCriteria::Custom(_) => true,
         SuccessCriteria::ResponseContains(needle) => {
-            combined_text.contains(needle.as_str()) || last_message_to_user.contains(needle.as_str())
+            combined_text.contains(needle.as_str())
+                || last_message_to_user.contains(needle.as_str())
         }
         SuccessCriteria::ValidJson => all_assistant_json_ok,
     }

@@ -1,9 +1,7 @@
 //! Split a raw LLM reply into the leading JSON object and any trailing text.
 
 use crate::orchestrator::state::LlmResponse;
-use schemars::schema::{
-    InstanceType, RootSchema, Schema, SchemaObject, SingleOrVec,
-};
+use schemars::schema::{InstanceType, RootSchema, Schema, SchemaObject, SingleOrVec};
 use std::borrow::Cow;
 use std::collections::HashSet;
 
@@ -106,10 +104,7 @@ pub fn extract_message_to_user_best_effort(raw: &str) -> Option<String> {
 /// After at least one successful tool this turn, accept salvage when Idle was intended.
 #[must_use]
 pub fn raw_looks_like_idle_reply_intent(raw: &str) -> bool {
-    let collapsed: String = raw
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .collect();
+    let collapsed: String = raw.chars().filter(|c| !c.is_whitespace()).collect();
     let lower = collapsed.to_ascii_lowercase();
     lower.contains("\"status\":\"idle\"")
         || lower.contains("\"status\":\"reflect\"")
@@ -193,7 +188,8 @@ fn scan_tool_name_tokens_in_text(text: &str, names: &mut Vec<String>) {
             continue;
         }
         let start = i;
-        while i < len && (bytes[i].is_ascii_lowercase() || bytes[i].is_ascii_digit() || bytes[i] == b'_')
+        while i < len
+            && (bytes[i].is_ascii_lowercase() || bytes[i].is_ascii_digit() || bytes[i] == b'_')
         {
             i += 1;
         }
@@ -204,7 +200,8 @@ fn scan_tool_name_tokens_in_text(text: &str, names: &mut Vec<String>) {
         if i >= len || !bytes[i].is_ascii_lowercase() {
             continue;
         }
-        while i < len && (bytes[i].is_ascii_lowercase() || bytes[i].is_ascii_digit() || bytes[i] == b'_')
+        while i < len
+            && (bytes[i].is_ascii_lowercase() || bytes[i].is_ascii_digit() || bytes[i] == b'_')
         {
             i += 1;
         }
@@ -326,8 +323,9 @@ pub fn infer_tools_from_user_message(user: &str) -> Vec<String> {
         || lower.contains("fetch that")
         || lower.contains("fetch the")
         || lower.contains("receipt_summary");
-    let wants_news =
-        lower.contains("news:today") || lower.contains("headline_count") || lower.contains("deep_fetch");
+    let wants_news = lower.contains("news:today")
+        || lower.contains("headline_count")
+        || lower.contains("deep_fetch");
     if wants_find {
         out.push("web:find".into());
     }
@@ -417,10 +415,7 @@ pub fn llm_json_parse_recovery_message(err: &serde_json::Error, raw: &str) -> St
     } else {
         LLM_JSON_PARSE_RECOVERY_HINT_BODY
     };
-    format!(
-        "{err}\n\n{}\n{}",
-        FCP_JSON_REPAIR_MARKER, hint_body
-    )
+    format!("{err}\n\n{}\n{}", FCP_JSON_REPAIR_MARKER, hint_body)
 }
 
 /// Same as [`llm_json_parse_recovery_message`] plus a capped single-line excerpt of the raw model output (for the recovery LLM pass only).
@@ -688,11 +683,7 @@ pub fn strip_leading_redacted_thinking_block(raw: &str) -> &str {
         return raw;
     };
     let after = trimmed[pos + "</think>".len()..].trim_start();
-    if after.is_empty() {
-        raw
-    } else {
-        after
-    }
+    if after.is_empty() { raw } else { after }
 }
 
 /// `true` when there is non-whitespace after the first complete JSON object **and** that object
@@ -810,52 +801,31 @@ mod tests {
     #[test]
     fn select_recovery_router_beats_last_tool_on_chat_stack() {
         use crate::engine::Message;
-        let allowed: HashSet<String> = [
-            "clock:now",
-            "vault:search",
-            "vault:list",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect();
-        let stack = vec![Message {
-            role: crate::engine::Role::System,
-            content: "Tool 'clock:now' succeeded: SUCCESS: 16:00".to_string(),
-        }];
-        let router = vec![
-            "vault:search".to_string(),
-            "vault:list".to_string(),
-        ];
+        let allowed: HashSet<String> = ["clock:now", "vault:search", "vault:list"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let stack = vec![Message::system(
+            "Tool 'clock:now' succeeded: SUCCESS: 16:00".to_string(),
+        )];
+        let router = vec!["vault:search".to_string(), "vault:list".to_string()];
         let user = "Search the vault for Talos and synthesis mentions.";
         let raw = "I am ready to search but have not executed yet.";
-        let selected = select_recovery_targeted_tools(
-            Some(raw),
-            user,
-            &[],
-            &router,
-            &stack,
-            &allowed,
-            0,
-        );
+        let selected =
+            select_recovery_targeted_tools(Some(raw), user, &[], &router, &stack, &allowed, 0);
         assert_eq!(selected, vec!["vault:search".to_string()]);
     }
 
     #[test]
     fn select_recovery_talos_turn8_regression() {
         use crate::engine::Message;
-        let allowed: HashSet<String> = [
-            "clock:now",
-            "vault:search",
-            "vault:list",
-            "vault:read",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect();
-        let stack = vec![Message {
-            role: crate::engine::Role::System,
-            content: "Tool 'clock:now' succeeded: SUCCESS: current time".to_string(),
-        }];
+        let allowed: HashSet<String> = ["clock:now", "vault:search", "vault:list", "vault:read"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let stack = vec![Message::system(
+            "Tool 'clock:now' succeeded: SUCCESS: current time".to_string(),
+        )];
         let router = vec![
             "vault:search".to_string(),
             "vault:taglist".to_string(),
@@ -863,15 +833,8 @@ mod tests {
         ];
         let user = "Search the vault for any notes mentioning synthesis or Talos.";
         let raw = "I am ready to search the vault for mentions of \"synthesis\" or \"Talos\", but I have not executed the search yet. Please confirm if you would like me to proceed with `vault:search` for these terms.";
-        let selected = select_recovery_targeted_tools(
-            Some(raw),
-            user,
-            &[],
-            &router,
-            &stack,
-            &allowed,
-            0,
-        );
+        let selected =
+            select_recovery_targeted_tools(Some(raw), user, &[], &router, &stack, &allowed, 0);
         assert_eq!(selected, vec!["vault:search".to_string()]);
     }
 
@@ -882,10 +845,9 @@ mod tests {
             .into_iter()
             .map(String::from)
             .collect();
-        let stack = vec![Message {
-            role: crate::engine::Role::System,
-            content: "Tool 'clock:now' succeeded: SUCCESS".to_string(),
-        }];
+        let stack = vec![Message::system(
+            "Tool 'clock:now' succeeded: SUCCESS".to_string(),
+        )];
         let selected = select_recovery_targeted_tools(
             None,
             "Read my identity file",
@@ -915,7 +877,10 @@ mod tests {
             &allowed,
             0,
         );
-        assert_eq!(selected, vec!["clock:now".to_string(), "vault:search".to_string()]);
+        assert_eq!(
+            selected,
+            vec!["clock:now".to_string(), "vault:search".to_string()]
+        );
     }
 
     #[test]
@@ -996,10 +961,7 @@ mod tests {
     fn natural_language_schema_enum_field() {
         let schema = schemars::schema_for!(VaultWriteArgs);
         let out = natural_language_schema_description("vault:write", &schema, "x");
-        assert!(
-            out.contains("overwrite") && out.contains("append"),
-            "{out}"
-        );
+        assert!(out.contains("overwrite") && out.contains("append"), "{out}");
     }
 
     #[derive(Debug, Deserialize, JsonSchema)]

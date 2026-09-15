@@ -1,28 +1,33 @@
 use crate::executive::error::Result;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
 /// Wire-level conversational role for a [`Message`].
 ///
-/// This is intentionally limited to the three roles every chat template accepts.
-/// Semantic distinctions (tool result vs. system directive vs. main prompt) are
-/// classified at the backend **projection** boundary, not stored here — see
-/// `crate::engine::projection`.
+/// `System` / `User` / `Assistant` are accepted by every chat template.
+/// [`Role::Tool`] is the OpenAI-native tool-result role; only the OpenRouter
+/// wire mapper emits it (Phase 3). Local backends map it to `user` if it ever
+/// appears on their stack.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
     System,
     User,
     Assistant,
+    /// Native tool-result frame (`role: "tool"` + `tool_call_id`). Unused on
+    /// the chat stack until the OpenRouter round-trip lands.
+    Tool,
 }
 
 impl Role {
-    /// Canonical lowercase wire string (`"system"` / `"user"` / `"assistant"`).
+    /// Canonical lowercase wire string (`"system"` / `"user"` / `"assistant"` / `"tool"`).
     pub fn as_str(self) -> &'static str {
         match self {
             Role::System => "system",
             Role::User => "user",
             Role::Assistant => "assistant",
+            Role::Tool => "tool",
         }
     }
 
@@ -32,6 +37,7 @@ impl Role {
         match s {
             "system" => Role::System,
             "assistant" => Role::Assistant,
+            "tool" => Role::Tool,
             _ => Role::User,
         }
     }
@@ -63,56 +69,95 @@ impl PartialEq<Role> for &str {
     }
 }
 
+/// One native tool call returned by a backend that supports OpenAI-style
+/// `message.tool_calls`. Local backends always leave this empty; arguments stay
+/// the raw JSON **string** until the orchestrator boundary parses them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EngineToolCall {
+    /// Provider `tool_call_id`, required for the `role: "tool"` round-trip.
+    pub id: Option<String>,
+    pub name: String,
+    /// Raw JSON string exactly as the provider returned it.
+    pub arguments: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Message {
     pub role: Role,
     pub content: String,
+    /// Provider `tool_call_id` on [`Role::Tool`] result frames. Unused until Phase 3.
+    pub tool_call_id: Option<String>,
+    /// Native tool calls on an assistant turn. Unused until Phase 3.
+    pub tool_calls: Vec<EngineToolCall>,
 }
 
 impl Message {
+    /// Construct a message with empty tool metadata (the common case for all
+    /// backends until the OpenRouter native round-trip is wired).
+    pub fn new(role: Role, content: impl Into<String>) -> Self {
+        Self {
+            role,
+            content: content.into(),
+            tool_call_id: None,
+            tool_calls: Vec::new(),
+        }
+    }
+
     /// Construct a `system`-role message.
     pub fn system(content: impl Into<String>) -> Self {
-        Self {
-            role: Role::System,
-            content: content.into(),
-        }
+        Self::new(Role::System, content)
     }
 
     /// Construct a `user`-role message.
     pub fn user(content: impl Into<String>) -> Self {
-        Self {
-            role: Role::User,
-            content: content.into(),
-        }
+        Self::new(Role::User, content)
     }
 
     /// Construct an `assistant`-role message.
     pub fn assistant(content: impl Into<String>) -> Self {
+        Self::new(Role::Assistant, content)
+    }
+
+    /// Construct a native `role: "tool"` result frame. Unused on the chat stack
+    /// until Phase 3; the OpenRouter wire mapper already emits it.
+    pub fn tool(content: impl Into<String>, tool_call_id: impl Into<String>) -> Self {
+        Self {
+            role: Role::Tool,
+            content: content.into(),
+            tool_call_id: Some(tool_call_id.into()),
+            tool_calls: Vec::new(),
+        }
+    }
+
+    /// Assistant turn that requested native tool calls. Unused until Phase 3.
+    pub fn assistant_with_tool_calls(
+        content: impl Into<String>,
+        tool_calls: Vec<EngineToolCall>,
+    ) -> Self {
         Self {
             role: Role::Assistant,
             content: content.into(),
+            tool_call_id: None,
+            tool_calls,
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl Default for Message {
+    fn default() -> Self {
+        Self::new(Role::User, String::new())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct EngineResponse {
     pub content: String,
+    /// Native tool calls; empty for Ollama / llama.cpp (and for OpenRouter talk turns).
+    pub tool_calls: Vec<EngineToolCall>,
     pub prompt_tokens: usize,
     pub generated_tokens: usize,
     /// Wall-clock ms for the completed request (streaming or non-streaming), for throughput metrics.
     pub generation_ms: u64,
-}
-
-impl Default for EngineResponse {
-    fn default() -> Self {
-        Self {
-            content: String::new(),
-            prompt_tokens: 0,
-            generated_tokens: 0,
-            generation_ms: 0,
-        }
-    }
 }
 
 /// Optional knobs for a single [`LlmEngine::generate`] call (backends ignore unsupported fields).
@@ -152,4 +197,45 @@ pub trait LlmEngine: Send + Sync {
         stream_tx: Option<mpsc::UnboundedSender<String>>,
         options: LlmGenerateOptions,
     ) -> Result<EngineResponse>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn engine_tool_call_serde_round_trip() {
+        let call = EngineToolCall {
+            id: Some("call_abc".into()),
+            name: "memory:query".into(),
+            arguments: r#"{"query":"foo"}"#.into(),
+        };
+        let json = serde_json::to_string(&call).expect("serialize");
+        let back: EngineToolCall = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(call, back);
+    }
+
+    #[test]
+    fn engine_tool_call_serde_round_trip_without_id() {
+        let call = EngineToolCall {
+            id: None,
+            name: "clock:now".into(),
+            arguments: "{}".into(),
+        };
+        let json = serde_json::to_string(&call).expect("serialize");
+        let back: EngineToolCall = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(call, back);
+    }
+
+    #[test]
+    fn role_tool_wire_round_trip() {
+        assert_eq!(Role::Tool.as_str(), "tool");
+        assert_eq!(Role::from_wire("tool"), Role::Tool);
+        assert_eq!(Role::from_wire("unknown"), Role::User);
+    }
+
+    #[test]
+    fn engine_response_default_has_empty_tool_calls() {
+        assert!(EngineResponse::default().tool_calls.is_empty());
+    }
 }

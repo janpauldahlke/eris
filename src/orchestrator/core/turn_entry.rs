@@ -63,10 +63,8 @@ impl<E: LlmEngine> Orchestrator<E> {
                 .map_err(|e| FcpError::EngineFault(e.to_string()))?;
 
                 self.emit_optional_user_message(&content).await;
-                self.chat_stack.push(crate::engine::Message {
-                    role: crate::engine::Role::Assistant,
-                    content,
-                });
+                self.chat_stack
+                    .push(crate::engine::Message::assistant(content));
                 self.state = AgentState::Idle;
                 self.recovery_count = 0;
                 self.tool_rounds = 0;
@@ -101,10 +99,8 @@ impl<E: LlmEngine> Orchestrator<E> {
         });
         let content = serde_json::to_string(&value)?;
         self.emit_optional_user_message(&content).await;
-        self.chat_stack.push(crate::engine::Message {
-            role: crate::engine::Role::Assistant,
-            content,
-        });
+        self.chat_stack
+            .push(crate::engine::Message::assistant(content));
         self.state = AgentState::Idle;
         self.last_llm_ms = 0;
         self.last_total_ms = 0;
@@ -220,15 +216,16 @@ impl<E: LlmEngine> Orchestrator<E> {
             })
             .collect();
         let step_failed: Vec<String> = self.step_failed_tools.iter().cloned().collect();
-        let candidates = crate::orchestrator::llm_support::json_envelope::select_recovery_targeted_tools(
-            raw_llm_output,
-            self.last_user_content(),
-            &step_failed,
-            router_hints,
-            &self.chat_stack,
-            &allowed,
-            self.tool_map_offer_cap,
-        );
+        let candidates =
+            crate::orchestrator::llm_support::json_envelope::select_recovery_targeted_tools(
+                raw_llm_output,
+                self.last_user_content(),
+                &step_failed,
+                router_hints,
+                &self.chat_stack,
+                &allowed,
+                self.tool_map_offer_cap,
+            );
         if candidates.is_empty() {
             return;
         }
@@ -317,7 +314,8 @@ impl<E: LlmEngine> Orchestrator<E> {
             return Ok(None);
         };
         let max_chars = (self.descriptor_jit_max_chars / 2).max(500);
-        crate::skills::build_jit_skill_guidance(workspace_root, &selected_skill_ids, max_chars).await
+        crate::skills::build_jit_skill_guidance(workspace_root, &selected_skill_ids, max_chars)
+            .await
     }
 }
 
@@ -354,6 +352,7 @@ mod tests {
         ) -> Result<EngineResponse> {
             Ok(EngineResponse {
                 content: "{}".into(),
+                tool_calls: Vec::new(),
                 prompt_tokens: 0,
                 generated_tokens: 0,
                 generation_ms: 0,
@@ -434,8 +433,7 @@ mod tests {
             None,
             None,
             Some(Arc::new(
-                crate::tools::ToolDescriptorRegistry::load_embedded()
-                    .expect("descriptor registry"),
+                crate::tools::ToolDescriptorRegistry::load_embedded().expect("descriptor registry"),
             )),
             ContextViewSettings::default(),
             Arc::new(AppConfig::default()),
@@ -453,12 +451,7 @@ mod tests {
     async fn skill_guidance_none_when_no_candidates() {
         let (orch, _root) = test_orchestrator_with_skills().await;
         let none = orch
-            .build_skill_jit_guidance(
-                &AgentState::Chat,
-                &[],
-                &HashSet::new(),
-                &HashSet::new(),
-            )
+            .build_skill_jit_guidance(&AgentState::Chat, &[], &HashSet::new(), &HashSet::new())
             .await
             .expect("skill guidance");
         assert!(none.is_none());

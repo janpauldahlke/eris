@@ -155,19 +155,10 @@ impl<E: LlmEngine> Orchestrator<E> {
             if first.role == "system" {
                 first.content = prompt;
             } else {
-                chat_stack.insert(
-                    0,
-                    crate::engine::Message {
-                        role: crate::engine::Role::System,
-                        content: prompt,
-                    },
-                );
+                chat_stack.insert(0, crate::engine::Message::system(prompt));
             }
         } else {
-            chat_stack.push(crate::engine::Message {
-                role: crate::engine::Role::System,
-                content: prompt,
-            });
+            chat_stack.push(crate::engine::Message::system(prompt));
         }
     }
 

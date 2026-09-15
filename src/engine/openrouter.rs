@@ -10,14 +10,14 @@
 use crate::config::{
     AppConfig, DataCollection, OpenRouterConfig, OpenRouterReasoning, ResponseFormatMode,
 };
-use crate::engine::openai_wire::{to_wire_messages, ChatMsg};
+use crate::engine::openai_wire::{ChatMsg, to_wire_messages};
 use crate::engine::token_metrics::{self, LlmTokenSnapshot};
 use crate::engine::{EngineResponse, LlmEngine, LlmGenerateOptions, Message};
 use crate::executive::error::{FcpError, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, watch};
 
@@ -70,10 +70,11 @@ impl OpenRouterClient {
 
         let mut headers = reqwest::header::HeaderMap::new();
         let mut auth =
-            reqwest::header::HeaderValue::from_str(&format!("Bearer {}", api_key.trim()))
-                .map_err(|_| {
+            reqwest::header::HeaderValue::from_str(&format!("Bearer {}", api_key.trim())).map_err(
+                |_| {
                     FcpError::Config("OpenRouter API key contains invalid header characters".into())
-                })?;
+                },
+            )?;
         auth.set_sensitive(true);
         headers.insert(reqwest::header::AUTHORIZATION, auth);
         if let Some(ref referer) = or.referer
@@ -356,15 +357,14 @@ fn cost_micro_usd(
     completion_tokens: usize,
     or: &OpenRouterConfig,
 ) -> Option<u64> {
-    let usd = reported_cost_usd.or_else(|| {
-        match (or.price_per_mtok_in, or.price_per_mtok_out) {
+    let usd =
+        reported_cost_usd.or_else(|| match (or.price_per_mtok_in, or.price_per_mtok_out) {
             (None, None) => None,
             (input, output) => Some(
                 (prompt_tokens as f64) * input.unwrap_or(0.0) / 1_000_000.0
                     + (completion_tokens as f64) * output.unwrap_or(0.0) / 1_000_000.0,
             ),
-        }
-    })?;
+        })?;
     if !usd.is_finite() || usd <= 0.0 {
         return Some(0);
     }
@@ -419,7 +419,9 @@ impl LlmEngine for OpenRouterClient {
                 model: &or.model,
                 messages: &messages,
                 stream: true,
-                stream_options: StreamOptions { include_usage: true },
+                stream_options: StreamOptions {
+                    include_usage: true,
+                },
                 usage: UsageInclude { include: true },
                 provider: ProviderPrefs {
                     // Pin providers that honor response_format; otherwise a router hop can
@@ -453,14 +455,20 @@ impl LlmEngine for OpenRouterClient {
                 "Sending chat request to OpenRouter"
             );
 
-            let send_result = self.http.post(&self.chat_url).json(&request_body).send().await;
+            let send_result = self
+                .http
+                .post(&self.chat_url)
+                .json(&request_body)
+                .send()
+                .await;
             let response = match send_result {
                 Ok(r) => r,
                 Err(e) => {
                     let transient = e.is_connect();
                     if transient && attempt < or.max_retries {
                         attempt += 1;
-                        let backoff = Duration::from_millis(500u64.saturating_mul(1 << attempt.min(6)));
+                        let backoff =
+                            Duration::from_millis(500u64.saturating_mul(1 << attempt.min(6)));
                         tracing::warn!(error = %e, attempt, "OpenRouter connect failed; retrying");
                         tokio::time::sleep(backoff).await;
                         continue;
@@ -517,11 +525,9 @@ impl LlmEngine for OpenRouterClient {
                 if is_retryable_status(status) {
                     if attempt < or.max_retries {
                         attempt += 1;
-                        let backoff = retry_after
-                            .map(Duration::from_secs)
-                            .unwrap_or_else(|| {
-                                Duration::from_millis(500u64.saturating_mul(1 << attempt.min(6)))
-                            });
+                        let backoff = retry_after.map(Duration::from_secs).unwrap_or_else(|| {
+                            Duration::from_millis(500u64.saturating_mul(1 << attempt.min(6)))
+                        });
                         tracing::warn!(
                             http_status = %status,
                             attempt,
@@ -586,6 +592,7 @@ impl LlmEngine for OpenRouterClient {
 
             return Ok(EngineResponse {
                 content: outcome.content,
+                tool_calls: Vec::new(),
                 prompt_tokens: outcome.prompt_tokens,
                 generated_tokens: outcome.completion_tokens,
                 generation_ms,
@@ -698,7 +705,10 @@ mod tests {
         assert_eq!(body["provider"]["data_collection"], "deny");
         assert_eq!(body["max_tokens"], 2048);
         assert!(body.get("grammar").is_none(), "GBNF is llama-server-only");
-        assert!(body.get("n_predict").is_none(), "n_predict is llama-server-only");
+        assert!(
+            body.get("n_predict").is_none(),
+            "n_predict is llama-server-only"
+        );
         assert!(
             body.get("chat_template_kwargs").is_none(),
             "chat_template_kwargs is llama-server-only"
@@ -731,7 +741,10 @@ mod tests {
 
         let body = posted_body(&mock_server).await;
         assert_eq!(body["response_format"]["type"], "json_schema");
-        assert_eq!(body["response_format"]["json_schema"]["name"], "fcp_envelope");
+        assert_eq!(
+            body["response_format"]["json_schema"]["name"],
+            "fcp_envelope"
+        );
         assert_eq!(body["response_format"]["json_schema"]["strict"], true);
         assert_eq!(
             body["response_format"]["json_schema"]["schema"]["type"],
@@ -794,8 +807,9 @@ mod tests {
                     .and_then(|t| t.as_str())
                     == Some("json_schema");
                 if is_schema {
-                    ResponseTemplate::new(400)
-                        .set_body_string(r#"{"error":{"message":"response_format json_schema unsupported"}}"#)
+                    ResponseTemplate::new(400).set_body_string(
+                        r#"{"error":{"message":"response_format json_schema unsupported"}}"#,
+                    )
                 } else {
                     ResponseTemplate::new(200).set_body_string(sse_body_ok())
                 }

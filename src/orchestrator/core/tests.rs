@@ -70,6 +70,7 @@ impl LlmEngine for MockEngine {
         }
         Ok(EngineResponse {
             content: self.content.clone(),
+            tool_calls: Vec::new(),
             prompt_tokens: self.prompt_tokens,
             generated_tokens: self.generated_tokens,
             generation_ms: 0,
@@ -219,7 +220,10 @@ fn test_router_reflect_empty_tools_shifts_to_reflection() {
         }"#;
 
     let directive = orchestrator.process_llm_response(json);
-    assert_eq!(directive, LoopDirective::HaltAndAwaitInput(Some("test".to_string())));
+    assert_eq!(
+        directive,
+        LoopDirective::HaltAndAwaitInput(Some("test".to_string()))
+    );
 }
 
 #[test]
@@ -318,7 +322,10 @@ fn test_router_initiate_reflection_mutates_state() {
         }"#;
 
     let directive = orchestrator.process_llm_response(json);
-    assert_eq!(directive, LoopDirective::HaltAndAwaitInput(Some("test".to_string())));
+    assert_eq!(
+        directive,
+        LoopDirective::HaltAndAwaitInput(Some("test".to_string()))
+    );
 }
 
 #[test]
@@ -340,7 +347,10 @@ fn test_router_task_empty_tools_in_tool_mode_shifts_to_reflection() {
         LoopDirective::RecoverFromFuckup(msg) => {
             assert!(msg.contains("empty action") || msg.contains("Empty action"));
         }
-        _ => panic!("Expected RecoverFromFuckup in tool mode with empty actions, got {:?}", directive),
+        _ => panic!(
+            "Expected RecoverFromFuckup in tool mode with empty actions, got {:?}",
+            directive
+        ),
     }
 }
 
@@ -433,10 +443,9 @@ async fn test_step_system_fatality_aborts() {
     let engine = MockEngine::with_network_fault("daemon offline");
     let mut orchestrator = setup_orchestrator_with_engine(engine);
     orchestrator.state = AgentState::Chat;
-    orchestrator.chat_stack.push(Message {
-        role: crate::engine::Role::User,
-        content: "exercise engine error path".to_string(),
-    });
+    orchestrator
+        .chat_stack
+        .push(Message::user("exercise engine error path".to_string()));
 
     let result = orchestrator.step(None).await;
 
@@ -450,10 +459,9 @@ async fn test_step_empty_user_line_sy_fnord_no_llm() {
     let engine = MockEngine::with_content(json);
     let mut orchestrator = setup_orchestrator_with_engine(engine);
     orchestrator.state = AgentState::Chat;
-    orchestrator.chat_stack.push(Message {
-        role: crate::engine::Role::User,
-        content: "   ".to_string(),
-    });
+    orchestrator
+        .chat_stack
+        .push(Message::user("   ".to_string()));
 
     let result = orchestrator.step(None).await;
     assert!(result.is_ok());
@@ -492,19 +500,17 @@ async fn test_execute_condensation_sliding_window_stack_only() {
     let mut orchestrator = setup_orchestrator_with_engine(engine);
     orchestrator.num_ctx = 48;
     orchestrator.chat_stack.clear();
-    orchestrator.chat_stack.push(Message {
-        role: crate::engine::Role::System,
-        content: "system prompt".to_string(),
-    });
+    orchestrator
+        .chat_stack
+        .push(Message::system("system prompt".to_string()));
     for i in 0..8 {
-        orchestrator.chat_stack.push(Message {
-            role: crate::engine::Role::User,
-            content: format!("user-{i}-{}", "x".repeat(40)),
-        });
-        orchestrator.chat_stack.push(Message {
-            role: crate::engine::Role::Assistant,
-            content: format!("assistant-{i}-{}", "y".repeat(40)),
-        });
+        orchestrator
+            .chat_stack
+            .push(Message::user(format!("user-{i}-{}", "x".repeat(40))));
+        orchestrator.chat_stack.push(Message::assistant(format!(
+            "assistant-{i}-{}",
+            "y".repeat(40)
+        )));
     }
 
     let result = orchestrator.execute_condensation().await;
@@ -578,6 +584,7 @@ async fn test_async_guillotine_interrupts_generation() {
             tokio::time::sleep(Duration::from_secs(10)).await;
             Ok(EngineResponse {
                 content: "never".to_string(),
+                tool_calls: Vec::new(),
                 prompt_tokens: 0,
                 generated_tokens: 0,
                 generation_ms: 0,
@@ -640,10 +647,9 @@ async fn test_async_guillotine_interrupts_generation() {
     );
 
     orchestrator.state = AgentState::Chat;
-    orchestrator.chat_stack.push(Message {
-        role: crate::engine::Role::User,
-        content: "hello".to_string(),
-    });
+    orchestrator
+        .chat_stack
+        .push(Message::user("hello".to_string()));
 
     // Fire the interrupt shortly after calling step
     tokio::spawn(async move {
@@ -699,6 +705,7 @@ async fn test_duplicate_only_batch_halts_without_extra_generation() {
             });
             Ok(EngineResponse {
                 content,
+                tool_calls: Vec::new(),
                 prompt_tokens: 0,
                 generated_tokens: 0,
                 generation_ms: 0,
@@ -776,10 +783,9 @@ async fn test_duplicate_only_batch_halts_without_extra_generation() {
         None,
     );
     orchestrator.state = AgentState::Chat;
-    orchestrator.chat_stack.push(Message {
-        role: crate::engine::Role::User,
-        content: "remember my name".to_string(),
-    });
+    orchestrator
+        .chat_stack
+        .push(Message::user("remember my name".to_string()));
 
     let result = orchestrator.step(None).await;
     assert!(result.is_ok());
@@ -818,6 +824,7 @@ async fn test_model_declared_reflect_does_not_shrink_chat_tool_palette() {
             });
             Ok(EngineResponse {
                 content,
+                tool_calls: Vec::new(),
                 prompt_tokens: 0,
                 generated_tokens: 0,
                 generation_ms: 0,
@@ -854,7 +861,10 @@ async fn test_model_declared_reflect_does_not_shrink_chat_tool_palette() {
         !Gatekeeper::state_allows_tool(&AgentState::Reflect, "news:today"),
         "test premise: news:today must not be on the Reflect allowlist"
     );
-    assert!(Gatekeeper::state_allows_tool(&AgentState::Chat, "news:today"));
+    assert!(Gatekeeper::state_allows_tool(
+        &AgentState::Chat,
+        "news:today"
+    ));
 
     let reflect_with_news = r#"{
             "thought": "user wants headlines",
@@ -918,10 +928,9 @@ async fn test_model_declared_reflect_does_not_shrink_chat_tool_palette() {
         None,
     );
     orchestrator.state = AgentState::Chat;
-    orchestrator.chat_stack.push(Message {
-        role: crate::engine::Role::User,
-        content: "what are today's news?".to_string(),
-    });
+    orchestrator
+        .chat_stack
+        .push(Message::user("what are today's news?".to_string()));
 
     let result = orchestrator.step(None).await;
     assert!(result.is_ok(), "step failed: {:?}", result.err());
@@ -956,19 +965,11 @@ fn test_extract_agenda_confirm_task_id() {
 #[test]
 fn test_agenda_confirm_task_id_before_current_turn_skips_latest_user() {
     let stack = vec![
-        Message {
-            role: crate::engine::Role::User,
-            content: "[AGENDA_CONFIRM task_id=too-old alarm_id=a late_sec=0]".to_string(),
-        },
-        Message {
-            role: crate::engine::Role::User,
-            content: "prefix [AGENDA_CONFIRM task_id=expected-id alarm_id=b late_sec=1] tail"
-                .to_string(),
-        },
-        Message {
-            role: crate::engine::Role::User,
-            content: "done".to_string(),
-        },
+        Message::user("[AGENDA_CONFIRM task_id=too-old alarm_id=a late_sec=0]".to_string()),
+        Message::user(
+            "prefix [AGENDA_CONFIRM task_id=expected-id alarm_id=b late_sec=1] tail".to_string(),
+        ),
+        Message::user("done".to_string()),
     ];
     assert_eq!(
         Orchestrator::<MockEngine>::agenda_confirm_task_id_before_current_turn(&stack),

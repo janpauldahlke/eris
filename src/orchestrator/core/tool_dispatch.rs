@@ -5,14 +5,13 @@ use crate::orchestrator::llm_support::json_envelope::natural_language_schema_des
 use crate::orchestrator::llm_support::post_tool_guidance::{
     POST_TOOL_REFLECT_CONTINUATION_GUIDANCE, POST_TOOL_USER_REPLY_GUIDANCE,
     POST_TOOL_WEATHER_COMMENT_GUIDANCE, ensure_web_find_paired_with_fetch_tools,
-    recover_override_message_for_tool_failure, user_wants_media_catalog,
-    vision_see_catalog_nudge,
+    recover_override_message_for_tool_failure, user_wants_media_catalog, vision_see_catalog_nudge,
 };
-use crate::tools::web::ledger::policy::WEB_FIND_BEFORE_REFETCH;
 use crate::orchestrator::r#loop::recovery_policy::{ToolFailureAction, classify_tool_failure};
 use crate::orchestrator::r#loop::tool_batch::ToolBatchDecision;
 use crate::orchestrator::state::{AgentState, ToolCall, ToolIntentStatus, ToolIntentTicket};
 use crate::presentation::SessionEvent;
+use crate::tools::web::ledger::policy::WEB_FIND_BEFORE_REFETCH;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
@@ -121,10 +120,8 @@ impl<E: LlmEngine> Orchestrator<E> {
                 let msg = format!(
                     "[SYSTEM] Blocked repeated failure for `{tool_name}` with the same arguments in this turn after consecutive failures. Change `post_id` or other args, or pick a different action."
                 );
-                self.chat_stack.push(crate::engine::Message {
-                    role: crate::engine::Role::System,
-                    content: msg.clone(),
-                });
+                self.chat_stack
+                    .push(crate::engine::Message::system(msg.clone()));
                 if let Some(tx) = &self.presentation_tx {
                     let telemetry =
                         format!("[tool] {tool_name} · repeat-failure streak suppressed");
@@ -149,10 +146,8 @@ impl<E: LlmEngine> Orchestrator<E> {
                     "[SYSTEM] Duplicate tool call suppressed for '{}'. Continue without repeating it.",
                     tool_name
                 );
-                self.chat_stack.push(crate::engine::Message {
-                    role: crate::engine::Role::System,
-                    content: msg.clone(),
-                });
+                self.chat_stack
+                    .push(crate::engine::Message::system(msg.clone()));
                 if let Some(tx) = &self.presentation_tx {
                     let telemetry = format!("[tool] {} · duplicate suppressed", tool_name);
                     let _ = tx.send(SessionEvent::SystemError(telemetry)).await;
@@ -169,10 +164,8 @@ impl<E: LlmEngine> Orchestrator<E> {
                     let msg = format!(
                         "[SYSTEM] Web tool cap reached ({cap}/turn). Answer from existing artifacts via web:find or ask the user to continue."
                     );
-                    self.chat_stack.push(crate::engine::Message {
-                        role: crate::engine::Role::System,
-                        content: msg.clone(),
-                    });
+                    self.chat_stack
+                        .push(crate::engine::Message::system(msg.clone()));
                     if let Some(tx) = &self.presentation_tx {
                         let _ = tx
                             .send(SessionEvent::SystemError(format!(
@@ -217,11 +210,12 @@ impl<E: LlmEngine> Orchestrator<E> {
             ) {
                 self.web_tool_calls_this_turn = self.web_tool_calls_this_turn.saturating_add(1);
             }
-            let gatekeeper_state = crate::tools::gatekeeper::Gatekeeper::dispatch_authorization_state(
-                &current_state,
-                &tool_name,
-                self.force_full_tool_schemas_in_llm_view,
-            );
+            let gatekeeper_state =
+                crate::tools::gatekeeper::Gatekeeper::dispatch_authorization_state(
+                    &current_state,
+                    &tool_name,
+                    self.force_full_tool_schemas_in_llm_view,
+                );
             tracing::info!(
                 tool = %tool_name,
                 args = %args,
@@ -244,10 +238,9 @@ impl<E: LlmEngine> Orchestrator<E> {
                         "moltbook:home" | "moltbook:search" | "moltbook:feed"
                     ) && self.moltbook_browse_ledger.is_none()
                     {
-                        self.moltbook_browse_ledger =
-                            Some(super::moltbook_browse_ledger::MoltbookBrowseLedger::new(
-                                turn_seq,
-                            ));
+                        self.moltbook_browse_ledger = Some(
+                            super::moltbook_browse_ledger::MoltbookBrowseLedger::new(turn_seq),
+                        );
                         tracing::info!(
                             turn_seq,
                             tool = %tool_name,
@@ -282,10 +275,8 @@ impl<E: LlmEngine> Orchestrator<E> {
                         &tool_name,
                         &bounded_result,
                     );
-                    self.chat_stack.push(crate::engine::Message {
-                        role: crate::engine::Role::System,
-                        content: msg.clone(),
-                    });
+                    self.chat_stack
+                        .push(crate::engine::Message::system(msg.clone()));
                     if tool_name.starts_with("weather:") {
                         if let Some(report) =
                             crate::tools::weather::report::report_from_tool_envelope(&result)
@@ -308,14 +299,12 @@ impl<E: LlmEngine> Orchestrator<E> {
                                 .get("path")
                                 .or_else(|| v.get("relative_path"))
                                 .and_then(|x| x.as_str());
-                            if let (Some(rel), Some(desc)) = (
-                                rel,
-                                v.get("description").and_then(|x| x.as_str()),
-                            ) {
-                                self.chat_stack.push(crate::engine::Message {
-                                    role: crate::engine::Role::System,
-                                    content: vision_see_catalog_nudge(rel, desc),
-                                });
+                            if let (Some(rel), Some(desc)) =
+                                (rel, v.get("description").and_then(|x| x.as_str()))
+                            {
+                                self.chat_stack.push(crate::engine::Message::system(
+                                    vision_see_catalog_nudge(rel, desc),
+                                ));
                                 tracing::debug!(
                                     target: "fcp.context_view",
                                     event = "vision_see_catalog_nudge_injected",
@@ -332,14 +321,11 @@ impl<E: LlmEngine> Orchestrator<E> {
                                     v.get("relative_path").and_then(|x| x.as_str()),
                                     v.get("preview_url").and_then(|x| x.as_str()),
                                 ) {
-                                    let width = v
-                                        .get("width")
-                                        .and_then(|x| x.as_u64())
-                                        .unwrap_or(0) as u32;
-                                    let height = v
-                                        .get("height")
-                                        .and_then(|x| x.as_u64())
-                                        .unwrap_or(0) as u32;
+                                    let width =
+                                        v.get("width").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+                                    let height =
+                                        v.get("height").and_then(|x| x.as_u64()).unwrap_or(0)
+                                            as u32;
                                     if let Some(tx) = &self.presentation_tx {
                                         let _ = tx
                                             .send(SessionEvent::AssistantImage(
@@ -358,41 +344,31 @@ impl<E: LlmEngine> Orchestrator<E> {
                     }
                     if tool_name == "web:find" {
                         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&result) {
-                            if let Some(summary) =
-                                v.get("receipt_summary").and_then(|x| x.as_str())
+                            if let Some(summary) = v.get("receipt_summary").and_then(|x| x.as_str())
                             {
-                                let mut anchor =
-                                    format!("[fcp:web:find_anchor] {summary}");
-                                if let Some(url) =
-                                    v.get("best_match_url").and_then(|x| x.as_str())
+                                let mut anchor = format!("[fcp:web:find_anchor] {summary}");
+                                if let Some(url) = v.get("best_match_url").and_then(|x| x.as_str())
                                 {
                                     anchor.push_str(&format!(
                                         " Pass this URL to web:fetch when deepening: {url}"
                                     ));
                                 }
-                                self.chat_stack.push(crate::engine::Message {
-                                    role: crate::engine::Role::System,
-                                    content: anchor,
-                                });
+                                self.chat_stack.push(crate::engine::Message::system(anchor));
                             }
                         }
                     }
                     if tool_name == "web:fetch" || tool_name == "web:search" {
                         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&result) {
-                            if let Some(artifact_id) =
-                                v.get("artifact_id").and_then(|x| x.as_str())
+                            if let Some(artifact_id) = v.get("artifact_id").and_then(|x| x.as_str())
                             {
-                                let cached = v
-                                    .get("cached")
-                                    .and_then(|x| x.as_bool())
-                                    .unwrap_or(false);
+                                let cached =
+                                    v.get("cached").and_then(|x| x.as_bool()).unwrap_or(false);
                                 let hint = v
                                     .get("next_step_hint")
                                     .and_then(|x| x.as_str())
                                     .unwrap_or("");
-                                let mut anchor = format!(
-                                    "[fcp:web:fetch_anchor] artifact_id={artifact_id}"
-                                );
+                                let mut anchor =
+                                    format!("[fcp:web:fetch_anchor] artifact_id={artifact_id}");
                                 if !hint.is_empty() {
                                     anchor.push_str(&format!(" {hint}"));
                                 }
@@ -405,10 +381,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                                         " Use web:find with artifact_id and query to read the vault body before refetching this host.",
                                     );
                                 }
-                                self.chat_stack.push(crate::engine::Message {
-                                    role: crate::engine::Role::System,
-                                    content: anchor,
-                                });
+                                self.chat_stack.push(crate::engine::Message::system(anchor));
                             }
                         }
                     }
@@ -440,10 +413,8 @@ impl<E: LlmEngine> Orchestrator<E> {
                     if let Some(ticket) = execution_ledger.get_mut(&intent_id) {
                         ticket.last_error = Some(err.to_string());
                     }
-                    let failure_action = classify_tool_failure(
-                        &err,
-                        schema_recovery_attempted.contains(&tool_name),
-                    );
+                    let failure_action =
+                        classify_tool_failure(&err, schema_recovery_attempted.contains(&tool_name));
                     match failure_action {
                         ToolFailureAction::TargetedSchemaRetry => {
                             schema_recovery_attempted.insert(tool_name.clone());
@@ -497,17 +468,15 @@ impl<E: LlmEngine> Orchestrator<E> {
         if batch_had_tool_activity {
             if let Some(ledger) = self.moltbook_browse_ledger.as_mut() {
                 if let Some(nudge) = ledger.missing_invariant_nudge() {
-                    self.chat_stack.push(crate::engine::Message {
-                        role: crate::engine::Role::System,
-                        content: nudge,
-                    });
+                    self.chat_stack.push(crate::engine::Message::system(nudge));
                     tracing::info!(
                         turn_seq,
                         event = "moltbook.cycle.nudge",
                         "Moltbook browse cycle policy nudge injected"
                     );
                 }
-                let agenda_xor = crate::tools::agenda::remind_at::agenda_xor_normalized_count_for_logs();
+                let agenda_xor =
+                    crate::tools::agenda::remind_at::agenda_xor_normalized_count_for_logs();
                 tracing::info!(
                     turn_seq,
                     event = "moltbook.browse.batch_ledger",
@@ -596,21 +565,14 @@ impl<E: LlmEngine> Orchestrator<E> {
                 let mut blocks: Vec<String> = Vec::new();
                 for (tool_name, err_msg) in &schema_retry_rows {
                     if let Some(rs) = self.gatekeeper.parameters_root_schema_for(tool_name) {
-                        blocks.push(natural_language_schema_description(
-                            tool_name,
-                            &rs,
-                            err_msg,
-                        ));
+                        blocks.push(natural_language_schema_description(tool_name, &rs, err_msg));
                     } else {
                         blocks.push(format!(
                             "Tool \"{tool_name}\" rejected your arguments.\n\nError: {err_msg}\n\nExpected arguments:\n(No parameter schema is registered for this tool name.)\n\nRetry with corrected tool_calls."
                         ));
                     }
                 }
-                format!(
-                    "{SYSTEM_RECOVERY_PREFIX}\n\n{}",
-                    blocks.join("\n\n---\n\n")
-                )
+                format!("{SYSTEM_RECOVERY_PREFIX}\n\n{}", blocks.join("\n\n---\n\n"))
             } else {
                 format!(
                     "{} — tool schema fault detected. Retrying with targeted schemas for: {:?}",
@@ -655,8 +617,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             }
             for recent in &self.recent_successful_tools {
                 if let Some(domain) = crate::orchestrator::routing::tool_domain(recent) {
-                    for name in crate::orchestrator::routing::cluster_members(domain, &registered)
-                    {
+                    for name in crate::orchestrator::routing::cluster_members(domain, &registered) {
                         if allowed.contains(&name) {
                             targeted_tools.insert(name);
                         }
@@ -688,10 +649,9 @@ impl<E: LlmEngine> Orchestrator<E> {
             self.pending_weather_deck_report = Some(message);
             targeted_tools.clear();
             self.force_full_tool_schemas_in_llm_view = false;
-            self.chat_stack.push(crate::engine::Message {
-                role: crate::engine::Role::System,
-                content: POST_TOOL_WEATHER_COMMENT_GUIDANCE.to_string(),
-            });
+            self.chat_stack.push(crate::engine::Message::system(
+                POST_TOOL_WEATHER_COMMENT_GUIDANCE.to_string(),
+            ));
             tracing::info!(
                 event = "orchestrator.weather.comment_then_report",
                 report_blocks = weather_deck_parts.len(),
@@ -722,10 +682,8 @@ impl<E: LlmEngine> Orchestrator<E> {
             } else {
                 POST_TOOL_USER_REPLY_GUIDANCE
             };
-            self.chat_stack.push(crate::engine::Message {
-                role: crate::engine::Role::System,
-                content: guidance.to_string(),
-            });
+            self.chat_stack
+                .push(crate::engine::Message::system(guidance.to_string()));
             tracing::debug!(
                 target: "fcp.context_view",
                 event = "post_tool_user_reply_guidance_injected",
@@ -830,6 +788,7 @@ mod repeat_failure_streak_tests {
         ) -> Result<EngineResponse> {
             Ok(EngineResponse {
                 content: "{}".into(),
+                tool_calls: Vec::new(),
                 prompt_tokens: 0,
                 generated_tokens: 0,
                 generation_ms: 0,
@@ -996,7 +955,10 @@ mod repeat_failure_streak_tests {
             )
             .await
             .expect("batch must not fatal on cap");
-        assert!(matches!(decision, ToolBatchDecision::SuppressOnlyIdlePass { .. }));
+        assert!(matches!(
+            decision,
+            ToolBatchDecision::SuppressOnlyIdlePass { .. }
+        ));
         assert!(
             !ledger
                 .values()
@@ -1103,6 +1065,7 @@ mod targeted_schema_retry_phase5_tests {
         ) -> Result<EngineResponse> {
             Ok(EngineResponse {
                 content: "{}".into(),
+                tool_calls: Vec::new(),
                 prompt_tokens: 0,
                 generated_tokens: 0,
                 generation_ms: 0,

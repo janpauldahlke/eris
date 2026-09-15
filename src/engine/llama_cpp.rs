@@ -1,5 +1,5 @@
 use crate::config::AppConfig;
-use crate::engine::openai_wire::{to_wire_messages, ChatMsg};
+use crate::engine::openai_wire::{ChatMsg, to_wire_messages};
 use crate::engine::token_metrics;
 use crate::engine::{EngineResponse, LlmEngine, LlmGenerateOptions, Message};
 use crate::executive::error::{FcpError, Result};
@@ -35,7 +35,9 @@ fn grammar_stable_id(grammar: &str) -> u64 {
 /// prefix—matching [`crate::engine::ollama::OllamaClient`]'s `.think(false)` and keeping `message.content`
 /// usable for JSON / GBNF from the first token. When `true`, kwargs are omitted so the template may enable
 /// thinking (operators often pair with `llama-server --reasoning on` on recent builds).
-fn chat_template_kwargs_for_reasoning_config(enable_reasoning_fsm: bool) -> Option<serde_json::Value> {
+fn chat_template_kwargs_for_reasoning_config(
+    enable_reasoning_fsm: bool,
+) -> Option<serde_json::Value> {
     if enable_reasoning_fsm {
         None
     } else {
@@ -349,6 +351,7 @@ impl LlmEngine for LlamaCppClient {
 
         Ok(EngineResponse {
             content,
+            tool_calls: Vec::new(),
             prompt_tokens,
             generated_tokens,
             generation_ms,
@@ -360,7 +363,6 @@ impl LlmEngine for LlamaCppClient {
 mod tests {
     use super::*;
     use crate::config::{LlamaCppConfig, LlmBackend};
-    use crate::engine::Role;
     use std::path::PathBuf;
     use tracing_test::traced_test;
     use wiremock::matchers::{method, path};
@@ -409,14 +411,18 @@ mod tests {
             .await;
 
         let client = make_client_from_mock(&mock_server.uri());
-        let stack = vec![Message {
-            role: Role::User,
-            content: "Hi".into(),
-        }];
-        let result = client.generate(&stack, "", None, LlmGenerateOptions::default()).await.expect("generate");
+        let stack = vec![Message::user("Hi")];
+        let result = client
+            .generate(&stack, "", None, LlmGenerateOptions::default())
+            .await
+            .expect("generate");
         assert_eq!(result.content, "Hello, world!");
         assert_eq!(result.prompt_tokens, 10);
         assert_eq!(result.generated_tokens, 5);
+        assert!(
+            result.tool_calls.is_empty(),
+            "llama.cpp never returns native tool_calls"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -446,11 +452,11 @@ mod tests {
             token_metrics_tx: Some(tx),
             grammar: None,
         };
-        let stack = vec![Message {
-            role: Role::User,
-            content: "Hi".into(),
-        }];
-        client.generate(&stack, "", None, LlmGenerateOptions::default()).await.expect("generate");
+        let stack = vec![Message::user("Hi")];
+        client
+            .generate(&stack, "", None, LlmGenerateOptions::default())
+            .await
+            .expect("generate");
         let snap = reader.snapshot();
         assert_eq!(snap.prompt_tokens, 42);
         assert_eq!(snap.generated_tokens, 7);
@@ -470,10 +476,7 @@ mod tests {
 
         let client = make_client_from_mock(&mock_server.uri());
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
-        let stack = vec![Message {
-            role: Role::User,
-            content: "Hi".into(),
-        }];
+        let stack = vec![Message::user("Hi")];
         let result = client
             .generate(&stack, "", Some(tx), LlmGenerateOptions::default())
             .await
@@ -504,10 +507,7 @@ mod tests {
 
         let client = make_client_from_mock(&mock_server.uri());
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
-        let stack = vec![Message {
-            role: Role::User,
-            content: "test".into(),
-        }];
+        let stack = vec![Message::user("test")];
         client
             .generate(&stack, "", Some(tx), LlmGenerateOptions::default())
             .await
@@ -541,11 +541,11 @@ mod tests {
             token_metrics_tx: None,
             grammar: None,
         };
-        let stack = vec![Message {
-            role: Role::User,
-            content: "Hi".into(),
-        }];
-        let err = client.generate(&stack, "", None, LlmGenerateOptions::default()).await.unwrap_err();
+        let stack = vec![Message::user("Hi")];
+        let err = client
+            .generate(&stack, "", None, LlmGenerateOptions::default())
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("timed out"));
     }
 
@@ -559,11 +559,11 @@ mod tests {
             .await;
 
         let client = make_client_from_mock(&mock_server.uri());
-        let stack = vec![Message {
-            role: Role::User,
-            content: "Hi".into(),
-        }];
-        let err = client.generate(&stack, "", None, LlmGenerateOptions::default()).await.unwrap_err();
+        let stack = vec![Message::user("Hi")];
+        let err = client
+            .generate(&stack, "", None, LlmGenerateOptions::default())
+            .await
+            .unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("500"));
         assert!(msg.contains("internal error"));
@@ -583,11 +583,11 @@ mod tests {
             token_metrics_tx: None,
             grammar: None,
         };
-        let stack = vec![Message {
-            role: Role::User,
-            content: "Hi".into(),
-        }];
-        let err = client.generate(&stack, "", None, LlmGenerateOptions::default()).await.unwrap_err();
+        let stack = vec![Message::user("Hi")];
+        let err = client
+            .generate(&stack, "", None, LlmGenerateOptions::default())
+            .await
+            .unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("connection refused") || msg.contains("request failed"));
     }
@@ -605,11 +605,11 @@ mod tests {
             .await;
 
         let client = make_client_from_mock(&mock_server.uri());
-        let stack = vec![Message {
-            role: Role::User,
-            content: "Hi".into(),
-        }];
-        let result = client.generate(&stack, "", None, LlmGenerateOptions::default()).await.expect("generate");
+        let stack = vec![Message::user("Hi")];
+        let result = client
+            .generate(&stack, "", None, LlmGenerateOptions::default())
+            .await
+            .expect("generate");
         assert_eq!(result.prompt_tokens, 0);
         assert_eq!(result.generated_tokens, 0);
     }
@@ -628,10 +628,7 @@ mod tests {
 
         let client = make_client_from_mock(&mock_server.uri());
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
-        let stack = vec![Message {
-            role: Role::User,
-            content: "test".into(),
-        }];
+        let stack = vec![Message::user("test")];
         let result = client
             .generate(&stack, "", Some(tx), LlmGenerateOptions::default())
             .await
@@ -659,10 +656,7 @@ mod tests {
 
         let client = make_client_from_mock(&mock_server.uri());
         let (tx, _rx) = mpsc::unbounded_channel::<String>();
-        let stack = vec![Message {
-            role: Role::User,
-            content: "test".into(),
-        }];
+        let stack = vec![Message::user("test")];
         let result = client
             .generate(&stack, "", Some(tx), LlmGenerateOptions::default())
             .await
@@ -700,10 +694,7 @@ mod tests {
             grammar: Some(Arc::new("SESSION_GRAMMAR_BLOAT_MARKER".repeat(400))),
         };
         let tiny: Arc<str> = Arc::from("tiny-root-gbnf");
-        let stack = vec![Message {
-            role: Role::User,
-            content: "Hi".into(),
-        }];
+        let stack = vec![Message::user("Hi")];
         client
             .generate(
                 &stack,
@@ -760,10 +751,7 @@ mod tests {
             token_metrics_tx: None,
             grammar: Some(Arc::new("large".repeat(500))),
         };
-        let stack = vec![Message {
-            role: Role::User,
-            content: "Hi".into(),
-        }];
+        let stack = vec![Message::user("Hi")];
         client
             .generate(
                 &stack,
@@ -821,10 +809,7 @@ mod tests {
     #[test]
     fn chat_template_kwargs_serialized_when_grammar_and_reasoning_disabled() {
         let req = ChatCompletionRequest {
-            messages: vec![ChatMsg {
-                role: "user".into(),
-                content: "hi".into(),
-            }],
+            messages: vec![ChatMsg::new("user", "hi")],
             stream: false,
             temperature: Some(0.7),
             n_predict: Some(-1),
@@ -849,5 +834,4 @@ mod tests {
         let json = serde_json::to_value(&req).expect("serialize");
         assert!(json.get("chat_template_kwargs").is_none());
     }
-
 }

@@ -2,14 +2,64 @@
 //! ([`crate::engine::llama_cpp::LlamaCppClient`] and [`crate::engine::openrouter::OpenRouterClient`]).
 //! Hosted models are just as strict about role ordering as local chat templates, so both
 //! backends normalize through one copy — the shapes cannot drift apart.
+//!
+//! Native `role: "tool"` frames and assistant `tool_calls` serialize here (skipping when
+//! empty so llama.cpp payloads stay byte-identical). The orchestrator does not yet put
+//! these on the chat stack; that lands in Phase 3.
 
 use serde::Serialize;
+
+use crate::engine::EngineToolCall;
 
 /// One wire message for the OpenAI chat API.
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct ChatMsg {
     pub role: String,
     pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ChatToolCall>,
+}
+
+impl ChatMsg {
+    pub(crate) fn new(role: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: role.into(),
+            content: content.into(),
+            tool_call_id: None,
+            tool_calls: Vec::new(),
+        }
+    }
+}
+
+/// OpenAI `message.tool_calls[]` item (`type: "function"`).
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub(crate) struct ChatToolCall {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub function: ChatToolCallFunction,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub(crate) struct ChatToolCallFunction {
+    pub name: String,
+    pub arguments: String,
+}
+
+impl ChatToolCall {
+    fn from_engine(call: &EngineToolCall) -> Self {
+        Self {
+            id: call.id.clone(),
+            kind: "function".to_string(),
+            function: ChatToolCallFunction {
+                name: call.name.clone(),
+                arguments: call.arguments.clone(),
+            },
+        }
+    }
 }
 
 /// Normalize messages for chat templates that require all system content at
@@ -21,10 +71,7 @@ pub(crate) fn normalize_system_messages(messages: Vec<ChatMsg>) -> Vec<ChatMsg> 
         return messages;
     }
 
-    let leading_system_count = messages
-        .iter()
-        .take_while(|m| m.role == "system")
-        .count();
+    let leading_system_count = messages.iter().take_while(|m| m.role == "system").count();
 
     let mut out = Vec::with_capacity(messages.len());
 
@@ -34,25 +81,16 @@ pub(crate) fn normalize_system_messages(messages: Vec<ChatMsg>) -> Vec<ChatMsg> 
             .map(|m| m.content.as_str())
             .collect::<Vec<_>>()
             .join("\n\n---\n\n");
-        out.push(ChatMsg {
-            role: "system".to_string(),
-            content: merged,
-        });
+        out.push(ChatMsg::new("system", merged));
     } else if leading_system_count == 1 {
-        out.push(ChatMsg {
-            role: messages[0].role.clone(),
-            content: messages[0].content.clone(),
-        });
+        out.push(messages[0].clone());
     }
 
     let mut had_stray = false;
     for m in messages.into_iter().skip(leading_system_count) {
         if m.role == "system" {
             had_stray = true;
-            out.push(ChatMsg {
-                role: "user".to_string(),
-                content: format!("[System] {}", m.content),
-            });
+            out.push(ChatMsg::new("user", format!("[System] {}", m.content)));
         } else {
             out.push(m);
         }
@@ -86,13 +124,13 @@ pub(crate) fn coalesce_consecutive_roles(messages: Vec<ChatMsg>) -> Vec<ChatMsg>
     let mut out: Vec<ChatMsg> = Vec::with_capacity(messages.len());
     let mut coalesced_runs = 0usize;
     for m in messages {
-        if let Some(last) = out.last_mut() {
-            if last.role == m.role {
-                last.content.push_str(SEP);
-                last.content.push_str(&m.content);
-                coalesced_runs += 1;
-                continue;
-            }
+        if let Some(last) = out.last_mut()
+            && can_coalesce(last, &m)
+        {
+            last.content.push_str(SEP);
+            last.content.push_str(&m.content);
+            coalesced_runs += 1;
+            continue;
         }
         out.push(m);
     }
@@ -106,6 +144,18 @@ pub(crate) fn coalesce_consecutive_roles(messages: Vec<ChatMsg>) -> Vec<ChatMsg>
     out
 }
 
+/// Consecutive `tool` frames each carry a distinct `tool_call_id` and must not be
+/// merged. Assistant turns that already carry native `tool_calls` are also left
+/// alone so the provider can correlate results.
+fn can_coalesce(last: &ChatMsg, next: &ChatMsg) -> bool {
+    last.role == next.role
+        && last.role != "tool"
+        && last.tool_calls.is_empty()
+        && next.tool_calls.is_empty()
+        && last.tool_call_id.is_none()
+        && next.tool_call_id.is_none()
+}
+
 /// Convert the engine-neutral stack into wire messages, applying both normalizations.
 pub(crate) fn to_wire_messages(stack: &[crate::engine::Message]) -> Vec<ChatMsg> {
     let raw: Vec<ChatMsg> = stack
@@ -113,6 +163,8 @@ pub(crate) fn to_wire_messages(stack: &[crate::engine::Message]) -> Vec<ChatMsg>
         .map(|m| ChatMsg {
             role: m.role.as_str().to_string(),
             content: m.content.clone(),
+            tool_call_id: m.tool_call_id.clone(),
+            tool_calls: m.tool_calls.iter().map(ChatToolCall::from_engine).collect(),
         })
         .collect();
     coalesce_consecutive_roles(normalize_system_messages(raw))
@@ -124,22 +176,13 @@ mod tests {
     use crate::engine::{Message, Role};
 
     fn sys(s: &str) -> ChatMsg {
-        ChatMsg {
-            role: "system".into(),
-            content: s.into(),
-        }
+        ChatMsg::new("system", s)
     }
     fn user(s: &str) -> ChatMsg {
-        ChatMsg {
-            role: "user".into(),
-            content: s.into(),
-        }
+        ChatMsg::new("user", s)
     }
     fn asst(s: &str) -> ChatMsg {
-        ChatMsg {
-            role: "assistant".into(),
-            content: s.into(),
-        }
+        ChatMsg::new("assistant", s)
     }
 
     mod normalize_system_messages_tests {
@@ -162,11 +205,8 @@ mod tests {
 
         #[test]
         fn multiple_leading_systems_merged() {
-            let out = normalize_system_messages(vec![
-                sys("main"),
-                sys("rolling summary"),
-                user("hi"),
-            ]);
+            let out =
+                normalize_system_messages(vec![sys("main"), sys("rolling summary"), user("hi")]);
             assert_eq!(out.len(), 2);
             assert_eq!(out[0].role, "system");
             assert!(out[0].content.contains("main"));
@@ -305,15 +345,71 @@ mod tests {
             // not further change the role structure.
             let as_messages: Vec<Message> = once
                 .iter()
-                .map(|m| Message {
-                    role: Role::from_wire(&m.role),
-                    content: m.content.clone(),
+                .map(|m| {
+                    let mut msg = Message::new(Role::from_wire(&m.role), m.content.clone());
+                    msg.tool_call_id = m.tool_call_id.clone();
+                    msg
                 })
                 .collect();
             let twice = project(&as_messages);
             let roles_once: Vec<&str> = once.iter().map(|m| m.role.as_str()).collect();
             let roles_twice: Vec<&str> = twice.iter().map(|m| m.role.as_str()).collect();
             assert_eq!(roles_once, roles_twice);
+        }
+
+        #[test]
+        fn tool_role_emits_tool_frame_with_call_id() {
+            use crate::engine::EngineToolCall;
+            let stack = vec![
+                Message::system("S"),
+                Message::user("u"),
+                Message::assistant_with_tool_calls(
+                    "",
+                    vec![EngineToolCall {
+                        id: Some("call_1".into()),
+                        name: "memory:query".into(),
+                        arguments: r#"{"query":"x"}"#.into(),
+                    }],
+                ),
+                Message::tool("result body", "call_1"),
+            ];
+            let out = project(&stack);
+            let tool = out
+                .iter()
+                .find(|m| m.role == "tool")
+                .expect("native tool frame");
+            assert_eq!(tool.tool_call_id.as_deref(), Some("call_1"));
+            assert_eq!(tool.content, "result body");
+            let assistant = out
+                .iter()
+                .find(|m| m.role == "assistant")
+                .expect("assistant with tool_calls");
+            assert_eq!(assistant.tool_calls.len(), 1);
+            assert_eq!(assistant.tool_calls[0].id.as_deref(), Some("call_1"));
+            assert_eq!(assistant.tool_calls[0].function.name, "memory:query");
+            assert_eq!(assistant.tool_calls[0].kind, "function");
+        }
+
+        #[test]
+        fn consecutive_tool_frames_are_not_coalesced() {
+            let stack = vec![
+                Message::system("S"),
+                Message::user("u"),
+                Message::assistant("tool batch"),
+                Message::tool("first", "call_a"),
+                Message::tool("second", "call_b"),
+            ];
+            let out = project(&stack);
+            let tools: Vec<&ChatMsg> = out.iter().filter(|m| m.role == "tool").collect();
+            assert_eq!(tools.len(), 2, "each tool result stays its own wire frame");
+            assert_eq!(tools[0].tool_call_id.as_deref(), Some("call_a"));
+            assert_eq!(tools[1].tool_call_id.as_deref(), Some("call_b"));
+        }
+
+        #[test]
+        fn empty_tool_metadata_omitted_from_json() {
+            let json = serde_json::to_value(ChatMsg::new("user", "hi")).expect("serialize");
+            assert_eq!(json, serde_json::json!({"role": "user", "content": "hi"}));
         }
     }
 }

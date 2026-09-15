@@ -100,10 +100,8 @@ impl<E: LlmEngine> Orchestrator<E> {
                 } else {
                     tracing::warn!(recovery_count = self.recovery_count, "Recover transition");
                 }
-                self.chat_stack.push(crate::engine::Message {
-                    role: crate::engine::Role::System,
-                    content: message.clone(),
-                });
+                self.chat_stack
+                    .push(crate::engine::Message::system(message.clone()));
                 if let Some(tx) = &self.presentation_tx {
                     let presentation_line = presentation_recover_ui_summary(&message, schema_retry);
                     let _ = tx.send(SessionEvent::SystemError(presentation_line)).await;
