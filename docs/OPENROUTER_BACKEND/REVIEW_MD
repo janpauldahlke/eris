@@ -1,0 +1,71 @@
+Architect review — feature/openrouter vs main
+I read the branch, not just the smoke fixes: the projection seam, engine/wire, orchestrator dispatch, and the four condensation/view consumers you flagged. cargo check --tests is green. I did not run the full suite (respecting SOFTEN_TEST_FULL_OOM), commit, or touch config/vault content.
+
+Verdict: review, do not merge — but the split is clean
+The native-tools core is sound and mergeable on its own. Everything that is actually broken lives in the post-hoc stack rewriters (condensation / trim / recovery-strip / LLM view), and it's masked in billy by a 1M num_ctx with proactive condensation off. Your instinct in §4 is right: Option A (Role::Tool) was correct; you just didn't finish the consumers.
+
+Ship (as a slice): openrouter.rs, openai_wire.rs, openai_schema_subset.rs, json_envelope.rs, and the live dispatch in step.rs / tool_dispatch.rs / deck.rs. Coherent, well-tested, backend-agnostic.
+Block: the C1–C4 consumer bugs. C1 is a correctness fault, not a tic. C4 is already live in billy, not condensation-gated.
+The load-bearing finding: the dual path leaks only in rewriters, not in dispatch
+Live dispatch is actually airtight. push_tool_batch_result routes to Role::Tool only when provider_call_id is present; llama.cpp/Ollama always return empty tool_calls → None → system fold. So local hops cannot see a tool frame.
+
+
+tool_dispatch.rs
+Ln 55–59
+match provider_call_id.map(str::trim).filter(|s| !s.is_empty()) {
+    Some(id) => chat_stack.push(crate::engine::Message::tool(content, id)),
+    None => chat_stack.push(crate::engine::Message::system(content)),
+}
+And the OpenAI pairing invariant holds within a batch: every tool_call — success, failure, duplicate-suppress, web-cap — pushes exactly one result frame before continue. I checked each early-exit path. So the leak surface is precisely the code that rewrites the stack after the fact. That's your answer to §9.3: keep Role::Tool; the dual path will keep leaking only as long as rewriters stay pairing-blind. The fix is one shared "is this row part of a native tool round" predicate, applied in four places — not abandoning the format.
+
+Concrete defects, in fix order
+C1 — BLOCKING (correctness). Condensation/trim can split assistant.tool_calls from its role:tool results. split_tail_fold_and_keep budgets by tokens anchored on the last user only; trim_chat_stack_to_est_token_ceiling drops oldest tail rows; neither knows about native-round pairing.
+
+
+window.rs
+Ln 131–140
+pub fn split_tail_fold_and_keep(tail: &[Message], budget: usize) -> (Vec<Message>, Vec<Message>) {
+    ...
+    match tail.iter().rposition(|m| m.role == "user") {
+        Some(last_user_idx) => split_tail_fold_and_keep_with_last_user_anchor(tail, last_user_idx, budget),
+        None => split_tail_fold_and_keep_no_user_anchor(tail, budget),
+    }
+}
+A boundary landing between an assistant tool_calls frame and its results yields an orphan role:tool (or an assistant tool_calls with no responses). to_wire_messages keeps role:tool verbatim → LiteLLM/OpenAI 400 "tool message with no preceding tool_calls." Latent only because billy is 1M ctx + optimize_context_proactive_condensation = false. It will fire on any normal-ctx OpenRouter deployment. Fix: snap fold/trim boundaries so an assistant-with-tool_calls and its contiguous following role:tool frames are one atomic unit.
+
+C4 — LIVE IN BILLY (medium). The model's own native answers get blanked cross-turn. This is not condensation-only (you filed it under §6C); it runs on every build_llm_view.
+
+
+view.rs
+Ln 247–259
+if m.role == "assistant"
+    && m.tool_calls.is_empty()
+    && settings.assistant_non_json_placeholder
+    && parse_llm_response_protocol(&m.content).is_err()
+{
+    ... content: format!("[FCP: non-protocol assistant output omitted; {n} chars]") ...
+Native talk is stored as bare prose (Message::assistant(deck_content) at step.rs:670), which fails protocol parse → blanked on the next turn's generate. GBNF answers survive because they're envelope JSON (they hit the compact branch → "Hello\nInvoked tools:"). Billy runs optimize_context = true + assistant_non_json_placeholder = true, so the model is already losing its prior user-facing replies from context. That, not quant, is part of why hosted "forgets what it just said." Cheap fix: exempt native talk turns from the omit-placeholder (compact them instead), keyed off backend or a talk-turn marker.
+
+C2 — medium. Token estimate is content-only. estimate_message_tokens counts m.content.chars()/4 and ignores tool_calls. Native assistant hops (empty content, fat tool_calls) under-count. This corrupts the proactive threshold and retain-budget math — but note the reactive post-generate trigger at step.rs:680 uses real engine usage tokens, so it's safe. Add serialized tool_calls + tool_call_id length to the estimate.
+
+C3 — low. strip_recovery_system_rows_after_head only matches role == "system". Native recovery/duplicate content living on Role::Tool won't strip. Lower impact than you feared: I verified duplicate-suppress, web-cap, post-tool guidance and anchors are all pushed as Message::system, so only synthetic role:tool bodies (e.g. "Duplicate tool call suppressed", "Web tool cap reached") escape. Minor.
+
+§6/§9 direct answers
+A — projection & Auto. llm_response_from_engine is the right seam; keep it engine-neutral. tool_choice = Auto in every offered branch, never Required (I confirmed the orchestrator never emits Required; it's engine-capability only) — that correctly dodges the silent-after-tools deadlock. Speech-act (§9.2): keep Auto, add a post-tool talk constraint. Today the only reliable brake before max_tool_rounds = 40 is duplicate-suppression's SuppressOnlyIdlePass. Generalize that existing "force one no-tool pass" into a post-tool policy (after a successful batch that already answers, inject "you have results; answer now" and set tools_needed = false for the next hop). That's the dummy-memory:stage fix — orchestrator + prompt, no Required, no PR#23 rollback. Don't lower max_tool_rounds; that truncates legit multi-tool work.
+
+B — wire. Confirmed: role:tool + provider_call_id cannot reach llama.cpp/Ollama. Consecutive tool frames correctly not coalesced (can_coalesce excludes role == "tool" and any tool_call_id) — correct for LiteLLM, each result needs its own id.
+
+D — local invariance. GBNF protocol list looks good. The 2048-token GBNF truncation is pre-existing and orthogonal — agreed it becomes a product hole only if this review bumps hosted max_tokens without a local cap story. Env-strip (f7dd5e0) is the right fix: scoped to the managed child via env_remove, applied to both chat+embed spawns, only ever strips (never injects a key) — consistent with "never tell the operator to export a llama key."
+
+E — scope. 153 files main...HEAD is 3d3fb5a merge main plus a broad ?/error-taxonomy sweep (unwrap removal across tools/web/audio/vision — matches .cursorrules). The ~12-file must-review set you named is the real surface; the rest is confirm-unrelated churn.
+
+F — non-actions. All respected on my side.
+
+What I'd do before more smoke
+Fix C1 (atomic native-round in fold/trim) — it's a wire 400, not a model tic.
+Fix C4 (stop blanking native talk) — it's degrading billy right now.
+Fix C2 (tool_calls in token estimate) — before enabling proactive condensation on any real-ctx OpenRouter vault.
+Add the post-tool talk constraint (A) — the actual cure for dummy memory:stage / junk-name loops.
+C3 and the GBNF-truncation hole can ride as follow-ups. Accept as hosted-model tics: the web:fetch mission_id invention (recovered) and the Identity mis-quote (that's thin billy vault content, not protocol).
+
+Net: the shape is right. Land the native-tools slice behind the condensation fixes, or gate OpenRouter to large-ctx/no-proactive-condensation until C1/C2 land.

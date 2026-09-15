@@ -3,9 +3,10 @@ use crate::executive::error::{FcpError, Result};
 use crate::orchestrator::context::resolved_tool_recovery::SYSTEM_RECOVERY_PREFIX;
 use crate::orchestrator::llm_support::json_envelope::natural_language_schema_description;
 use crate::orchestrator::llm_support::post_tool_guidance::{
-    POST_TOOL_REFLECT_CONTINUATION_GUIDANCE, POST_TOOL_USER_REPLY_GUIDANCE,
-    POST_TOOL_WEATHER_COMMENT_GUIDANCE, ensure_web_find_paired_with_fetch_tools,
-    recover_override_message_for_tool_failure, user_wants_media_catalog, vision_see_catalog_nudge,
+    POST_TOOL_REFLECT_CONTINUATION_GUIDANCE, POST_TOOL_TALK_NOW_GUIDANCE,
+    POST_TOOL_USER_REPLY_GUIDANCE, POST_TOOL_WEATHER_COMMENT_GUIDANCE,
+    ensure_web_find_paired_with_fetch_tools, recover_override_message_for_tool_failure,
+    user_wants_media_catalog, vision_see_catalog_nudge,
 };
 use crate::orchestrator::r#loop::recovery_policy::{ToolFailureAction, classify_tool_failure};
 use crate::orchestrator::r#loop::tool_batch::ToolBatchDecision;
@@ -690,14 +691,19 @@ impl<E: LlmEngine> Orchestrator<E> {
             self.pending_weather_deck_report = Some(message);
             targeted_tools.clear();
             self.force_full_tool_schemas_in_llm_view = false;
-            self.chat_stack.push(crate::engine::Message::system(
-                POST_TOOL_WEATHER_COMMENT_GUIDANCE.to_string(),
-            ));
             tracing::info!(
                 event = "orchestrator.weather.comment_then_report",
                 report_blocks = weather_deck_parts.len(),
                 "Weather report queued; LLM will add a short comment before append"
             );
+            if self.should_force_post_tool_talk(current_state) {
+                return Ok(ToolBatchDecision::PostToolTalkPass {
+                    message: POST_TOOL_WEATHER_COMMENT_GUIDANCE.to_string(),
+                });
+            }
+            self.chat_stack.push(crate::engine::Message::system(
+                POST_TOOL_WEATHER_COMMENT_GUIDANCE.to_string(),
+            ));
             return Ok(ToolBatchDecision::Continue);
         }
 
@@ -723,6 +729,15 @@ impl<E: LlmEngine> Orchestrator<E> {
             } else {
                 POST_TOOL_USER_REPLY_GUIDANCE
             };
+            if self.should_force_post_tool_talk(current_state) {
+                tracing::info!(
+                    event = "orchestrator.tools.post_tool_talk_pass",
+                    "Successful Chat batch; omitting tools for the answer hop"
+                );
+                return Ok(ToolBatchDecision::PostToolTalkPass {
+                    message: POST_TOOL_TALK_NOW_GUIDANCE.to_string(),
+                });
+            }
             self.chat_stack
                 .push(crate::engine::Message::system(guidance.to_string()));
             tracing::debug!(
@@ -734,6 +749,10 @@ impl<E: LlmEngine> Orchestrator<E> {
         }
 
         Ok(ToolBatchDecision::Continue)
+    }
+
+    fn should_force_post_tool_talk(&self, state: AgentState) -> bool {
+        self.config.is_openrouter() && state == AgentState::Chat
     }
 }
 
@@ -1246,7 +1265,7 @@ mod targeted_schema_retry_phase5_tests {
 #[cfg(test)]
 mod native_tool_round_trip_tests {
     use super::*;
-    use crate::config::AppConfig;
+    use crate::config::{AppConfig, LlmBackend};
     use crate::engine::{EngineResponse, LlmEngine, LlmGenerateOptions, Message, Role};
     use crate::executive::error::Result;
     use crate::memory::ephemeral::EphemeralMemory;
@@ -1467,6 +1486,37 @@ mod native_tool_round_trip_tests {
         assert!(
             tool_idx < guidance_idx,
             "guidance must follow the native tool frame"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn openrouter_chat_success_forces_talk_pass() {
+        let mut fx = orchestrator_with(vec![Arc::new(OkProbeTool)]);
+        let cfg = AppConfig {
+            llm_backend: LlmBackend::OpenRouter,
+            ..Default::default()
+        };
+        fx.orch.config = Arc::new(cfg);
+        let decision = run_batch(
+            &mut fx.orch,
+            vec![ToolCall {
+                name: "fcp_ok_probe".into(),
+                args: json!({}),
+                id: None,
+                provider_call_id: Some("call_9".into()),
+            }],
+        )
+        .await;
+        assert!(
+            matches!(decision, ToolBatchDecision::PostToolTalkPass { .. }),
+            "OpenRouter Chat success must omit tools on the next hop; got {decision:?}"
+        );
+        assert!(
+            !fx.orch
+                .chat_stack
+                .iter()
+                .any(|m| m.content.contains("ANSWER NOW")),
+            "guidance is injected by step.rs, not dispatch"
         );
     }
 

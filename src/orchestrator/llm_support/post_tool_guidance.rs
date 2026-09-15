@@ -92,6 +92,11 @@ pub const DUPLICATE_SUPPRESS_IDLE_GUIDANCE: &str = r#"[FCP DUPLICATE TOOL — US
 All tool_calls in your last batch were skipped as duplicates of calls already made this turn. Do not repeat them. Reply with status Idle, a non-empty message_to_user summarizing prior tool results, and tool_calls [].
 [/FCP DUPLICATE TOOL — USER REPLY]"#;
 
+/// OpenRouter Chat: tools are omitted this hop. Answer from the results already on the stack.
+pub const POST_TOOL_TALK_NOW_GUIDANCE: &str = r#"[FCP POST-TOOL — ANSWER NOW]
+You have tool results above. Tools are not offered this hop. Reply now: status Idle, a non-empty message_to_user in full sentences that explains what the results mean for the user, and tool_calls []. Do not invent another tool call.
+[/FCP POST-TOOL — ANSWER NOW]"#;
+
 /// True when the latest user turn asks to remember, save, or catalog an uploaded image.
 pub fn user_wants_media_catalog(user: &str) -> bool {
     let lower = user.to_lowercase();

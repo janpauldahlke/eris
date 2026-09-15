@@ -773,6 +773,19 @@ impl<E: LlmEngine> Orchestrator<E> {
                             self.force_full_tool_schemas_in_llm_view = false;
                             continue;
                         }
+                        ToolBatchDecision::PostToolTalkPass { message } => {
+                            tracing::info!(
+                                event = "orchestrator.tools.post_tool_talk_pass",
+                                "Successful tool batch; omitting tools so the model must answer"
+                            );
+                            self.state = AgentState::Chat;
+                            self.chat_stack
+                                .push(crate::engine::Message::system(message));
+                            tools_needed = false;
+                            targeted_tools.clear();
+                            self.force_full_tool_schemas_in_llm_view = false;
+                            continue;
+                        }
                         ToolBatchDecision::Fatal(e) => {
                             tracing::error!(error = %e, "System fatality - aborting orchestrator");
                             self.apply_transition(StateTransition::Fatal(FcpError::EngineFault(

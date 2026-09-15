@@ -132,7 +132,9 @@ pub struct ContextViewSettings {
     pub full_tool_schemas_in_llm_view: bool,
     /// When true and [`Self::enabled`] is true, collapse resolved tool-recovery spans before successful tool batches in the LLM view only.
     pub omit_resolved_tool_recovery: bool,
-    /// When true and [`Self::enabled`] is true, replace assistant rows that are not valid protocol JSON with a short placeholder (canonical stack unchanged).
+    /// When true and [`Self::enabled`] is true, replace assistant rows that look like
+    /// *failed protocol JSON* (trim starts with `{`) with a short placeholder.
+    /// Native talk is bare prose and must stay visible on later hops.
     pub assistant_non_json_placeholder: bool,
     pub hints: Arc<HashMap<String, ToolContextViewHint>>,
 }
@@ -248,6 +250,7 @@ pub fn build_llm_view(messages: &[Message], settings: &ContextViewSettings) -> V
             && m.tool_calls.is_empty()
             && settings.assistant_non_json_placeholder
             && parse_llm_response_protocol(&m.content).is_err()
+            && m.content.trim_start().starts_with('{')
         {
             let n = m.content.chars().count();
             rewritten += 1;
@@ -457,7 +460,7 @@ mod tests {
 
     #[test]
     fn assistant_parse_failure_rewrites_with_placeholder_when_enabled() {
-        let body = "not json at all";
+        let body = r#"{ "thought": "truncated"#;
         let m = vec![Message::assistant(body.to_string())];
         let settings = ContextViewSettings {
             enabled: true,
@@ -474,6 +477,23 @@ mod tests {
             v[0].content,
             format!("[FCP: non-protocol assistant output omitted; {n} chars]")
         );
+    }
+
+    #[test]
+    fn native_talk_prose_is_kept_when_placeholder_enabled() {
+        let body = "It is currently 24.6 °C in Lisbon with clear skies.";
+        let m = vec![Message::assistant(body.to_string())];
+        let settings = ContextViewSettings {
+            enabled: true,
+            default_snippet_chars: 400,
+            assistant_compact: true,
+            full_tool_schemas_in_llm_view: false,
+            omit_resolved_tool_recovery: false,
+            assistant_non_json_placeholder: true,
+            hints: Arc::new(HashMap::new()),
+        };
+        let v = build_llm_view(&m, &settings);
+        assert_eq!(v[0].content, body);
     }
 
     #[test]

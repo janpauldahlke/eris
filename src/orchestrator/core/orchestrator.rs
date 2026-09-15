@@ -97,7 +97,7 @@ pub struct Orchestrator<E: LlmEngine> {
     /// LLM-only stack transform; stored [`Self::chat_stack`] is unchanged.
     pub context_view: ContextViewSettings,
     /// When true, next [`build_llm_view`] uses full `parameters` in the tool-def block (overrides slim view).
-    /// Set after a Gatekeeper schema fault when [`ToolBatchDecision::RetryWithTargetedSchema`] runs; cleared at [`Self::step`] entry and after any successful tool execution in a batch that returns [`ToolBatchDecision::Continue`].
+    /// Set after a Gatekeeper schema fault when [`ToolBatchDecision::RetryWithTargetedSchema`] runs; cleared at [`Self::step`] entry and after any successful tool execution in a batch that returns [`ToolBatchDecision::Continue`] or [`ToolBatchDecision::PostToolTalkPass`].
     pub force_full_tool_schemas_in_llm_view: bool,
     /// Monotonic counter incremented once per `step()` entry (log correlation; no span across await in `spawn`).
     pub turn_seq: u64,

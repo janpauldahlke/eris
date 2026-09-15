@@ -16,6 +16,10 @@ pub enum ToolBatchDecision {
     Recover { message: String },
     /// Duplicate-only batch: stay in Chat, disable tools for one reply (no Recover budget).
     SuppressOnlyIdlePass { message: String },
+    /// Successful Chat batch on OpenRouter: omit tools for the next hop so the model
+    /// must answer from the results (no dummy follow-up `memory:stage`). Local GBNF
+    /// still returns [`Self::Continue`] so sequential tool hops in one turn stay legal.
+    PostToolTalkPass { message: String },
     /// Abort turn on non-recoverable failure.
     Fatal(FcpError),
 }
