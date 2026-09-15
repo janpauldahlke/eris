@@ -65,10 +65,7 @@ pub fn cluster_members(domain: &str, registered: &[String]) -> Vec<String> {
 /// re-rank by cosine (see [`super::policy`]).
 #[must_use]
 pub fn union_clusters_for_tools(tool_names: &[String], registered: &[String]) -> Vec<String> {
-    let mut domains: Vec<&str> = tool_names
-        .iter()
-        .filter_map(|n| tool_domain(n))
-        .collect();
+    let mut domains: Vec<&str> = tool_names.iter().filter_map(|n| tool_domain(n)).collect();
     domains.sort_unstable();
     domains.dedup();
 

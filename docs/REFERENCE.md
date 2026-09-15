@@ -2,7 +2,7 @@
 
 > Moved from the repository root `README.md`; this is the complete setup and operations reference. For the short introduction, see the [root README](../README.md).
 
-**Eris** — a local, vault-centric assistant: same orchestrator and tools whether you use the **full-screen terminal UI (ratatui)**, **`eris chat --web`** (localhost Axum + SSE), or an **optional Discord sidecar** that shares the live session. Two LLM backends: **Ollama** (default, easiest) or **llama.cpp** (direct GGUF inference with GBNF grammar enforcement). Optional **vision** (`vision:see`, inline **`vision:display`**, and **`media:catalog` / `media:meta`** for remembered images) plus **voice ingress** (STT before orchestrator turn) on the llama.cpp path only — web upload/mic for audio, web drop zone and Discord image uploads for vision on supported multimodal GGUF models. Optional Qdrant holds semantic memory (Markdown vault chunks plus **`40_MEDIA`** catalog cards when vision is enabled); notes live in a Markdown vault; tools run only through the JSON-schema gatekeeper.
+**Eris** — a local, vault-centric assistant: same orchestrator and tools whether you use the **full-screen terminal UI (ratatui)**, **`eris chat --web`** (localhost Axum + SSE), or an **optional Discord sidecar** that shares the live session. Three LLM backends: **Ollama** (default, easiest), **llama.cpp** (direct GGUF inference with GBNF grammar enforcement), or **OpenRouter** (hosted chat via API key; JSON-schema `response_format`, embeddings stay local). Optional **vision** (`vision:see`, inline **`vision:display`**, and **`media:catalog` / `media:meta`** for remembered images) plus **voice ingress** (STT before orchestrator turn) on the llama.cpp path only — web upload/mic for audio, web drop zone and Discord image uploads for vision on supported multimodal GGUF models. Optional Qdrant holds semantic memory (Markdown vault chunks plus **`40_MEDIA`** catalog cards when vision is enabled); notes live in a Markdown vault; tools run only through the JSON-schema gatekeeper.
 
 Architecture detail: [docs/updated_architecture/README.md](docs/updated_architecture/README.md).
 
@@ -15,7 +15,7 @@ Architecture detail: [docs/updated_architecture/README.md](docs/updated_architec
 
 ### LLM Backend (choose one)
 
-Eris supports two backends. Select during first-run ignition or via `llm_backend` in `.fcp/config.toml`.
+Eris supports three backends. Select during first-run ignition or via `llm_backend` in `.fcp/config.toml`.
 
 #### Option A — Ollama (default)
 
@@ -49,6 +49,12 @@ Direct inference via `llama-server`. Eris manages the server processes, compiles
 3. **Configure** `llm_backend = "LlamaCpp"` and the `[llama_cpp]` section in `.fcp/config.toml`.
 
 Full instructions: **[docs/HOW_TO/LLAMA_CPP_SETUP.md](docs/HOW_TO/LLAMA_CPP_SETUP.md)**.
+
+#### Option C — OpenRouter (hosted, API key)
+
+Hosted chat via OpenRouter's OpenAI-compatible API — no local chat daemon; structured JSON is enforced with a per-turn strict `response_format` JSON Schema (fallback ladder to `json_object`, then prompt-only recovery). **Embeddings stay local** (Ollama or llama.cpp via `embed_backend`). Requires `OPENROUTER_API_KEY` in the environment (never stored) and an explicit privacy consent (`consent_acknowledged = true`) — chat prompts, tool outputs, and memories transit to the hosted provider.
+
+Full instructions: **[docs/HOW_TO/OPENROUTER_SETUP.md](docs/HOW_TO/OPENROUTER_SETUP.md)**.
 
 **Vision (optional):** Image understanding via **`vision:see`**, inline display via **`vision:display`**, and long-term image recall via **`media:catalog` / `media:meta`** + **`40_MEDIA/{hash}/media.json`** require **`llm_backend = "LlamaCpp"`**, `[vision] enabled = true`, a compatible **chat GGUF + mmproj**, and a recent **`llama-server`** (multimodal projector support is model-specific — e.g. Gemma 4 needs llama.cpp **b9493+**). Not available on Ollama. Setup and remember/show flows: **[docs/HOW_TO/VISION.md](docs/HOW_TO/VISION.md)**.
 
@@ -136,7 +142,7 @@ Registration is explicit: ask Eris to register on Moltbook with a name and descr
 
 | Piece       | `.fcp/config.toml` keys                         | Notes                                                                     |
 | ----------- | ----------------------------------------------- | ------------------------------------------------------------------------- |
-| Backend     | `llm_backend`                                   | `"Ollama"` (default) or `"LlamaCpp"`                                     |
+| Backend     | `llm_backend`                                   | `"Ollama"` (default), `"LlamaCpp"`, or `"OpenRouter"` ([setup](docs/HOW_TO/OPENROUTER_SETUP.md)) |
 | Ollama HTTP | `ollama_host`                                   | Default `http://localhost:11434` (Ollama backend)                         |
 | Chat model  | `model_name`                                    | Match what you `ollama pull` (default `gemma4:26b`)                       |
 | Embed model | `embed_model_name`                              | Default `nomic-embed-text` (768-d vectors → Qdrant)                       |
@@ -364,7 +370,7 @@ flowchart LR
     META -.->|read at startup| ORC
 ```
 
-You interact through the **TUI**, a **localhost web page**, and/or **Discord**; all paths funnel **`UserAction`** into the same orchestrator task and receive **`SessionEvent`** updates (see `src/presentation/`). The orchestrator calls **Ollama** or **llama-server** (depending on `llm_backend`) for structured JSON and uses **ToolRouter** embeddings for pre-LLM gating. The llama.cpp path compiles a **GBNF grammar** at session start that constrains output to valid protocol JSON with per-tool argument schemas. **Tools** run only through the **gatekeeper**: they read/write **Markdown**, use **ephemeral** staging, and hit **Qdrant** for semantic memory. **Logs** go to `.fcp/telemetry/` — not mixed into the chat deck.
+You interact through the **TUI**, a **localhost web page**, and/or **Discord**; all paths funnel **`UserAction`** into the same orchestrator task and receive **`SessionEvent`** updates (see `src/presentation/`). The orchestrator calls **Ollama**, **llama-server**, or **OpenRouter's hosted API** (depending on `llm_backend`) for structured JSON and uses **ToolRouter** embeddings for pre-LLM gating (always local, via `embed_backend`). The llama.cpp path compiles a **GBNF grammar** at session start that constrains output to valid protocol JSON with per-tool argument schemas; the OpenRouter path enforces the same envelope with a per-turn strict **`response_format` JSON Schema** built from the offered-tool subset. **Tools** run only through the **gatekeeper**: they read/write **Markdown**, use **ephemeral** staging, and hit **Qdrant** for semantic memory. **Logs** go to `.fcp/telemetry/` — not mixed into the chat deck.
 
 - **Terminal:** Full-screen **ratatui** UI under `src/ui/terminal/`: chat deck, status, telemetry; `Ctrl+C` exits and tears down daemons this process started.
 - **Web:** `src/ui/web/` — Axum router, SSE stream of `SessionEvent`, small static JS; suitable for the same machine or SSH port-forward.

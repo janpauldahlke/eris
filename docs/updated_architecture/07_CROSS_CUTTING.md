@@ -2,7 +2,7 @@
 
 ## Error taxonomy (`executive/error.rs`)
 
-`FcpError` variants: `Io`, `Config`, `WorkspaceFault`, `EngineFault`, `NetworkFault`, `ContextExhaustion`, `SchemaViolation`, `Cancellation`, `ToolFault`, `ParseFault`, `VectorDbOffline`, `EmbeddingFault`, `Interrupted`.
+`FcpError` variants: `Io`, `Config`, `WorkspaceFault`, `EngineFault`, `NetworkFault`, `RateLimited { retry_after_secs }` (hosted-provider 429 quota signaling), `ContextExhaustion`, `SchemaViolation`, `Cancellation`, `ToolFault`, `ParseFault`, `VectorDbOffline`, `EmbeddingFault`, `Interrupted`.
 
 Orchestrator maps many failures into recovery loops or idle; **`Interrupted`** is special (heartbeat idle injection).
 

@@ -9,8 +9,8 @@ use crate::engine::llama_cpp::LlamaCppClient;
 use crate::engine::ollama::OllamaClient;
 use crate::engine::{LlmEngine, LlmGenerateOptions, Message};
 use crate::executive::error::{FcpError, Result};
-use ollama_rs::generation::chat::request::ChatMessageRequest;
 use ollama_rs::generation::chat::ChatMessage;
+use ollama_rs::generation::chat::request::ChatMessageRequest;
 use ollama_rs::models::ModelOptions;
 use std::time::Duration;
 
@@ -30,7 +30,9 @@ pub async fn probe_ollama_chat_latency(client: &OllamaClient) -> Result<SpeedMet
         .client
         .send_chat_messages(request)
         .await
-        .map_err(|e| FcpError::NetworkFault(format!("Benchmark speed probe: Ollama chat failed: {e}")))?;
+        .map_err(|e| {
+            FcpError::NetworkFault(format!("Benchmark speed probe: Ollama chat failed: {e}"))
+        })?;
 
     let fd = response.final_data.ok_or_else(|| {
         FcpError::EngineFault(
@@ -52,10 +54,9 @@ pub async fn probe_ollama_chat_latency(client: &OllamaClient) -> Result<SpeedMet
 ///
 /// Uses [`EngineResponse::generation_ms`] and usage for throughput; prompt vs gen wall split is approximate.
 pub async fn probe_llamacpp_chat_latency(client: &LlamaCppClient) -> Result<SpeedMetrics> {
-    let stack = vec![Message {
-        role: crate::engine::Role::User,
-        content: "Reply with exactly one word: pong.".to_string(),
-    }];
+    let stack = vec![Message::user(
+        "Reply with exactly one word: pong.".to_string(),
+    )];
     let wall_start = std::time::Instant::now();
     let resp = client
         .generate(&stack, "[]", None, LlmGenerateOptions::default())

@@ -16,11 +16,17 @@ pub struct SystemHealthArgs {}
 
 pub struct SystemHealthTool {
     pub config: Arc<AppConfig>,
+    /// Live token/cost snapshot reader; surfaces cumulative session cost for hosted backends.
+    pub token_metrics: Option<crate::engine::TokenMetricsReader>,
+    /// Live OpenRouter structured-output ladder (`native_tools` | `json_schema` | `json_object` | `off`).
+    pub openrouter_mode: Option<crate::engine::OpenRouterModeHandle>,
 }
 
 const REPORT_HINT_OLLAMA: &str = "When answering the user, always cover in order: (1) `llm_backend` and `fcp`: Ollama URL and chat + embed models; (2) `ollama.cli_ps`: whether the CLI ran and summarize stdout or error; (3) `cpu.usage_pct` and load averages; (4) `memory` used vs total and `used_pct`. If `gpu.nvidia_smi.available` is true, summarize per-GPU memory, utilization, and temperature from `gpus`; if `available` is false and `reason` is `not_on_path`, omit GPU detail; if `skipped` is present, omit GPU detail. Optionally mention `host` and `disks` if relevant.";
 
 const REPORT_HINT_LLAMACPP: &str = "When answering the user, cover: (1) `llm_backend` and `fcp` (chat/embed servers and GGUF model paths); (2) `llama_cpp_health` server statuses; (3) `cpu.usage_pct` and load averages; (4) `memory` used vs total. If `gpu.nvidia_smi.available` is true, summarize GPU info from `gpus`; if skipped, omit GPU detail. Optionally mention `host` and `disks` if relevant.";
+
+const REPORT_HINT_OPENROUTER: &str = "When answering the user, cover: (1) `llm_backend` and `fcp` (hosted model, base URL, embed backend, structured output mode, session cost); (2) `cpu.usage_pct` and load averages; (3) `memory` used vs total. Chat runs on a remote provider — never mention or request the API key; it is not present in this report. If `gpu.nvidia_smi.available` is true, summarize GPU info from `gpus`; if skipped, omit GPU detail.";
 
 async fn probe_llama_health(base_url: String) -> String {
     let client = match reqwest::Client::builder()
@@ -31,12 +37,12 @@ async fn probe_llama_health(base_url: String) -> String {
         Err(e) => return format!("unreachable: {e}"),
     };
     let health_url = format!("{}/health", base_url.trim_end_matches('/'));
-    let resp = match tokio::time::timeout(Duration::from_secs(4), client.get(health_url).send()).await
-    {
-        Ok(Ok(r)) => r,
-        Ok(Err(e)) => return format!("unreachable: {e}"),
-        Err(_) => return "unreachable: timeout".to_string(),
-    };
+    let resp =
+        match tokio::time::timeout(Duration::from_secs(4), client.get(health_url).send()).await {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => return format!("unreachable: {e}"),
+            Err(_) => return "unreachable: timeout".to_string(),
+        };
     if !resp.status().is_success() {
         return format!("unreachable: HTTP {}", resp.status());
     }
@@ -58,7 +64,7 @@ impl Tool for SystemHealthTool {
     }
 
     fn description(&self) -> &'static str {
-        "Structured host diagnostics JSON with stable sections: `report_hint` (how to summarize), `llm_backend`, `fcp` (Ollama or llama-server targets), optional `llama_cpp_health` when using llama.cpp, `cpu`, `memory`, `ollama` (`ollama ps` when Ollama is the LLM backend), `gpu.nvidia_smi` (optional), plus `host` and `disks`. Follow `report_hint`."
+        "Structured host diagnostics JSON with stable sections: `report_hint` (how to summarize), `llm_backend`, `fcp` (Ollama, llama-server, or OpenRouter targets including `structured_output_mode`), optional `llama_cpp_health` when using llama.cpp, `cpu`, `memory`, `ollama` (`ollama ps` when Ollama is the LLM or embed backend), `gpu.nvidia_smi` (optional), plus `host` and `disks`. Follow `report_hint`. Never includes API keys."
     }
 
     fn parameters_schema(&self) -> schemars::schema::RootSchema {
@@ -69,6 +75,8 @@ impl Tool for SystemHealthTool {
         let cfg = self.config.clone();
         let report_hint = if cfg.is_llamacpp() {
             REPORT_HINT_LLAMACPP
+        } else if cfg.is_openrouter() {
+            REPORT_HINT_OPENROUTER
         } else {
             REPORT_HINT_OLLAMA
         };
@@ -93,6 +101,34 @@ impl Tool for SystemHealthTool {
                     })
                 }
             }
+            LlmBackend::OpenRouter => {
+                // Discloses the hosted target and privacy posture. The API key is env-only
+                // and must never appear here (asserted by test).
+                if let Some(or) = cfg.openrouter.as_ref() {
+                    let structured_output_mode = self
+                        .openrouter_mode
+                        .as_ref()
+                        .map(|h| h.report_label())
+                        .unwrap_or("native_tools");
+                    json!({
+                        "chat_model": or.model.as_str(),
+                        "base_url": or.base_url.as_str(),
+                        "embed_backend": format!("{:?}", cfg.resolved_embed_backend()),
+                        "embed_model": cfg.embed_model_name.as_str(),
+                        "structured_output_mode": structured_output_mode,
+                        "data_collection": format!("{:?}", or.data_collection),
+                        "consent_acknowledged": or.consent_acknowledged,
+                        "session_cost_usd": self
+                            .token_metrics
+                            .as_ref()
+                            .map(|r| r.snapshot().session_cost_micro_usd as f64 / 1_000_000.0),
+                    })
+                } else {
+                    json!({
+                        "error": "llm_backend is OpenRouter but openrouter section is missing",
+                    })
+                }
+            }
         };
 
         let llama_health = if cfg.is_llamacpp() {
@@ -110,7 +146,10 @@ impl Tool for SystemHealthTool {
             None
         };
 
-        let skip_ollama_ps = !cfg.is_ollama();
+        // `ollama ps` is informative whenever the Ollama daemon is in play — either as
+        // the chat backend or as the (decoupled) embed backend under OpenRouter.
+        let skip_ollama_ps =
+            cfg.resolved_embed_backend() != crate::config::EmbedBackend::Ollama && !cfg.is_ollama();
         let llm_backend_json = serde_json::to_value(&cfg.llm_backend)
             .unwrap_or_else(|_| json!(cfg.llm_backend.to_string()));
         let vision_section = json!({
@@ -260,6 +299,8 @@ mod tests {
     async fn test_system_health_execution() {
         let tool = SystemHealthTool {
             config: Arc::new(AppConfig::default()),
+            token_metrics: None,
+            openrouter_mode: None,
         };
         let args = serde_json::json!({});
 
@@ -316,18 +357,27 @@ mod tests {
     async fn health_output_ollama_backend() {
         let tool = SystemHealthTool {
             config: Arc::new(AppConfig::default()),
+            token_metrics: None,
+            openrouter_mode: None,
         };
         let parsed: serde_json::Value =
             serde_json::from_str(&tool.execute(json!({})).await.expect("health")).expect("json");
         assert_eq!(parsed.get("llm_backend"), Some(&json!("Ollama")));
-        assert!(parsed.get("fcp").and_then(|f| f.get("ollama_host")).is_some());
+        assert!(
+            parsed
+                .get("fcp")
+                .and_then(|f| f.get("ollama_host"))
+                .is_some()
+        );
         assert!(parsed.get("llama_cpp_health").is_none());
         let ollama = parsed.get("ollama").expect("ollama");
-        assert!(!ollama
-            .get("cli_ps")
-            .and_then(|c| c.get("skipped"))
-            .and_then(|s| s.as_str())
-            .is_some_and(|t| t.contains("llama.cpp")));
+        assert!(
+            !ollama
+                .get("cli_ps")
+                .and_then(|c| c.get("skipped"))
+                .and_then(|s| s.as_str())
+                .is_some_and(|t| t.contains("llama.cpp"))
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -348,6 +398,8 @@ mod tests {
         });
         let tool = SystemHealthTool {
             config: Arc::new(cfg),
+            token_metrics: None,
+            openrouter_mode: None,
         };
         let parsed: serde_json::Value =
             serde_json::from_str(&tool.execute(json!({})).await.expect("health")).expect("json");
@@ -363,5 +415,63 @@ mod tests {
             .and_then(|v| v.as_str())
             .unwrap_or("");
         assert!(cli.contains("llama.cpp"));
+    }
+
+    /// Secret hygiene: the OpenRouter health section discloses the hosted target and
+    /// privacy posture, but the API key (env-only) must never leak into the report.
+    #[tokio::test(flavor = "current_thread")]
+    async fn health_output_openrouter_backend_never_leaks_key() {
+        let mut cfg = AppConfig::default();
+        cfg.llm_backend = LlmBackend::OpenRouter;
+        cfg.openrouter = Some(crate::config::OpenRouterConfig {
+            model: "google/gemini-2.5-flash".into(),
+            consent_acknowledged: true,
+            ..Default::default()
+        });
+        let tool = SystemHealthTool {
+            config: Arc::new(cfg),
+            token_metrics: None,
+            openrouter_mode: None,
+        };
+        let raw = tool.execute(json!({})).await.expect("health");
+        let parsed: serde_json::Value = serde_json::from_str(&raw).expect("json");
+
+        assert_eq!(parsed.get("llm_backend"), Some(&json!("OpenRouter")));
+        let fcp = parsed.get("fcp").expect("fcp");
+        assert_eq!(
+            fcp.get("chat_model"),
+            Some(&json!("google/gemini-2.5-flash"))
+        );
+        assert!(fcp.get("base_url").is_some());
+        assert_eq!(fcp.get("embed_backend"), Some(&json!("Ollama")));
+        assert_eq!(fcp.get("consent_acknowledged"), Some(&json!(true)));
+        assert_eq!(
+            fcp.get("structured_output_mode"),
+            Some(&json!("native_tools"))
+        );
+
+        // No key material, header names, or key-shaped strings anywhere in the report.
+        let lower = raw.to_lowercase();
+        assert!(
+            !lower.contains("api_key"),
+            "report must not mention key fields"
+        );
+        assert!(
+            !lower.contains("authorization"),
+            "report must not mention auth headers"
+        );
+        assert!(
+            !lower.contains("sk-or-"),
+            "report must not contain key-shaped strings"
+        );
+        if let Ok(live_key) = std::env::var("OPENROUTER_API_KEY") {
+            let live_key = live_key.trim();
+            if !live_key.is_empty() {
+                assert!(
+                    !raw.contains(live_key),
+                    "report must not contain the live key"
+                );
+            }
+        }
     }
 }

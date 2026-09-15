@@ -6,8 +6,8 @@
 //! Current policy: keep only the **most recent** success line for a given tool name; older
 //! results are replaced with a compact marker that preserves breadcrumb continuity for the model.
 
+use super::stack_lines::message_is_tool_success;
 use crate::engine::Message;
-use super::stack_lines::try_parse_tool_success_line;
 
 /// Replace all but the most recent `tool_name` success result with a compact marker.
 ///
@@ -22,10 +22,9 @@ pub fn prune_stale_tool_results(
         .iter()
         .enumerate()
         .filter(|(_, m)| {
-            m.role == "system"
-                && try_parse_tool_success_line(&m.content)
-                    .map(|ts| ts.tool_name == tool_name)
-                    .unwrap_or(false)
+            message_is_tool_success(m)
+                .map(|ts| ts.tool_name == tool_name)
+                .unwrap_or(false)
         })
         .map(|(i, _)| i)
         .collect();
@@ -39,14 +38,17 @@ pub fn prune_stale_tool_results(
     let mut pruned = 0usize;
 
     for &idx in to_prune {
-        let original = &chat_stack[idx].content;
-        let snippet = try_parse_tool_success_line(original)
-            .map(|ts| ts.body)
-            .unwrap_or("");
-        let preview: String = snippet.chars().take(60).collect();
-        let chars_freed = original.len();
-        chat_stack[idx].content =
-            format!("[{tool_name}: result pruned from context ({chars_freed} chars); began with: {preview}…]");
+        let (chars_freed, preview) = {
+            let original = &chat_stack[idx];
+            let snippet = message_is_tool_success(original)
+                .map(|ts| ts.body)
+                .unwrap_or("");
+            let preview: String = snippet.chars().take(60).collect();
+            (original.content.len(), preview)
+        };
+        chat_stack[idx].content = format!(
+            "[{tool_name}: result pruned from context ({chars_freed} chars); began with: {preview}…]"
+        );
         pruned += 1;
     }
 
@@ -69,17 +71,11 @@ mod tests {
     use crate::orchestrator::context::format_tool_success_line;
 
     fn sys(content: &str) -> Message {
-        Message {
-            role: crate::engine::Role::System,
-            content: content.to_string(),
-        }
+        Message::system(content.to_string())
     }
 
     fn assistant(content: &str) -> Message {
-        Message {
-            role: crate::engine::Role::Assistant,
-            content: content.to_string(),
-        }
+        Message::assistant(content.to_string())
     }
 
     #[test]
@@ -105,9 +101,7 @@ mod tests {
         assert!(stack[2].content.contains("[doc:read: result pruned"));
         assert!(stack[5].content.contains("[doc:read: result pruned"));
 
-        assert!(stack[8]
-            .content
-            .starts_with("Tool 'doc:read' succeeded:"));
+        assert!(stack[8].content.starts_with("Tool 'doc:read' succeeded:"));
     }
 
     #[test]
@@ -148,5 +142,21 @@ mod tests {
         assert!(stack[0].content.contains("[doc:read: result pruned"));
         assert!(stack[1].content.starts_with("Tool 'doc:read' succeeded:"));
         assert!(stack[2].content.starts_with("Tool 'doc:read' succeeded:"));
+    }
+
+    #[test]
+    fn prunes_native_tool_role_results() {
+        let mut stack = vec![
+            Message::tool(format_tool_success_line("doc:read", "A"), "call_a"),
+            Message::tool(format_tool_success_line("doc:read", "B"), "call_b"),
+            Message::tool(format_tool_success_line("doc:read", "C"), "call_c"),
+        ];
+        let pruned = prune_stale_tool_results(&mut stack, "doc:read", 1);
+        assert_eq!(pruned, 2);
+        assert_eq!(stack[0].role, "tool");
+        assert_eq!(stack[0].tool_call_id.as_deref(), Some("call_a"));
+        assert!(stack[0].content.contains("[doc:read: result pruned"));
+        assert!(stack[2].content.starts_with("Tool 'doc:read' succeeded:"));
+        assert_eq!(stack[2].tool_call_id.as_deref(), Some("call_c"));
     }
 }

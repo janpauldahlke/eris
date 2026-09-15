@@ -1,26 +1,44 @@
-use crate::engine::LlmEngine;
-use crate::orchestrator::llm_support::json_envelope::split_leading_json_object;
+use crate::engine::{EngineResponse, LlmEngine};
+use crate::orchestrator::llm_support::json_envelope::{
+    llm_response_from_engine, split_leading_json_object,
+};
 use crate::orchestrator::state::LlmResponse;
 use crate::presentation::SessionEvent;
 
 use super::Orchestrator;
 
 impl<E: LlmEngine> Orchestrator<E> {
-    /// Emits an assistant-facing message to TUI when present in the model JSON.
+    /// Emits an assistant-facing message to TUI when the projected envelope has speech.
     ///
     /// **Transcript policy:** `IncomingMessage` (main deck) is sent only when `tool_calls` is empty
-    /// — i.e. the model is handing control back with a direct reply (typically `Idle`). When the
-    /// model still has `tool_calls`, we do **not** put `message_to_user` on the main transcript:
+    /// — i.e. the model is handing control back with a direct reply (typically `Idle`). That includes
+    /// OpenRouter native talk: raw `content` salvaged as `message_to_user`, not only envelope JSON.
+    /// When the model still has `tool_calls`, we do **not** put `message_to_user` on the main transcript:
     /// the same user turn often runs several LLM hops, and an early “I’ve saved it…” line followed
     /// by a correction reads like double answers. For those hops, `message_to_user` is folded into
     /// the orchestrator `activity_line` (tools strip / status) until the final hop. `thought` is always emitted when non-empty.
     pub(super) async fn emit_optional_user_message(&mut self, response_content: &str) {
-        let Some(tx) = &self.presentation_tx else {
+        self.emit_optional_user_message_from_engine(&EngineResponse {
+            content: response_content.to_string(),
+            ..Default::default()
+        })
+        .await;
+    }
+
+    /// Same as [`Self::emit_optional_user_message`], but uses the full engine hop (native tools,
+    /// hosted reasoning, salvaged native talk).
+    pub(super) async fn emit_optional_user_message_from_engine(
+        &mut self,
+        response: &EngineResponse,
+    ) {
+        let Ok(parsed) = llm_response_from_engine(response) else {
             return;
         };
+        self.emit_parsed_llm_response_to_deck(&parsed).await;
+    }
 
-        let json_slice = split_leading_json_object(response_content).0;
-        let Ok(parsed) = serde_json::from_str::<LlmResponse>(json_slice) else {
+    pub(super) async fn emit_parsed_llm_response_to_deck(&mut self, parsed: &LlmResponse) {
+        let Some(tx) = &self.presentation_tx else {
             return;
         };
 
@@ -149,8 +167,12 @@ impl<E: LlmEngine> Orchestrator<E> {
         let report_backup = report.clone();
         let (slice, trailing) = split_leading_json_object(response_content);
         let Ok(mut v) = serde_json::from_str::<serde_json::Value>(slice) else {
-            self.pending_weather_deck_report = Some(report_backup);
-            return response_content.to_string();
+            let trimmed = response_content.trim();
+            if trimmed.is_empty() || trimmed.starts_with('{') {
+                self.pending_weather_deck_report = Some(report_backup);
+                return response_content.to_string();
+            }
+            return format!("{trimmed}\n\n{report}");
         };
         let comment = v
             .get("message_to_user")

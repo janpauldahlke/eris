@@ -28,11 +28,14 @@ pub fn probe_browser39_binary_sync(binary: &str) -> Result<Browser39ProbeOk> {
             "BROWSER39_BIN is empty; set it to the browser39 executable path".into(),
         ));
     }
-    let output = Command::new(binary).arg("--version").output().map_err(|e| {
-        FcpError::NetworkFault(format!(
-            "browser39 binary {binary:?} not found or not executable: {e}. {INSTALL_HINT}"
-        ))
-    })?;
+    let output = Command::new(binary)
+        .arg("--version")
+        .output()
+        .map_err(|e| {
+            FcpError::NetworkFault(format!(
+                "browser39 binary {binary:?} not found or not executable: {e}. {INSTALL_HINT}"
+            ))
+        })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -130,9 +133,7 @@ pub fn ensure_browser39_vault_config(vault_root: &Path, user_agent: &str) -> Res
         let existing = std::fs::read_to_string(&path).map_err(FcpError::Io)?;
         merge_user_agent_toml(&existing, ua)
     } else {
-        format!(
-            "# browser39 config (eris-managed user_agent)\n[user_agent]\nvalue = \"{ua}\"\n"
-        )
+        format!("# browser39 config (eris-managed user_agent)\n[user_agent]\nvalue = \"{ua}\"\n")
     };
     std::fs::write(&path, body).map_err(FcpError::Io)?;
     Ok(path)
@@ -224,10 +225,16 @@ mod tests {
         let root = dir.path();
         std::fs::create_dir_all(vault_layout::fcp_dir(root)).expect("fcp dir");
         seed_web_operator_files(root).await.expect("seed");
-        assert!(vault_layout::fcp_dir(root).join("web_allowlist.toml").is_file());
-        assert!(vault_layout::fcp_dir(root)
-            .join("browser39/consent_profiles.toml")
-            .is_file());
+        assert!(
+            vault_layout::fcp_dir(root)
+                .join("web_allowlist.toml")
+                .is_file()
+        );
+        assert!(
+            vault_layout::fcp_dir(root)
+                .join("browser39/consent_profiles.toml")
+                .is_file()
+        );
     }
 
     #[test]

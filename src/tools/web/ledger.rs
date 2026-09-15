@@ -104,8 +104,7 @@ impl WebSessionLedger {
     ) -> u32 {
         let requested = request.unwrap_or(config.default_fetch_budget);
         let mut budget = if mission_remaining.is_some() {
-            requested
-                .min(config.max_fetch_budget_override)
+            requested.min(config.max_fetch_budget_override)
         } else {
             requested
                 .max(config.default_fetch_budget)
@@ -147,9 +146,8 @@ impl WebSessionLedger {
 
         self.enforce_turn_and_session_caps(config)?;
 
-        let host = host_from_normalized_url(&normalized_url).ok_or_else(|| {
-            FcpError::SchemaViolation(format!("web: URL has no host: {raw_url}"))
-        })?;
+        let host = host_from_normalized_url(&normalized_url)
+            .ok_or_else(|| FcpError::SchemaViolation(format!("web: URL has no host: {raw_url}")))?;
 
         let continuing_mission = mission_id
             .filter(|s| !s.trim().is_empty())
@@ -168,10 +166,11 @@ impl WebSessionLedger {
             ));
         }
 
-        let (mission_id, budget_max, budget_remaining_after) =
-            if let Some(mid) = mission_id.filter(|s| !s.trim().is_empty()) {
-                let mid = mid.trim().to_string();
-                let mission = self.missions.get(&mid).ok_or_else(|| {
+        let (mission_id, budget_max, budget_remaining_after) = if let Some(mid) =
+            mission_id.filter(|s| !s.trim().is_empty())
+        {
+            let mid = mid.trim().to_string();
+            let mission = self.missions.get(&mid).ok_or_else(|| {
                     FcpError::ToolFault {
                         tool_name: "web:fetch".into(),
                         reason: format!(
@@ -179,37 +178,36 @@ impl WebSessionLedger {
                         ),
                     }
                 })?;
-                if mission.pages_used >= mission.budget_max {
-                    return Err(policy_error(
-                        policy::WEB_MISSION_BUDGET,
-                        format!(
-                            "mission `{mid}` fetch budget exhausted ({}/{})",
-                            mission.pages_used, mission.budget_max
-                        ),
-                    ));
-                }
-                let remaining = mission.budget_max.saturating_sub(mission.pages_used);
-                let _budget_clamp = Self::clamp_fetch_budget(fetch_budget, config, Some(remaining));
-                if mission.pages_used + 1 > mission.budget_max {
-                    return Err(policy_error(
-                        policy::WEB_MISSION_BUDGET,
-                        format!(
-                            "mission `{mid}` cannot accept another fetch ({}/{})",
-                            mission.pages_used, mission.budget_max
-                        ),
-                    ));
-                }
-                let after = remaining.saturating_sub(1);
-                (mid, mission.budget_max, after)
-            } else {
-                let budget_max =
-                    Self::clamp_fetch_budget(fetch_budget, config, None);
-                (
-                    new_mission_id.to_string(),
-                    budget_max,
-                    budget_max.saturating_sub(1),
-                )
-            };
+            if mission.pages_used >= mission.budget_max {
+                return Err(policy_error(
+                    policy::WEB_MISSION_BUDGET,
+                    format!(
+                        "mission `{mid}` fetch budget exhausted ({}/{})",
+                        mission.pages_used, mission.budget_max
+                    ),
+                ));
+            }
+            let remaining = mission.budget_max.saturating_sub(mission.pages_used);
+            let _budget_clamp = Self::clamp_fetch_budget(fetch_budget, config, Some(remaining));
+            if mission.pages_used + 1 > mission.budget_max {
+                return Err(policy_error(
+                    policy::WEB_MISSION_BUDGET,
+                    format!(
+                        "mission `{mid}` cannot accept another fetch ({}/{})",
+                        mission.pages_used, mission.budget_max
+                    ),
+                ));
+            }
+            let after = remaining.saturating_sub(1);
+            (mid, mission.budget_max, after)
+        } else {
+            let budget_max = Self::clamp_fetch_budget(fetch_budget, config, None);
+            (
+                new_mission_id.to_string(),
+                budget_max,
+                budget_max.saturating_sub(1),
+            )
+        };
 
         if self.missions.get(&mission_id).is_none() {
             self.missions.insert(
@@ -362,9 +360,8 @@ pub fn normalize_url(raw: &str) -> Result<String> {
 pub fn normalize_url_with_query(raw: &str) -> Result<String> {
     let base = normalize_url_base(raw)?;
     let trimmed = raw.trim();
-    let parsed = Url::parse(trimmed).map_err(|e| {
-        FcpError::SchemaViolation(format!("web: invalid URL ({trimmed}): {e}"))
-    })?;
+    let parsed = Url::parse(trimmed)
+        .map_err(|e| FcpError::SchemaViolation(format!("web: invalid URL ({trimmed}): {e}")))?;
     match parsed.query().filter(|q| !q.is_empty()) {
         Some(q) => Ok(format!("{base}?{q}")),
         None => Ok(base),
@@ -373,18 +370,17 @@ pub fn normalize_url_with_query(raw: &str) -> Result<String> {
 
 fn normalize_url_base(raw: &str) -> Result<String> {
     let trimmed = raw.trim();
-    let parsed = Url::parse(trimmed).map_err(|e| {
-        FcpError::SchemaViolation(format!("web: invalid URL ({trimmed}): {e}"))
-    })?;
+    let parsed = Url::parse(trimmed)
+        .map_err(|e| FcpError::SchemaViolation(format!("web: invalid URL ({trimmed}): {e}")))?;
     let scheme = parsed.scheme();
     if scheme != "http" && scheme != "https" {
         return Err(FcpError::SchemaViolation(format!(
             "web: URL scheme must be http or https: {trimmed}"
         )));
     }
-    let host = parsed.host_str().ok_or_else(|| {
-        FcpError::SchemaViolation(format!("web: URL has no host: {trimmed}"))
-    })?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| FcpError::SchemaViolation(format!("web: URL has no host: {trimmed}")))?;
     let path = parsed.path();
     let path = if path.is_empty() { "/" } else { path };
     Ok(format!("{scheme}://{host}{path}"))
@@ -393,9 +389,7 @@ fn normalize_url_base(raw: &str) -> Result<String> {
 /// Host equality for find-before-refetch and same-host link rules (Q6).
 pub fn normalize_host(host: &str) -> String {
     let h = host.trim().to_lowercase();
-    h.strip_prefix("www.")
-        .map(str::to_string)
-        .unwrap_or(h)
+    h.strip_prefix("www.").map(str::to_string).unwrap_or(h)
 }
 
 pub fn host_from_normalized_url(normalized: &str) -> Option<String> {
@@ -420,10 +414,10 @@ mod tests {
 
     #[test]
     fn normalize_url_with_query_keeps_query_for_search_dedup() {
-        let a = normalize_url_with_query("https://html.duckduckgo.com/html/?q=iran+news")
-            .expect("ok");
-        let b = normalize_url_with_query("https://html.duckduckgo.com/html/?q=bundesliga")
-            .expect("ok");
+        let a =
+            normalize_url_with_query("https://html.duckduckgo.com/html/?q=iran+news").expect("ok");
+        let b =
+            normalize_url_with_query("https://html.duckduckgo.com/html/?q=bundesliga").expect("ok");
         assert_ne!(a, b);
         assert!(a.contains("iran"));
         assert!(b.contains("bundesliga"));
@@ -436,29 +430,16 @@ mod tests {
         let url_iran = "https://html.duckduckgo.com/html/?q=iran";
         let url_buli = "https://html.duckduckgo.com/html/?q=bundesliga";
         ledger
-            .reserve_fetch(
-                &config,
-                url_iran,
-                None,
-                None,
-                "art-iran",
-                "mis-iran",
-                true,
-            )
+            .reserve_fetch(&config, url_iran, None, None, "art-iran", "mis-iran", true)
             .expect("ok")
             .expect("reserve");
         let second = ledger
-            .reserve_fetch(
-                &config,
-                url_buli,
-                None,
-                None,
-                "art-buli",
-                "mis-buli",
-                true,
-            )
+            .reserve_fetch(&config, url_buli, None, None, "art-buli", "mis-buli", true)
             .expect("ok");
-        assert!(second.is_ok(), "different search queries must not cache-collide");
+        assert!(
+            second.is_ok(),
+            "different search queries must not cache-collide"
+        );
     }
 
     #[test]
@@ -530,15 +511,7 @@ mod tests {
             "example.com".into(),
         );
         let hit = ledger
-            .reserve_fetch(
-                &config,
-                url,
-                None,
-                Some(2),
-                "art-2",
-                "mis-2",
-                false,
-            )
+            .reserve_fetch(&config, url, None, Some(2), "art-2", "mis-2", false)
             .expect("ok")
             .expect_err("cached");
         assert_eq!(hit.artifact_id, "art-1");

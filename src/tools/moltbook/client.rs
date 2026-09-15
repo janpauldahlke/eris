@@ -373,9 +373,7 @@ fn header_to_string(headers: &HeaderMap, name: &str) -> Option<String> {
 fn moltbook_forbidden_tool_fault_reason(body: &str) -> Option<String> {
     let lower = body.to_lowercase();
     if lower.contains("conversation is not active") {
-        Some(
-            "DM conversation not active — approve the request or use an active thread.".into(),
-        )
+        Some("DM conversation not active — approve the request or use an active thread.".into())
     } else {
         None
     }
@@ -536,10 +534,7 @@ mod tests {
         match err {
             FcpError::ToolFault { tool_name, reason } => {
                 assert_eq!(tool_name, "moltbook");
-                assert!(
-                    reason.contains("not active"),
-                    "reason={reason:?}"
-                );
+                assert!(reason.contains("not active"), "reason={reason:?}");
             }
             other => panic!("expected ToolFault, got {other:?}"),
         }

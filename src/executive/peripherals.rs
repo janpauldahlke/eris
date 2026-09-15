@@ -533,11 +533,6 @@ impl PeripheralLifecycle {
         let binary = lc.home.join("bin/llama-server");
         let timeout_secs = lc.ready_timeout_secs;
         let chat_ctx = config.num_ctx.max(1);
-        // Embedding passes are short (chunked text ≤512 tokens). A large KV allocation here
-        // steals VRAM from the chat model. Cap to 512 (enough for any single chunk).
-        const EMBED_SERVER_CTX_CAP: usize = 512;
-        let embed_ctx = chat_ctx.min(EMBED_SERVER_CTX_CAP);
-        let embed_gpu_layers = lc.embed_n_gpu_layers.unwrap_or(0);
 
         // --- Chat server ---
         let chat_port = port_from_url(&lc.chat_server_url)?;
@@ -629,6 +624,7 @@ impl PeripheralLifecycle {
                 );
             }
             apply_unix_sidecar_process_group(&mut cmd);
+            sanitize_llama_server_child_env(&mut cmd);
 
             let chat_child = cmd.spawn().map_err(|e| {
                 FcpError::NetworkFault(format!(
@@ -650,7 +646,25 @@ impl PeripheralLifecycle {
             tracing::info!(server = "llama-chat", "llama-server ready");
         }
 
-        // --- Embed server ---
+        self.ensure_llama_embed_server(lc, config.num_ctx).await
+    }
+
+    /// Spawn and probe **only** the embedding llama-server. Used directly when the chat
+    /// backend has no local daemon (OpenRouter) but `embed_backend = LlamaCpp`.
+    pub async fn ensure_llama_embed_server(
+        &mut self,
+        lc: &crate::config::LlamaCppConfig,
+        chat_ctx: usize,
+    ) -> Result<()> {
+        let binary = lc.home.join("bin/llama-server");
+        let timeout_secs = lc.ready_timeout_secs;
+        let chat_ctx = chat_ctx.max(1);
+        // Embedding passes are short (chunked text ≤512 tokens). A large KV allocation here
+        // steals VRAM from the chat model. Cap to 512 (enough for any single chunk).
+        const EMBED_SERVER_CTX_CAP: usize = 512;
+        let embed_ctx = chat_ctx.min(EMBED_SERVER_CTX_CAP);
+        let embed_gpu_layers = lc.embed_n_gpu_layers.unwrap_or(0);
+
         let embed_port = port_from_url(&lc.embed_server_url)?;
         if llama_server_already_ready(&lc.embed_server_url).await {
             tracing::info!(
@@ -684,6 +698,7 @@ impl PeripheralLifecycle {
             .stdout(Stdio::null())
             .stderr(Stdio::null());
             apply_unix_sidecar_process_group(&mut cmd);
+            sanitize_llama_server_child_env(&mut cmd);
 
             let embed_child = cmd.spawn().map_err(|e| {
                 FcpError::NetworkFault(format!(
@@ -719,46 +734,68 @@ impl PeripheralLifecycle {
     }
 }
 
+/// Bootstrap a reachable Ollama daemon (used for Ollama chat, and for local embeddings when
+/// the chat backend is remote). Spawns a managed instance only after an extended wait fails.
+async fn ensure_ollama_daemon(
+    config: &AppConfig,
+    lifecycle: &mut PeripheralLifecycle,
+) -> Result<()> {
+    if ollama_reachable(&config.ollama_host).await {
+        return Ok(());
+    }
+    tracing::info!(
+        wait_secs = PRE_SPAWN_OLLAMA_WAIT_SECS,
+        "Ollama not reachable yet; waiting before attempting a managed launch"
+    );
+    if wait_for_ollama(&config.ollama_host, PRE_SPAWN_OLLAMA_WAIT_SECS).await {
+        tracing::info!(
+            "Ollama became reachable during pre-spawn wait; not launching a managed instance"
+        );
+        return Ok(());
+    }
+    tracing::warn!(
+        "Ollama still not reachable after extended wait; attempting Rust-managed launch"
+    );
+    let mut child = spawn_ollama_daemon(config)?;
+    if !wait_for_ollama(&config.ollama_host, READY_TIMEOUT_SECS).await {
+        sync_reap_managed_child(&mut child, "ollama-bootstrap", ReapOptions::DAEMON_DEFAULT);
+        return Err(FcpError::NetworkFault(
+            "FATAL: Ollama daemon failed to become ready after launch attempt.".into(),
+        ));
+    }
+    lifecycle.ollama = Some(ManagedProcess {
+        name: "ollama",
+        kind: ManagedProcessKind::Child(child),
+    });
+    tracing::info!("Ollama launched and reachable");
+    Ok(())
+}
+
 pub async fn ensure_peripherals_for_chat(config: &AppConfig) -> Result<PeripheralLifecycle> {
     let mut lifecycle = PeripheralLifecycle::default();
 
     match config.llm_backend {
         LlmBackend::Ollama => {
-            if !ollama_reachable(&config.ollama_host).await {
-                tracing::info!(
-                    wait_secs = PRE_SPAWN_OLLAMA_WAIT_SECS,
-                    "Ollama not reachable yet; waiting before attempting a managed launch"
-                );
-                if wait_for_ollama(&config.ollama_host, PRE_SPAWN_OLLAMA_WAIT_SECS).await {
-                    tracing::info!(
-                        "Ollama became reachable during pre-spawn wait; not launching a managed instance"
-                    );
-                } else {
-                    tracing::warn!(
-                        "Ollama still not reachable after extended wait; attempting Rust-managed launch"
-                    );
-                    let mut child = spawn_ollama_daemon(config)?;
-                    if !wait_for_ollama(&config.ollama_host, READY_TIMEOUT_SECS).await {
-                        sync_reap_managed_child(
-                            &mut child,
-                            "ollama-bootstrap",
-                            ReapOptions::DAEMON_DEFAULT,
-                        );
-                        return Err(FcpError::NetworkFault(
-                            "FATAL: Ollama daemon failed to become ready after launch attempt."
-                                .into(),
-                        ));
-                    }
-                    lifecycle.ollama = Some(ManagedProcess {
-                        name: "ollama",
-                        kind: ManagedProcessKind::Child(child),
-                    });
-                    tracing::info!("Ollama launched and reachable");
-                }
-            }
+            ensure_ollama_daemon(config, &mut lifecycle).await?;
         }
         LlmBackend::LlamaCpp => {
             lifecycle.ensure_llama_servers(config).await?;
+        }
+        LlmBackend::OpenRouter => {
+            // Chat is hosted — no local chat daemon. Embeddings stay local: bootstrap
+            // whichever embed backend the vault resolved to.
+            match config.resolved_embed_backend() {
+                crate::config::EmbedBackend::Ollama => {
+                    ensure_ollama_daemon(config, &mut lifecycle).await?;
+                }
+                crate::config::EmbedBackend::LlamaCpp => {
+                    let lc = config.validate_llamacpp_embed_config()?;
+                    let lc = lc.clone();
+                    lifecycle
+                        .ensure_llama_embed_server(&lc, config.num_ctx)
+                        .await?;
+                }
+            }
         }
     }
 
@@ -897,6 +934,24 @@ fn apply_unix_sidecar_process_group(cmd: &mut Command) {
     {
         // New session leader: SIGTERM/SIGKILL on `-pid` reaches `ollama serve` and its runners.
         cmd.process_group(0);
+    }
+}
+
+/// Drop host `LLAMA_API_KEY` (and file variant) so managed `llama-server` stays open.
+///
+/// Operators often export `LLAMA_API_KEY=local` for DeepSeek Harness / llama-dsh.
+/// llama-server treats that env as `--api-key`, then Eris (no Bearer header) gets HTTP 401.
+fn sanitize_llama_server_child_env(cmd: &mut Command) {
+    let had_key = std::env::var_os("LLAMA_API_KEY").is_some();
+    let had_file = std::env::var_os("LLAMA_API_KEY_FILE").is_some();
+    cmd.env_remove("LLAMA_API_KEY");
+    cmd.env_remove("LLAMA_API_KEY_FILE");
+    if had_key || had_file {
+        tracing::info!(
+            had_LLAMA_API_KEY = had_key,
+            had_LLAMA_API_KEY_FILE = had_file,
+            "Stripped LLAMA_API_KEY* from managed llama-server env so local chat stays unauthenticated"
+        );
     }
 }
 

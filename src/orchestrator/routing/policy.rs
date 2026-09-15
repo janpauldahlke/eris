@@ -248,10 +248,8 @@ fn widen_near_tie_to_clusters(
     related_domains.sort_unstable();
     related_domains.dedup();
 
-    let mut all_within_domains: Vec<&str> = within
-        .iter()
-        .filter_map(|(n, _)| tool_domain(n))
-        .collect();
+    let mut all_within_domains: Vec<&str> =
+        within.iter().filter_map(|(n, _)| tool_domain(n)).collect();
     all_within_domains.sort_unstable();
     all_within_domains.dedup();
 
@@ -435,7 +433,13 @@ mod tests {
     #[test]
     fn lone_weak_doc_ingest_demoted_to_full_roster() {
         let hits = vec![("doc:ingest".into(), 0.505)];
-        let out = apply_routing_policy("remove it", &hits, &[], &reg(), RoutingPolicyKnobs::default());
+        let out = apply_routing_policy(
+            "remove it",
+            &hits,
+            &[],
+            &reg(),
+            RoutingPolicyKnobs::default(),
+        );
         assert!(matches!(out.offer, RoutingOffer::FullRoster), "{out:?}");
         assert!(out.matched_tool_names().is_empty());
     }
@@ -478,8 +482,13 @@ mod tests {
     #[test]
     fn strong_single_hit_kept() {
         let hits = vec![("vault:read".into(), 0.72)];
-        let out =
-            apply_routing_policy("read notes/today.md", &hits, &[], &reg(), RoutingPolicyKnobs::default());
+        let out = apply_routing_policy(
+            "read notes/today.md",
+            &hits,
+            &[],
+            &reg(),
+            RoutingPolicyKnobs::default(),
+        );
         assert_eq!(out.matched_tool_names(), vec!["vault:read".to_string()]);
         assert_eq!(out.rule_id, "SINGLE_STRONG_HIT");
     }
@@ -546,9 +555,15 @@ mod tests {
         assert_eq!(names[0], "moltbook:search");
         assert!(!names.iter().any(|n| n == "doc:ingest"));
         assert!(names.iter().any(|n| n == "web:fetch"));
-        let db_pos = names.iter().position(|n| n == "db:find_connections").unwrap();
+        let db_pos = names
+            .iter()
+            .position(|n| n == "db:find_connections")
+            .unwrap();
         let fetch_pos = names.iter().position(|n| n == "web:fetch").unwrap();
-        assert!(fetch_pos < db_pos, "cosine order: fetch before db, got {names:?}");
+        assert!(
+            fetch_pos < db_pos,
+            "cosine order: fetch before db, got {names:?}"
+        );
     }
 
     #[test]

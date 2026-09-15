@@ -174,9 +174,17 @@ pub async fn run_document_prefetch(
 
     let timeout = Duration::from_secs(config.document_rag.document_prefetch_timeout_secs.max(1));
     let top_k = config.document_rag.document_prefetch_top_k.max(1);
-    let min_score = Some(config.document_rag.document_prefetch_min_score.clamp(0.0, 1.0));
+    let min_score = Some(
+        config
+            .document_rag
+            .document_prefetch_min_score
+            .clamp(0.0, 1.0),
+    );
     let max_total = config.document_rag.document_prefetch_max_chars.max(64);
-    let max_per_hit = config.document_rag.document_prefetch_max_chars_per_hit.max(64);
+    let max_per_hit = config
+        .document_rag
+        .document_prefetch_max_chars_per_hit
+        .max(64);
 
     let started = Instant::now();
     let search = tokio::time::timeout(
@@ -247,11 +255,7 @@ fn format_doc_prefetch_block(
         }
         let attribution = format!(
             "(from {}, doc_id={}, chunk {}/{})\n{}",
-            chunk.source_name,
-            chunk.doc_id,
-            chunk.chunk_index,
-            chunk.total_chunks,
-            snippet
+            chunk.source_name, chunk.doc_id, chunk.chunk_index, chunk.total_chunks, snippet
         );
         let line = if lines.is_empty() {
             attribution

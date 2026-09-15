@@ -529,6 +529,7 @@ pub enum LlmBackend {
     #[default]
     Ollama,
     LlamaCpp,
+    OpenRouter,
 }
 
 impl std::fmt::Display for LlmBackend {
@@ -536,6 +537,178 @@ impl std::fmt::Display for LlmBackend {
         match self {
             Self::Ollama => write!(f, "Ollama"),
             Self::LlamaCpp => write!(f, "llama.cpp"),
+            Self::OpenRouter => write!(f, "OpenRouter"),
+        }
+    }
+}
+
+/// Embedding backend, decoupled from [`LlmBackend`] so chat can be remote (OpenRouter)
+/// while embeddings stay local. OpenRouter has no embeddings endpoint, so it is not a variant.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+pub enum EmbedBackend {
+    Ollama,
+    LlamaCpp,
+}
+
+/// Structured-output enforcement mode for OpenRouter requests (fallback ladder:
+/// `JsonSchema` → `JsonObject` → `Off`, downgraded per session on HTTP 400).
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Default)]
+pub enum ResponseFormatMode {
+    /// `response_format: {type: "json_schema", strict: true, ...}` built from the offered-tool schemas.
+    #[default]
+    JsonSchema,
+    /// `response_format: {type: "json_object"}` — valid JSON guaranteed, shape enforced by prompt + recovery.
+    JsonObject,
+    /// Prompt-only; identical to the Ollama recovery behavior.
+    Off,
+}
+
+/// OpenRouter `provider.data_collection` policy. `Deny` (default) keeps requests off provider training data.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Default)]
+pub enum DataCollection {
+    #[default]
+    Deny,
+    Allow,
+}
+
+/// Hosted reasoning request shape (OpenRouter `reasoning` object). Distinct from
+/// [`AppConfig::enable_reasoning_fsm`], which controls local `<think>` suppression:
+/// hosted reasoning arrives in a separate response field and never contaminates the envelope.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Default)]
+pub enum OpenRouterReasoning {
+    /// Default — fast chat assistant, no reasoning tokens billed.
+    #[default]
+    Off,
+    /// Effort level for OpenAI o-series / Grok style models.
+    Effort(ReasoningEffort),
+    /// Explicit token budget (Anthropic, Gemini).
+    MaxTokens(u32),
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    Low,
+    Medium,
+    High,
+}
+
+/// `[openrouter]` section: hosted chat backend over the OpenAI-compatible
+/// `/chat/completions` API. The API key is **never** stored here — it is read from the
+/// environment variable named by [`Self::api_key_env`] at engine construction.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct OpenRouterConfig {
+    /// API base URL (also works for LiteLLM / other OpenAI-compatible gateways).
+    #[serde(default = "default_openrouter_base_url")]
+    pub base_url: String,
+    /// Model id, e.g. "google/gemini-2.5-flash", "openai/gpt-4o-mini".
+    pub model: String,
+    /// Optional attribution header `HTTP-Referer` (non-secret).
+    #[serde(default)]
+    pub referer: Option<String>,
+    /// Optional attribution header `X-Title` (non-secret).
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Structured-output mode; see [`ResponseFormatMode`].
+    #[serde(default)]
+    pub response_format_mode: ResponseFormatMode,
+    /// Upper bound on completion tokens (OpenAI `max_tokens`).
+    #[serde(default = "default_openrouter_max_tokens")]
+    pub max_tokens: i32,
+    /// Env var name holding the API key.
+    #[serde(default = "default_openrouter_api_key_env")]
+    pub api_key_env: String,
+    /// Only route to providers that honor sent params (`response_format`); prevents
+    /// silent fail-open to unconstrained prose at HTTP 200.
+    #[serde(default = "default_true")]
+    pub require_parameters: bool,
+    /// Provider data-collection policy; `Deny` (default) keeps requests off training data.
+    #[serde(default)]
+    pub data_collection: DataCollection,
+    /// Consent gate: no request is ever sent while this is `false`. Routing chat to
+    /// OpenRouter sends vault content, tool outputs, and memories to a third party.
+    #[serde(default)]
+    pub consent_acknowledged: bool,
+    /// Optional per-1M-token pricing for local cost math (else use reported `usage.cost`).
+    #[serde(default)]
+    pub price_per_mtok_in: Option<f64>,
+    #[serde(default)]
+    pub price_per_mtok_out: Option<f64>,
+    /// Bounded retry for transient 429/5xx; honors `Retry-After`.
+    #[serde(default = "default_openrouter_max_retries")]
+    pub max_retries: u32,
+    /// Total per-request timeout — generous, hosted reasoning can take minutes.
+    #[serde(default = "default_openrouter_request_timeout_secs")]
+    pub request_timeout_secs: u64,
+    /// Inter-chunk idle timeout while streaming.
+    #[serde(default = "default_openrouter_stream_idle_timeout_secs")]
+    pub stream_idle_timeout_secs: u64,
+    /// Ordered fallback model ids (OpenRouter `models` + `route: "fallback"`). Optional.
+    #[serde(default)]
+    pub fallback_models: Vec<String>,
+    /// Hosted reasoning; see [`OpenRouterReasoning`]. Default off (cost/latency).
+    #[serde(default)]
+    pub reasoning: OpenRouterReasoning,
+    /// Optional determinism / shaping passthrough.
+    #[serde(default)]
+    pub seed: Option<i64>,
+    #[serde(default)]
+    pub top_p: Option<f32>,
+    #[serde(default)]
+    pub stop: Vec<String>,
+}
+
+fn default_openrouter_base_url() -> String {
+    "https://openrouter.ai/api/v1".into()
+}
+
+fn default_openrouter_api_key_env() -> String {
+    "OPENROUTER_API_KEY".into()
+}
+
+fn default_openrouter_max_tokens() -> i32 {
+    2048
+}
+
+fn default_openrouter_max_retries() -> u32 {
+    3
+}
+
+fn default_openrouter_request_timeout_secs() -> u64 {
+    300
+}
+
+fn default_openrouter_stream_idle_timeout_secs() -> u64 {
+    120
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for OpenRouterConfig {
+    fn default() -> Self {
+        Self {
+            base_url: default_openrouter_base_url(),
+            model: String::new(),
+            referer: None,
+            title: None,
+            response_format_mode: ResponseFormatMode::default(),
+            max_tokens: default_openrouter_max_tokens(),
+            api_key_env: default_openrouter_api_key_env(),
+            require_parameters: true,
+            data_collection: DataCollection::default(),
+            consent_acknowledged: false,
+            price_per_mtok_in: None,
+            price_per_mtok_out: None,
+            max_retries: default_openrouter_max_retries(),
+            request_timeout_secs: default_openrouter_request_timeout_secs(),
+            stream_idle_timeout_secs: default_openrouter_stream_idle_timeout_secs(),
+            fallback_models: Vec::new(),
+            reasoning: OpenRouterReasoning::default(),
+            seed: None,
+            top_p: None,
+            stop: Vec::new(),
         }
     }
 }
@@ -703,6 +876,13 @@ pub struct AppConfig {
     /// llama.cpp-specific config; `None` when backend is Ollama.
     #[serde(default)]
     pub llama_cpp: Option<LlamaCppConfig>,
+    /// OpenRouter-specific config; required when [`LlmBackend::OpenRouter`] is active.
+    #[serde(default)]
+    pub openrouter: Option<OpenRouterConfig>,
+    /// Embedding backend, decoupled from [`Self::llm_backend`]. `None` resolves via
+    /// [`Self::resolved_embed_backend`]: same as `llm_backend` for local backends, else Ollama.
+    #[serde(default)]
+    pub embed_backend: Option<EmbedBackend>,
     /// Max seconds to wait for a single LLM generation (connect + stream).
     pub generation_timeout_secs: u64,
     /// Floor for `eris benchmark` per-scenario wall clock: effective timeout is
@@ -871,6 +1051,9 @@ pub struct AppConfig {
     /// When [`Self::slim_tool_prompt`] is true and the semantic router returned hits, include at most this many tools (in router order). `0` means no cap (use full hit list). Ignored when the router returns no hits (full allowed roster, still slim).
     #[serde(default = "default_tool_map_offer_cap")]
     pub tool_map_offer_cap: usize,
+    /// Max characters of each tool description in the slim `[FCP_TOOL_PHRASE_MAP]` preview column. `0` = no truncation.
+    #[serde(default = "default_slim_tool_description_preview_chars")]
+    pub slim_tool_description_preview_chars: usize,
     /// Command used when chat startup asks to launch a local Ollama if unreachable.
     #[serde(default = "default_ollama_daemon")]
     pub ollama_daemon: DaemonCommand,
@@ -1078,6 +1261,11 @@ fn default_slim_tool_prompt() -> bool {
 /// With slim tool prompt + semantic hits, cap how many matched tools appear in the phrase map; `0` = no cap.
 fn default_tool_map_offer_cap() -> usize {
     0
+}
+
+/// Phrase-map description column cap (matches the historic hardcoded 120-char preview).
+fn default_slim_tool_description_preview_chars() -> usize {
+    120
 }
 
 fn default_tool_single_hit_floor() -> f32 {
@@ -1706,7 +1894,8 @@ impl Default for DocumentRagConfig {
 impl DocumentRagConfig {
     /// Effective paragraph chunk size: `chunk_target_chars` capped by embed token budget.
     pub fn resolved_chunk_target_chars(&self) -> usize {
-        let token_budget = self.embed_max_tokens.max(64) as f32 * self.embed_chars_per_token.clamp(0.5, 8.0);
+        let token_budget =
+            self.embed_max_tokens.max(64) as f32 * self.embed_chars_per_token.clamp(0.5, 8.0);
         let from_tokens = token_budget.floor() as usize;
         self.chunk_target_chars.max(256).min(from_tokens.max(256))
     }
@@ -1781,6 +1970,8 @@ impl Default for AppConfig {
             ollama_main_gpu: None,
             ollama_low_vram: None,
             llama_cpp: None,
+            openrouter: None,
+            embed_backend: None,
             generation_timeout_secs: 120,
             benchmark_scenario_timeout_secs: default_benchmark_scenario_timeout_secs(),
             benchmark_num_ctx: 0,
@@ -1838,6 +2029,7 @@ impl Default for AppConfig {
             tool_descriptor_jit_max_chars: default_tool_descriptor_jit_max_chars(),
             slim_tool_prompt: default_slim_tool_prompt(),
             tool_map_offer_cap: default_tool_map_offer_cap(),
+            slim_tool_description_preview_chars: default_slim_tool_description_preview_chars(),
             ollama_daemon: default_ollama_daemon(),
             unload_ollama_models_on_chat_exit: default_unload_ollama_models_on_chat_exit(),
             qdrant_daemon: default_qdrant_daemon(),
@@ -1919,11 +2111,7 @@ impl AppConfig {
             .clamp(0.55_f32, 1.0_f32);
         let derived = ((n as f32) * ratio).floor() as usize;
         let t = self.condensation_target;
-        if t >= 4096 {
-            derived.min(t)
-        } else {
-            derived
-        }
+        if t >= 4096 { derived.min(t) } else { derived }
     }
 
     pub fn load(cli: crate::executive::cli::Cli) -> crate::executive::error::Result<Self> {
@@ -2062,6 +2250,80 @@ impl AppConfig {
 
     pub fn is_ollama(&self) -> bool {
         self.llm_backend == LlmBackend::Ollama
+    }
+
+    pub fn is_openrouter(&self) -> bool {
+        self.llm_backend == LlmBackend::OpenRouter
+    }
+
+    /// Resolve the embedding backend: explicit [`Self::embed_backend`] wins; otherwise
+    /// mirror `llm_backend` when it is a local backend, defaulting to Ollama for OpenRouter
+    /// (embeddings always stay local — OpenRouter has no embeddings endpoint).
+    pub fn resolved_embed_backend(&self) -> EmbedBackend {
+        if let Some(explicit) = self.embed_backend {
+            return explicit;
+        }
+        match self.llm_backend {
+            LlmBackend::Ollama | LlmBackend::OpenRouter => EmbedBackend::Ollama,
+            LlmBackend::LlamaCpp => EmbedBackend::LlamaCpp,
+        }
+    }
+
+    /// Validate the `[openrouter]` section when backend is OpenRouter: section present,
+    /// non-empty model, and the API key env var set. The key **value** is never logged or returned.
+    pub fn validate_openrouter_config(&self) -> crate::executive::error::Result<&OpenRouterConfig> {
+        if self.llm_backend != LlmBackend::OpenRouter {
+            return Err(crate::executive::error::FcpError::Config(
+                "validate_openrouter_config called but backend is not OpenRouter".into(),
+            ));
+        }
+        let or = self.openrouter.as_ref().ok_or_else(|| {
+            crate::executive::error::FcpError::Config(
+                "[openrouter] section required when llm_backend = OpenRouter".into(),
+            )
+        })?;
+        if or.model.trim().is_empty() {
+            return Err(crate::executive::error::FcpError::Config(
+                "[openrouter] model must be set (e.g. \"google/gemini-2.5-flash\")".into(),
+            ));
+        }
+        if std::env::var(&or.api_key_env)
+            .map(|v| v.trim().is_empty())
+            .unwrap_or(true)
+        {
+            return Err(crate::executive::error::FcpError::Config(format!(
+                "OpenRouter API key env var `{}` is not set. Run: export {}=<your key>",
+                or.api_key_env, or.api_key_env
+            )));
+        }
+        Ok(or)
+    }
+
+    /// Validate the `[llama_cpp]` section for **embedding-only** use (chat may be another
+    /// backend): requires the section, the `llama-server` binary, and the embed GGUF —
+    /// but not the chat model, which is unused when `embed_backend = LlamaCpp` decouples.
+    pub fn validate_llamacpp_embed_config(
+        &self,
+    ) -> crate::executive::error::Result<&LlamaCppConfig> {
+        let lc = self.llama_cpp.as_ref().ok_or_else(|| {
+            crate::executive::error::FcpError::Config(
+                "[llama_cpp] section required when embed backend is LlamaCpp".into(),
+            )
+        })?;
+        let server_bin = lc.home.join("bin").join("llama-server");
+        if !server_bin.exists() {
+            return Err(crate::executive::error::FcpError::Config(format!(
+                "llama-server binary not found at {}",
+                server_bin.display()
+            )));
+        }
+        if !lc.embed_model_path.exists() {
+            return Err(crate::executive::error::FcpError::Config(format!(
+                "Embed GGUF not found: {}",
+                lc.embed_model_path.display()
+            )));
+        }
+        Ok(lc)
     }
 
     /// Validate llama.cpp config when backend is LlamaCpp.
@@ -2794,6 +3056,131 @@ mod tests {
         assert_eq!(lc.embed_server_url, "http://127.0.0.1:8091");
         assert_eq!(config.num_ctx, 8192);
         assert_eq!(lc.n_gpu_layers, 0);
+    }
+
+    #[test]
+    fn openrouter_config_toml_round_trip() {
+        let mut config = AppConfig::default();
+        config.llm_backend = LlmBackend::OpenRouter;
+        config.embed_backend = Some(EmbedBackend::Ollama);
+        config.openrouter = Some(OpenRouterConfig {
+            model: "google/gemini-2.5-flash".into(),
+            referer: Some("https://example.org".into()),
+            title: Some("eris".into()),
+            response_format_mode: ResponseFormatMode::JsonSchema,
+            consent_acknowledged: true,
+            price_per_mtok_in: Some(0.15),
+            price_per_mtok_out: Some(0.6),
+            fallback_models: vec!["openai/gpt-4o-mini".into()],
+            reasoning: OpenRouterReasoning::Effort(ReasoningEffort::Low),
+            ..Default::default()
+        });
+
+        let serialized = toml::to_string(&config).expect("serialize");
+        assert!(
+            !serialized.to_lowercase().contains("api_key ="),
+            "no key field may ever be serialized"
+        );
+        let deserialized: AppConfig = toml::from_str(&serialized).expect("deserialize");
+        assert_eq!(deserialized.llm_backend, LlmBackend::OpenRouter);
+        assert_eq!(deserialized.embed_backend, Some(EmbedBackend::Ollama));
+        let or = deserialized.openrouter.expect("openrouter section");
+        assert_eq!(or.model, "google/gemini-2.5-flash");
+        assert_eq!(or.base_url, "https://openrouter.ai/api/v1");
+        assert_eq!(or.api_key_env, "OPENROUTER_API_KEY");
+        assert!(or.require_parameters);
+        assert_eq!(or.data_collection, DataCollection::Deny);
+        assert!(or.consent_acknowledged);
+        assert_eq!(
+            or.reasoning,
+            OpenRouterReasoning::Effort(ReasoningEffort::Low)
+        );
+        assert_eq!(or.fallback_models, vec!["openai/gpt-4o-mini".to_string()]);
+    }
+
+    #[test]
+    fn openrouter_validation_missing_section_and_model() {
+        let mut config = AppConfig::default();
+        config.llm_backend = LlmBackend::OpenRouter;
+        let err = config.validate_openrouter_config().unwrap_err().to_string();
+        assert!(err.contains("[openrouter] section required"), "{err}");
+
+        config.openrouter = Some(OpenRouterConfig::default());
+        let err = config.validate_openrouter_config().unwrap_err().to_string();
+        assert!(err.contains("model must be set"), "{err}");
+    }
+
+    #[test]
+    fn openrouter_validation_missing_key_env_names_the_var() {
+        let mut config = AppConfig::default();
+        config.llm_backend = LlmBackend::OpenRouter;
+        config.openrouter = Some(OpenRouterConfig {
+            model: "openai/gpt-4o-mini".into(),
+            api_key_env: "FCP_TEST_OPENROUTER_KEY_THAT_IS_UNSET".into(),
+            ..Default::default()
+        });
+        let err = config.validate_openrouter_config().unwrap_err().to_string();
+        assert!(
+            err.contains("FCP_TEST_OPENROUTER_KEY_THAT_IS_UNSET"),
+            "{err}"
+        );
+        assert!(err.contains("export"), "{err}");
+    }
+
+    #[test]
+    fn embed_backend_resolution_defaults() {
+        let mut config = AppConfig::default();
+        assert_eq!(config.resolved_embed_backend(), EmbedBackend::Ollama);
+
+        config.llm_backend = LlmBackend::LlamaCpp;
+        assert_eq!(config.resolved_embed_backend(), EmbedBackend::LlamaCpp);
+
+        config.llm_backend = LlmBackend::OpenRouter;
+        assert_eq!(
+            config.resolved_embed_backend(),
+            EmbedBackend::Ollama,
+            "OpenRouter chat defaults to local Ollama embeddings"
+        );
+
+        config.embed_backend = Some(EmbedBackend::LlamaCpp);
+        assert_eq!(config.resolved_embed_backend(), EmbedBackend::LlamaCpp);
+    }
+
+    #[test]
+    fn existing_vault_without_new_keys_defaults_unchanged() {
+        let toml_str = r#"
+            workspace = "test"
+            vault_root = "/tmp"
+            log_level = "info"
+            ollama_host = "http://localhost:11434"
+            model_name = "test:7b"
+            num_ctx = 8192
+            generation_timeout_secs = 60
+            enable_reasoning_fsm = false
+            condensation_threshold = 0.5
+            condensation_target = 300
+            max_tool_rounds = 5
+            max_recovery_attempts = 3
+            qdrant_url = "http://localhost:6334"
+            snapshot_interval_secs = 300
+            embed_model_name = "nomic-embed-text"
+            idle_timeout_secs = 900
+            web_fetch_timeout_secs = 10
+            web_fetch_max_bytes = 20480
+            vault_read_ratio = 0.5
+            tool_match_threshold = 0.5
+            [ollama_daemon]
+            command = "ollama"
+            args = ["serve"]
+            [qdrant_daemon]
+            command = "qdrant"
+            args = []
+        "#;
+        let config: AppConfig = toml::from_str(toml_str).expect("deserialize");
+        assert_eq!(config.llm_backend, LlmBackend::Ollama);
+        assert!(config.openrouter.is_none());
+        assert!(config.embed_backend.is_none());
+        assert_eq!(config.resolved_embed_backend(), EmbedBackend::Ollama);
     }
 
     #[test]

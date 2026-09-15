@@ -67,11 +67,8 @@ pub async fn transcribe_audio(
     workspace_root: &Path,
     relative_path: &str,
 ) -> Result<String> {
-    let abs = validate_audio_relative_path(
-        workspace_root,
-        &config.audio.upload_dir,
-        relative_path,
-    )?;
+    let abs =
+        validate_audio_relative_path(workspace_root, &config.audio.upload_dir, relative_path)?;
     let bytes = fs::read(&abs).await.map_err(FcpError::Io)?;
     let b64 = BASE64.encode(&bytes);
     let prompt = config.audio.transcription_prompt.clone();

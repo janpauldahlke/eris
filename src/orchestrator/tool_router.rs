@@ -44,12 +44,20 @@ pub struct ToolRouter {
 
 impl ToolRouter {
     /// Short greetings and tiny utterances: conversational only (evaluated in orchestrator **before** embedding).
+    ///
+    /// This is an ascii/whitespace skip, not a language detector. Non-ascii input
+    /// is never treated as "short" here (unspaced scripts look like one token).
+    /// Lexical helpers in this file (short guard, keyword list, web/news phrases)
+    /// should move to a `router_ruleset` later; this type should stay cosine + threshold.
     pub fn short_input_guard_conversational_only(text: &str) -> bool {
         Self::is_short_input_without_explicit_tool_intent(text)
     }
 
     fn is_short_input_without_explicit_tool_intent(text: &str) -> bool {
         let trimmed = text.trim();
+        if !trimmed.is_ascii() {
+            return false;
+        }
         let token_count = trimmed.split_whitespace().count();
         let is_short = token_count <= 3 || trimmed.chars().count() <= 15;
         if !is_short {
@@ -72,19 +80,38 @@ impl ToolRouter {
     /// "show tasks", etc.  These must bypass the short-input guard.
     fn has_tool_intent_keyword(lower: &str) -> bool {
         const KEYWORDS: &[&str] = &[
-            "document", "documents", "doc ", "docs",
-            "email", "mail", "inbox",
-            "calendar", "schedule", "meeting",
-            "weather", "forecast",
-            "alarm", "timer", "remind",
-            "agenda", "task", "tasks", "todo",
-            "ingest", "upload",
-            "memory", "vault",
-            "health", "status",
-            "skill", "skills",
+            "document",
+            "documents",
+            "doc ",
+            "docs",
+            "email",
+            "mail",
+            "inbox",
+            "calendar",
+            "schedule",
+            "meeting",
+            "weather",
+            "forecast",
+            "alarm",
+            "timer",
+            "remind",
+            "agenda",
+            "task",
+            "tasks",
+            "todo",
+            "ingest",
+            "upload",
+            "memory",
+            "vault",
+            "health",
+            "status",
+            "skill",
+            "skills",
             "moltbook",
-            "wikipedia", "wiki",
-            "news", "headlines",
+            "wikipedia",
+            "wiki",
+            "news",
+            "headlines",
         ];
         KEYWORDS.iter().any(|kw| lower.contains(kw))
     }
@@ -293,8 +320,7 @@ impl ToolRouter {
             );
             hits.push(("web:search".to_string(), 1.0));
         }
-        if Self::has_news_lexical_intent(thought) && !hits.iter().any(|(t, _)| t == "news:today")
-        {
+        if Self::has_news_lexical_intent(thought) && !hits.iter().any(|(t, _)| t == "news:today") {
             tracing::info!(
                 event = "LEXICAL_TOOL_GUARD",
                 forced_tool = "news:today",
@@ -312,7 +338,9 @@ impl ToolRouter {
             );
             hits.push(("web:fetch".to_string(), 1.0));
         }
-        if hits.iter().any(|(t, _)| t == "web:fetch" || t == "web:search")
+        if hits
+            .iter()
+            .any(|(t, _)| t == "web:fetch" || t == "web:search")
             && !hits.iter().any(|(t, _)| t == "web:find")
         {
             hits.push(("web:find".to_string(), 0.99));
@@ -425,6 +453,10 @@ mod tests {
         assert!(!ToolRouter::short_input_guard_conversational_only(
             "/health"
         ));
+        // unspaced scripts are one whitespace token; ascii short-guard must not apply
+        assert!(!ToolRouter::short_input_guard_conversational_only(
+            "今日の天気は?"
+        ));
     }
 
     #[test]
@@ -449,9 +481,7 @@ mod tests {
     #[test]
     fn test_moltbook_lexical_intent() {
         assert!(has_moltbook_lexical_intent("check Moltbook for replies"));
-        assert!(has_moltbook_lexical_intent(
-            "read the rust submolt feed"
-        ));
+        assert!(has_moltbook_lexical_intent("read the rust submolt feed"));
         assert!(!has_moltbook_lexical_intent(
             "what do you remember from last time"
         ));

@@ -1,6 +1,6 @@
 use super::*;
 use crate::config::AppConfig;
-use crate::engine::{EngineResponse, LlmEngine, LlmGenerateOptions, Message};
+use crate::engine::{EngineResponse, EngineToolCall, LlmEngine, LlmGenerateOptions, Message};
 use crate::executive::error::Result;
 use crate::memory::ephemeral::EphemeralMemory;
 use crate::orchestrator::context::ContextViewSettings;
@@ -70,6 +70,8 @@ impl LlmEngine for MockEngine {
         }
         Ok(EngineResponse {
             content: self.content.clone(),
+            reasoning: String::new(),
+            tool_calls: Vec::new(),
             prompt_tokens: self.prompt_tokens,
             generated_tokens: self.generated_tokens,
             generation_ms: 0,
@@ -219,7 +221,10 @@ fn test_router_reflect_empty_tools_shifts_to_reflection() {
         }"#;
 
     let directive = orchestrator.process_llm_response(json);
-    assert_eq!(directive, LoopDirective::HaltAndAwaitInput(Some("test".to_string())));
+    assert_eq!(
+        directive,
+        LoopDirective::HaltAndAwaitInput(Some("test".to_string()))
+    );
 }
 
 #[test]
@@ -318,7 +323,10 @@ fn test_router_initiate_reflection_mutates_state() {
         }"#;
 
     let directive = orchestrator.process_llm_response(json);
-    assert_eq!(directive, LoopDirective::HaltAndAwaitInput(Some("test".to_string())));
+    assert_eq!(
+        directive,
+        LoopDirective::HaltAndAwaitInput(Some("test".to_string()))
+    );
 }
 
 #[test]
@@ -340,7 +348,10 @@ fn test_router_task_empty_tools_in_tool_mode_shifts_to_reflection() {
         LoopDirective::RecoverFromFuckup(msg) => {
             assert!(msg.contains("empty action") || msg.contains("Empty action"));
         }
-        _ => panic!("Expected RecoverFromFuckup in tool mode with empty actions, got {:?}", directive),
+        _ => panic!(
+            "Expected RecoverFromFuckup in tool mode with empty actions, got {:?}",
+            directive
+        ),
     }
 }
 
@@ -433,10 +444,9 @@ async fn test_step_system_fatality_aborts() {
     let engine = MockEngine::with_network_fault("daemon offline");
     let mut orchestrator = setup_orchestrator_with_engine(engine);
     orchestrator.state = AgentState::Chat;
-    orchestrator.chat_stack.push(Message {
-        role: crate::engine::Role::User,
-        content: "exercise engine error path".to_string(),
-    });
+    orchestrator
+        .chat_stack
+        .push(Message::user("exercise engine error path".to_string()));
 
     let result = orchestrator.step(None).await;
 
@@ -450,10 +460,9 @@ async fn test_step_empty_user_line_sy_fnord_no_llm() {
     let engine = MockEngine::with_content(json);
     let mut orchestrator = setup_orchestrator_with_engine(engine);
     orchestrator.state = AgentState::Chat;
-    orchestrator.chat_stack.push(Message {
-        role: crate::engine::Role::User,
-        content: "   ".to_string(),
-    });
+    orchestrator
+        .chat_stack
+        .push(Message::user("   ".to_string()));
 
     let result = orchestrator.step(None).await;
     assert!(result.is_ok());
@@ -492,19 +501,17 @@ async fn test_execute_condensation_sliding_window_stack_only() {
     let mut orchestrator = setup_orchestrator_with_engine(engine);
     orchestrator.num_ctx = 48;
     orchestrator.chat_stack.clear();
-    orchestrator.chat_stack.push(Message {
-        role: crate::engine::Role::System,
-        content: "system prompt".to_string(),
-    });
+    orchestrator
+        .chat_stack
+        .push(Message::system("system prompt".to_string()));
     for i in 0..8 {
-        orchestrator.chat_stack.push(Message {
-            role: crate::engine::Role::User,
-            content: format!("user-{i}-{}", "x".repeat(40)),
-        });
-        orchestrator.chat_stack.push(Message {
-            role: crate::engine::Role::Assistant,
-            content: format!("assistant-{i}-{}", "y".repeat(40)),
-        });
+        orchestrator
+            .chat_stack
+            .push(Message::user(format!("user-{i}-{}", "x".repeat(40))));
+        orchestrator.chat_stack.push(Message::assistant(format!(
+            "assistant-{i}-{}",
+            "y".repeat(40)
+        )));
     }
 
     let result = orchestrator.execute_condensation().await;
@@ -578,6 +585,8 @@ async fn test_async_guillotine_interrupts_generation() {
             tokio::time::sleep(Duration::from_secs(10)).await;
             Ok(EngineResponse {
                 content: "never".to_string(),
+                reasoning: String::new(),
+                tool_calls: Vec::new(),
                 prompt_tokens: 0,
                 generated_tokens: 0,
                 generation_ms: 0,
@@ -640,10 +649,9 @@ async fn test_async_guillotine_interrupts_generation() {
     );
 
     orchestrator.state = AgentState::Chat;
-    orchestrator.chat_stack.push(Message {
-        role: crate::engine::Role::User,
-        content: "hello".to_string(),
-    });
+    orchestrator
+        .chat_stack
+        .push(Message::user("hello".to_string()));
 
     // Fire the interrupt shortly after calling step
     tokio::spawn(async move {
@@ -699,6 +707,8 @@ async fn test_duplicate_only_batch_halts_without_extra_generation() {
             });
             Ok(EngineResponse {
                 content,
+                reasoning: String::new(),
+                tool_calls: Vec::new(),
                 prompt_tokens: 0,
                 generated_tokens: 0,
                 generation_ms: 0,
@@ -776,10 +786,9 @@ async fn test_duplicate_only_batch_halts_without_extra_generation() {
         None,
     );
     orchestrator.state = AgentState::Chat;
-    orchestrator.chat_stack.push(Message {
-        role: crate::engine::Role::User,
-        content: "remember my name".to_string(),
-    });
+    orchestrator
+        .chat_stack
+        .push(Message::user("remember my name".to_string()));
 
     let result = orchestrator.step(None).await;
     assert!(result.is_ok());
@@ -818,6 +827,8 @@ async fn test_model_declared_reflect_does_not_shrink_chat_tool_palette() {
             });
             Ok(EngineResponse {
                 content,
+                reasoning: String::new(),
+                tool_calls: Vec::new(),
                 prompt_tokens: 0,
                 generated_tokens: 0,
                 generation_ms: 0,
@@ -854,7 +865,10 @@ async fn test_model_declared_reflect_does_not_shrink_chat_tool_palette() {
         !Gatekeeper::state_allows_tool(&AgentState::Reflect, "news:today"),
         "test premise: news:today must not be on the Reflect allowlist"
     );
-    assert!(Gatekeeper::state_allows_tool(&AgentState::Chat, "news:today"));
+    assert!(Gatekeeper::state_allows_tool(
+        &AgentState::Chat,
+        "news:today"
+    ));
 
     let reflect_with_news = r#"{
             "thought": "user wants headlines",
@@ -918,10 +932,9 @@ async fn test_model_declared_reflect_does_not_shrink_chat_tool_palette() {
         None,
     );
     orchestrator.state = AgentState::Chat;
-    orchestrator.chat_stack.push(Message {
-        role: crate::engine::Role::User,
-        content: "what are today's news?".to_string(),
-    });
+    orchestrator
+        .chat_stack
+        .push(Message::user("what are today's news?".to_string()));
 
     let result = orchestrator.step(None).await;
     assert!(result.is_ok(), "step failed: {:?}", result.err());
@@ -956,19 +969,11 @@ fn test_extract_agenda_confirm_task_id() {
 #[test]
 fn test_agenda_confirm_task_id_before_current_turn_skips_latest_user() {
     let stack = vec![
-        Message {
-            role: crate::engine::Role::User,
-            content: "[AGENDA_CONFIRM task_id=too-old alarm_id=a late_sec=0]".to_string(),
-        },
-        Message {
-            role: crate::engine::Role::User,
-            content: "prefix [AGENDA_CONFIRM task_id=expected-id alarm_id=b late_sec=1] tail"
-                .to_string(),
-        },
-        Message {
-            role: crate::engine::Role::User,
-            content: "done".to_string(),
-        },
+        Message::user("[AGENDA_CONFIRM task_id=too-old alarm_id=a late_sec=0]".to_string()),
+        Message::user(
+            "prefix [AGENDA_CONFIRM task_id=expected-id alarm_id=b late_sec=1] tail".to_string(),
+        ),
+        Message::user("done".to_string()),
     ];
     assert_eq!(
         Orchestrator::<MockEngine>::agenda_confirm_task_id_before_current_turn(&stack),
@@ -1092,4 +1097,94 @@ async fn emit_optional_user_message_tool_round_skips_transcript_uses_activity_li
         }
         e => panic!("expected StateUpdate with activity_line, got {e:?}"),
     }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn emit_optional_user_message_native_prose_reaches_deck() {
+    let (pres_tx, mut pres_rx) = mpsc::channel::<SessionEvent>(32);
+    let mut orch = orchestrator_with_presentation(pres_tx).await;
+    orch.emit_optional_user_message("I found 12 matching notes and listed the vault folders.")
+        .await;
+
+    match pres_rx.recv().await.expect("event 1") {
+        SessionEvent::IncomingMessage(m) => {
+            assert!(m.contains("I found 12 matching notes"), "{m}");
+        }
+        e => panic!("expected IncomingMessage for native talk, got {e:?}"),
+    }
+    match pres_rx.recv().await.expect("event 2") {
+        SessionEvent::StateUpdate(_) => {}
+        e => panic!("expected StateUpdate from broadcast_state, got {e:?}"),
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn emit_optional_user_message_from_engine_emits_hosted_reasoning_then_talk() {
+    let (pres_tx, mut pres_rx) = mpsc::channel::<SessionEvent>(32);
+    let mut orch = orchestrator_with_presentation(pres_tx).await;
+    orch.emit_optional_user_message_from_engine(&EngineResponse {
+        content: "Hamburg is currently 14°C.".to_string(),
+        reasoning: "Weather and wiki results are enough to answer.".to_string(),
+        ..Default::default()
+    })
+    .await;
+
+    match pres_rx.recv().await.expect("event 1") {
+        SessionEvent::ModelThought(t) => {
+            assert_eq!(t, "Weather and wiki results are enough to answer.");
+        }
+        e => panic!("expected ModelThought, got {e:?}"),
+    }
+    match pres_rx.recv().await.expect("event 2") {
+        SessionEvent::IncomingMessage(m) => {
+            assert!(m.contains("Hamburg is currently 14°C."), "{m}");
+        }
+        e => panic!("expected IncomingMessage, got {e:?}"),
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn emit_optional_user_message_from_engine_native_tools_stay_off_deck() {
+    let (pres_tx, mut pres_rx) = mpsc::channel::<SessionEvent>(32);
+    let mut orch = orchestrator_with_presentation(pres_tx).await;
+    orch.emit_optional_user_message_from_engine(&EngineResponse {
+        content: String::new(),
+        tool_calls: vec![EngineToolCall {
+            id: Some("call_0".to_string()),
+            name: "vault:search".to_string(),
+            arguments: "{}".to_string(),
+        }],
+        ..Default::default()
+    })
+    .await;
+
+    match pres_rx.recv().await.expect("event 1") {
+        SessionEvent::StateUpdate(u) => {
+            let line = u.activity_line.expect("activity_line");
+            assert!(line.contains("vault:search"), "{line}");
+        }
+        e => panic!("expected StateUpdate with activity_line, got {e:?}"),
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn emit_optional_user_message_invalid_json_object_does_not_emit_deck() {
+    let (pres_tx, mut pres_rx) = mpsc::channel::<SessionEvent>(32);
+    let mut orch = orchestrator_with_presentation(pres_tx).await;
+    orch.emit_optional_user_message(r#"{"thought":"broken""#)
+        .await;
+    assert!(
+        pres_rx.try_recv().is_err(),
+        "broken envelope JSON must stay silent so recovery can run"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn stitch_pending_weather_report_appends_to_native_prose() {
+    let (pres_tx, _pres_rx) = mpsc::channel::<SessionEvent>(32);
+    let mut orch = orchestrator_with_presentation(pres_tx).await;
+    orch.pending_weather_deck_report = Some("14°C, light rain.".to_string());
+    let out = orch.stitch_pending_weather_report_into_content("Here is Hamburg.");
+    assert_eq!(out, "Here is Hamburg.\n\n14°C, light rain.");
+    assert!(orch.pending_weather_deck_report.is_none());
 }

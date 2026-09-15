@@ -156,35 +156,24 @@ pub struct CatalogInput {
     pub type_fields: BTreeMap<String, Value>,
 }
 
-pub async fn upsert_catalog(
-    workspace_root: &Path,
-    input: CatalogInput,
-) -> Result<MediaCard> {
+pub async fn upsert_catalog(workspace_root: &Path, input: CatalogInput) -> Result<MediaCard> {
     let file_path = input.relative_path.replace('\\', "/");
     let media_type = input
         .media_type
         .or_else(|| infer_media_type_from_path(&file_path))
-        .ok_or_else(|| {
-            FcpError::ToolFault {
-                tool_name: "media:catalog".into(),
-                reason: "could not infer media_type from path".into(),
-            }
+        .ok_or_else(|| FcpError::ToolFault {
+            tool_name: "media:catalog".into(),
+            reason: "could not infer media_type from path".into(),
         })?;
     let content_hash = content_hash_for_file(workspace_root, &file_path).await?;
     let now = unix_now_secs();
     let catalog_path = catalog_abs_path(workspace_root, &content_hash);
     let existing = load_card_from_path(&catalog_path).await?;
 
-    let uploaded_at = input.uploaded_at.unwrap_or_else(|| {
-        existing
-            .as_ref()
-            .map(|c| c.uploaded_at)
-            .unwrap_or(now)
-    });
-    let cataloged_at = existing
-        .as_ref()
-        .map(|c| c.cataloged_at)
-        .unwrap_or(now);
+    let uploaded_at = input
+        .uploaded_at
+        .unwrap_or_else(|| existing.as_ref().map(|c| c.uploaded_at).unwrap_or(now));
+    let cataloged_at = existing.as_ref().map(|c| c.cataloged_at).unwrap_or(now);
 
     let card = MediaCard {
         schema_version: 1,
@@ -283,10 +272,7 @@ pub struct MediaMetaPatch {
     pub type_fields: Option<BTreeMap<String, Value>>,
 }
 
-pub async fn apply_meta_patch(
-    workspace_root: &Path,
-    patch: MediaMetaPatch,
-) -> Result<MediaCard> {
+pub async fn apply_meta_patch(workspace_root: &Path, patch: MediaMetaPatch) -> Result<MediaCard> {
     let content_hash = if let Some(h) = patch.content_hash.filter(|s| !s.trim().is_empty()) {
         h
     } else if let Some(ref path) = patch.relative_path {
@@ -299,12 +285,13 @@ pub async fn apply_meta_patch(
     };
 
     let catalog_path = catalog_abs_path(workspace_root, &content_hash);
-    let mut card = load_card_from_path(&catalog_path)
-        .await?
-        .ok_or_else(|| FcpError::ToolFault {
-            tool_name: "media:meta".into(),
-            reason: format!("no catalog card for hash {content_hash}"),
-        })?;
+    let mut card =
+        load_card_from_path(&catalog_path)
+            .await?
+            .ok_or_else(|| FcpError::ToolFault {
+                tool_name: "media:meta".into(),
+                reason: format!("no catalog card for hash {content_hash}"),
+            })?;
 
     if let Some(title) = patch.title {
         card.title = title;
@@ -356,7 +343,9 @@ pub async fn apply_meta_patch(
 pub fn parse_media_json(raw: &str) -> Result<MediaCard> {
     let card: MediaCard = serde_json::from_str(raw).map_err(FcpError::ParseFault)?;
     if card.schema_version == 0 || card.title.trim().is_empty() || card.content_hash.is_empty() {
-        return Err(FcpError::Config("invalid media.json: missing required fields".into()));
+        return Err(FcpError::Config(
+            "invalid media.json: missing required fields".into(),
+        ));
     }
     Ok(card)
 }

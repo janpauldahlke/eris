@@ -1,9 +1,31 @@
-use crate::config::{AppConfig, LlamaCppConfig, LlmBackend};
+use crate::config::{
+    AppConfig, EmbedBackend, LlamaCppConfig, LlmBackend, OpenRouterConfig, OpenRouterReasoning,
+    ReasoningEffort,
+};
 use crate::executive::error::{FcpError, Result};
 use inquire::{Select, Text};
 use ollama_rs::Ollama;
 use std::path::{Path, PathBuf};
 use tokio::fs;
+
+/// Map an inquire error to the ignition error taxonomy (Ctrl-C → Cancellation).
+fn prompt_err(e: inquire::InquireError) -> FcpError {
+    match e {
+        inquire::InquireError::OperationCanceled | inquire::InquireError::OperationInterrupted => {
+            FcpError::Cancellation("Ignition cancelled by user".into())
+        }
+        _ => FcpError::Config(format!("Prompt error: {}", e)),
+    }
+}
+
+/// Curated fast/capable OpenRouter defaults with known context windows (drives the
+/// prefilled `num_ctx`, which feeds orchestrator budgets and the condensation ceiling).
+const OPENROUTER_CURATED_MODELS: &[(&str, usize)] = &[
+    ("google/gemini-2.5-flash", 1_000_000),
+    ("openai/gpt-4o-mini", 128_000),
+    ("anthropic/claude-3.5-haiku", 200_000),
+    ("deepseek/deepseek-chat", 64_000),
+];
 
 /// Values fixed before interactive ignition (e.g. first-run welder).
 #[derive(Debug, Clone)]
@@ -42,6 +64,9 @@ pub async fn run_ignition_sequence(
         ollama_main_gpu: Option<u32>,
         ollama_low_vram: Option<bool>,
         llama_cpp: Option<LlamaCppConfig>,
+        openrouter: Option<OpenRouterConfig>,
+        embed_backend: Option<EmbedBackend>,
+        embed_model_name: Option<String>,
         num_ctx: usize,
     }
 
@@ -69,19 +94,14 @@ pub async fn run_ignition_sequence(
             })?;
         let user_name = user_name.trim().to_string();
 
-        let backend_options = vec!["Ollama", "llama.cpp"];
+        let backend_options = vec!["Ollama", "llama.cpp", "OpenRouter"];
         let backend_choice = Select::new("Backend:", backend_options)
             .prompt()
-            .map_err(|e| match e {
-                inquire::InquireError::OperationCanceled
-                | inquire::InquireError::OperationInterrupted => {
-                    FcpError::Cancellation("Ignition cancelled by user".into())
-                }
-                _ => FcpError::Config(format!("Prompt error: {}", e)),
-            })?;
+            .map_err(prompt_err)?;
 
         let llm_backend = match backend_choice {
             "llama.cpp" => LlmBackend::LlamaCpp,
+            "OpenRouter" => LlmBackend::OpenRouter,
             _ => LlmBackend::Ollama,
         };
 
@@ -179,6 +199,9 @@ pub async fn run_ignition_sequence(
                     ollama_main_gpu,
                     ollama_low_vram,
                     llama_cpp: None,
+                    openrouter: None,
+                    embed_backend: None,
+                    embed_model_name: None,
                     num_ctx: AppConfig::default().num_ctx,
                 })
             }
@@ -299,6 +322,185 @@ pub async fn run_ignition_sequence(
                     ollama_main_gpu: None,
                     ollama_low_vram: None,
                     llama_cpp: Some(llama_cpp_config),
+                    openrouter: None,
+                    embed_backend: None,
+                    embed_model_name: None,
+                    num_ctx,
+                })
+            }
+            LlmBackend::OpenRouter => {
+                // 1. Model id: curated fast/capable defaults + free-text escape.
+                let mut model_options: Vec<String> = OPENROUTER_CURATED_MODELS
+                    .iter()
+                    .map(|(m, _)| m.to_string())
+                    .collect();
+                model_options.push("Other…".into());
+                let model_choice = Select::new("OpenRouter model:", model_options)
+                    .prompt()
+                    .map_err(prompt_err)?;
+                let model = if model_choice == "Other…" {
+                    let raw = Text::new("Model id (e.g. vendor/model-name):")
+                        .prompt()
+                        .map_err(prompt_err)?;
+                    let trimmed = raw.trim().to_string();
+                    if trimmed.is_empty() {
+                        return Err(FcpError::Config("OpenRouter model id cannot be empty".into()));
+                    }
+                    trimmed
+                } else {
+                    model_choice
+                };
+
+                // 2. Context window: drives condensation ceiling + orchestrator budgets.
+                let prefill_ctx = OPENROUTER_CURATED_MODELS
+                    .iter()
+                    .find(|(m, _)| *m == model)
+                    .map(|(_, ctx)| *ctx)
+                    .unwrap_or(AppConfig::default().num_ctx);
+                let num_ctx_raw = Text::new(
+                    "Context window (num_ctx: hosted model's context; drives budgets/condensation):",
+                )
+                .with_default(&prefill_ctx.to_string())
+                .prompt()
+                .map_err(prompt_err)?;
+                let num_ctx: usize = num_ctx_raw.trim().parse().map_err(|_| {
+                    FcpError::Config("Invalid num_ctx: expected positive integer".into())
+                })?;
+                let num_ctx = num_ctx.max(1);
+
+                // 3. Optional attribution headers (non-secret).
+                let referer_raw = Text::new("Attribution HTTP-Referer (blank = none):")
+                    .with_default("")
+                    .prompt()
+                    .map_err(prompt_err)?;
+                let referer =
+                    (!referer_raw.trim().is_empty()).then(|| referer_raw.trim().to_string());
+                let title_raw = Text::new("Attribution X-Title (blank = none):")
+                    .with_default("")
+                    .prompt()
+                    .map_err(prompt_err)?;
+                let title = (!title_raw.trim().is_empty()).then(|| title_raw.trim().to_string());
+
+                // 3b. Reasoning (default Off; non-Off increases latency and cost).
+                let reasoning_choice = Select::new(
+                    "Hosted reasoning (non-Off increases latency and cost):",
+                    vec!["Off", "low", "medium", "high"],
+                )
+                .prompt()
+                .map_err(prompt_err)?;
+                let reasoning = match reasoning_choice {
+                    "low" => OpenRouterReasoning::Effort(ReasoningEffort::Low),
+                    "medium" => OpenRouterReasoning::Effort(ReasoningEffort::Medium),
+                    "high" => OpenRouterReasoning::Effort(ReasoningEffort::High),
+                    _ => OpenRouterReasoning::Off,
+                };
+
+                // 4. API key: never prompted for, never stored — env var only.
+                let api_key_env = OpenRouterConfig::default().api_key_env;
+                if std::env::var(&api_key_env).map(|v| !v.trim().is_empty()).unwrap_or(false) {
+                    println!("  ✓ {} is set in the environment.", api_key_env);
+                } else {
+                    println!(
+                        "  ✗ {env} is not set. Before starting a chat, run:\n      export {env}=sk-or-...\n    (The key is read from the environment at startup; it is never written to config.toml.)",
+                        env = api_key_env
+                    );
+                }
+
+                // 4b. Consent gate: no request is ever sent without explicit acknowledgment.
+                let consent_acknowledged = inquire::Confirm::new(
+                    "Routing chat to OpenRouter sends your vault content, tool outputs, memories, \
+                     and condensation summaries to OpenRouter and its upstream model providers. \
+                     Acknowledge and enable?",
+                )
+                .with_default(false)
+                .prompt()
+                .map_err(prompt_err)?;
+                if !consent_acknowledged {
+                    println!(
+                        "  ✗ Consent not given: config will be written, but no request will be \
+                         sent until consent_acknowledged = true in [openrouter]."
+                    );
+                }
+
+                let openrouter_config = OpenRouterConfig {
+                    model,
+                    referer,
+                    title,
+                    reasoning,
+                    consent_acknowledged,
+                    ..Default::default()
+                };
+
+                // 5. Embeddings stay local: independent embed-backend sub-wizard.
+                let embed_choice =
+                    Select::new("Embeddings (always local):", vec!["Ollama", "llama.cpp"])
+                        .prompt()
+                        .map_err(prompt_err)?;
+                let (embed_backend, embed_model_name, llama_cpp) = if embed_choice == "llama.cpp" {
+                    let home = loop {
+                        let raw = Text::new("llama.cpp build directory (for embeddings):")
+                            .with_default("~/llama.cpp/build")
+                            .prompt()
+                            .map_err(prompt_err)?;
+                        let expanded = shellexpand::tilde(raw.trim()).to_string();
+                        let path = PathBuf::from(&expanded);
+                        let server_bin = path.join("bin").join("llama-server");
+                        if server_bin.exists() {
+                            break path;
+                        }
+                        eprintln!(
+                            "  ✗ llama-server not found at {}\n    Please provide the build directory containing bin/llama-server.",
+                            server_bin.display()
+                        );
+                    };
+                    let default_embed = home
+                        .parent()
+                        .unwrap_or(&home)
+                        .join("models/nomic-embed-text-v1.5.Q8_0.gguf");
+                    let default_embed_str = default_embed.to_string_lossy().to_string();
+                    let embed_model_path = loop {
+                        let raw = Text::new("Embed model GGUF path:")
+                            .with_default(&default_embed_str)
+                            .prompt()
+                            .map_err(prompt_err)?;
+                        let expanded = shellexpand::tilde(raw.trim()).to_string();
+                        let path = PathBuf::from(&expanded);
+                        if path.exists() {
+                            break path;
+                        }
+                        eprintln!("  ✗ File not found: {}", path.display());
+                    };
+                    // Embed-only config: chat model fields are unused for this backend combo.
+                    let llama_cpp_config = LlamaCppConfig {
+                        home,
+                        chat_server_url: "http://127.0.0.1:8090".into(),
+                        embed_server_url: "http://127.0.0.1:8091".into(),
+                        chat_model_path: PathBuf::new(),
+                        embed_model_path,
+                        n_gpu_layers: 0,
+                        ..Default::default()
+                    };
+                    (EmbedBackend::LlamaCpp, None, Some(llama_cpp_config))
+                } else {
+                    let embed_model = Text::new("Ollama embedding model:")
+                        .with_default("nomic-embed-text")
+                        .prompt()
+                        .map_err(prompt_err)?;
+                    (EmbedBackend::Ollama, Some(embed_model.trim().to_string()), None)
+                };
+
+                Ok(IgnitionAnswers {
+                    agent_name,
+                    user_name,
+                    llm_backend,
+                    model_name: openrouter_config.model.clone(),
+                    ollama_num_gpu: None,
+                    ollama_main_gpu: None,
+                    ollama_low_vram: None,
+                    llama_cpp,
+                    openrouter: Some(openrouter_config),
+                    embed_backend: Some(embed_backend),
+                    embed_model_name,
                     num_ctx,
                 })
             }
@@ -316,6 +518,9 @@ pub async fn run_ignition_sequence(
         ollama_main_gpu,
         ollama_low_vram,
         llama_cpp,
+        openrouter,
+        embed_backend,
+        embed_model_name,
         num_ctx,
     } = answers;
 
@@ -379,9 +584,14 @@ pub async fn run_ignition_sequence(
         ollama_main_gpu,
         ollama_low_vram,
         llama_cpp,
+        openrouter,
+        embed_backend,
         workspace: options.workspace,
         ..Default::default()
     };
+    if let Some(embed_model_name) = embed_model_name {
+        config.embed_model_name = embed_model_name;
+    }
     config.qdrant_collection_v2 = format!("fcp_vault_v2_{}", config.workspace);
     config.qdrant_docs_collection = format!("fcp_docs_{}", config.workspace);
 
@@ -407,4 +617,3 @@ pub async fn run_ignition_sequence(
 
     Ok(config)
 }
-

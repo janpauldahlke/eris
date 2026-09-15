@@ -1,5 +1,6 @@
 //! Vision upload/preview routes — gated by [`crate::config::VisionConfig::enabled`].
 
+use crate::util::vision::{normalize_upload, persist_normalized_image};
 use axum::Json;
 use axum::body::Body;
 use axum::extract::{Multipart, Path, State};
@@ -7,7 +8,6 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde_json::json;
 use tokio::fs;
-use crate::util::vision::{normalize_upload, persist_normalized_image};
 
 use super::WebAppState;
 use crate::tools::vision::preview_filename_allowed;
@@ -85,23 +85,20 @@ pub async fn post_vision_upload(
         }
     };
 
-    let attachment = match persist_normalized_image(
-        &state.workspace_root,
-        &state.config.vision,
-        normalized,
-    )
-    .await
-    {
-        Ok(a) => a,
-        Err(e) => {
-            tracing::error!(error = %e, "vision upload persist failed");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "failed to save image" })),
-            )
-                .into_response();
-        }
-    };
+    let attachment =
+        match persist_normalized_image(&state.workspace_root, &state.config.vision, normalized)
+            .await
+        {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::error!(error = %e, "vision upload persist failed");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": "failed to save image" })),
+                )
+                    .into_response();
+            }
+        };
 
     tracing::info!(
         target: "fcp.vision",

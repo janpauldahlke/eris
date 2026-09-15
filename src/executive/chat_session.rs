@@ -59,9 +59,7 @@ fn build_user_for_model(ing: &UserIngress) -> String {
             path = img.relative_path,
         )
     } else {
-        ing.for_model
-            .clone()
-            .unwrap_or_else(|| ing.display.clone())
+        ing.for_model.clone().unwrap_or_else(|| ing.display.clone())
     }
 }
 
@@ -215,14 +213,12 @@ pub async fn start_chat_session(
         crate::executive::peripherals::ensure_peripherals_for_chat(&config).await?;
 
     let llm_status = match config.llm_backend {
-        crate::config::LlmBackend::Ollama => {
-            if peripheral_lifecycle.started_ollama() {
-                "ollama=started by eris"
-            } else {
-                "ollama=already running"
-            }
-            .to_string()
+        crate::config::LlmBackend::Ollama => if peripheral_lifecycle.started_ollama() {
+            "ollama=started by eris"
+        } else {
+            "ollama=already running"
         }
+        .to_string(),
         crate::config::LlmBackend::LlamaCpp => {
             let chat = if peripheral_lifecycle.started_llama_chat() {
                 "started by eris"
@@ -235,6 +231,24 @@ pub async fn start_chat_session(
                 "external"
             };
             format!("llama-chat={chat}, llama-embed={embed}")
+        }
+        crate::config::LlmBackend::OpenRouter => {
+            let model = config
+                .openrouter
+                .as_ref()
+                .map(|or| or.model.as_str())
+                .unwrap_or("unset");
+            let embed = match config.resolved_embed_backend() {
+                crate::config::EmbedBackend::Ollama => "ollama".to_string(),
+                crate::config::EmbedBackend::LlamaCpp => {
+                    if peripheral_lifecycle.started_llama_embed() {
+                        "llama-embed started by eris".to_string()
+                    } else {
+                        "llama-embed external".to_string()
+                    }
+                }
+            };
+            format!("openrouter={model} (remote, no chat daemon), embed={embed}")
         }
     };
     let qdrant_status = if peripheral_lifecycle.started_qdrant() {
@@ -266,28 +280,36 @@ pub async fn start_chat_session(
             AnyEngine::Ollama(ollama_engine)
         }
         LlmBackend::LlamaCpp => {
-            let llamacpp_engine = LlamaCppClient::new(config.clone())?
-                .with_token_metrics(token_metrics_tx);
+            let llamacpp_engine =
+                LlamaCppClient::new(config.clone())?.with_token_metrics(token_metrics_tx);
             AnyEngine::LlamaCpp(llamacpp_engine)
+        }
+        LlmBackend::OpenRouter => {
+            let openrouter_engine = crate::engine::OpenRouterClient::new(config.clone())?
+                .with_token_metrics(token_metrics_tx);
+            AnyEngine::OpenRouter(openrouter_engine)
         }
     };
     let ollama_arc = Arc::new(client);
 
-    let embed_provider: Arc<dyn crate::engine::EmbeddingProvider> = match config.llm_backend {
-        crate::config::LlmBackend::Ollama => Arc::new(
-            crate::engine::embedding::OllamaEmbedding::new(
-                ollama_arc.clone(),
-                config.embed_model_name.clone(),
-            ),
-        ),
-        crate::config::LlmBackend::LlamaCpp => {
-            let lc = config.validate_llamacpp_config()?;
-            Arc::new(crate::engine::embedding::LlamaCppEmbedding::new(
-                &lc.embed_server_url,
-                config.generation_timeout_secs,
-            )?)
-        }
-    };
+    // Embeddings key off the decoupled embed backend (not the chat backend), so
+    // OpenRouter chat + local embeddings coexist.
+    let embed_provider: Arc<dyn crate::engine::EmbeddingProvider> =
+        match config.resolved_embed_backend() {
+            crate::config::EmbedBackend::Ollama => {
+                Arc::new(crate::engine::embedding::OllamaEmbedding::new(
+                    ollama_arc.clone(),
+                    config.embed_model_name.clone(),
+                ))
+            }
+            crate::config::EmbedBackend::LlamaCpp => {
+                let lc = config.validate_llamacpp_embed_config()?;
+                Arc::new(crate::engine::embedding::LlamaCppEmbedding::new(
+                    &lc.embed_server_url,
+                    config.generation_timeout_secs,
+                )?)
+            }
+        };
 
     crate::memory::semantic::validate_embedding_provider_vs_qdrant(
         config.as_ref(),
@@ -375,14 +397,15 @@ pub async fn start_chat_session(
 
     let (user_action_tx, mut action_rx) = mpsc::channel::<UserAction>(100);
 
-    let document_ingest_queue: Option<Arc<crate::memory::document_ingest_queue::DocumentIngestQueue>> =
-        document_store_arc.as_ref().map(|store| {
-            crate::memory::document_ingest_queue::DocumentIngestQueue::spawn(
-                store.clone(),
-                workspace_root.clone(),
-                Some(presentation_tx.clone()),
-            )
-        });
+    let document_ingest_queue: Option<
+        Arc<crate::memory::document_ingest_queue::DocumentIngestQueue>,
+    > = document_store_arc.as_ref().map(|store| {
+        crate::memory::document_ingest_queue::DocumentIngestQueue::spawn(
+            store.clone(),
+            workspace_root.clone(),
+            Some(presentation_tx.clone()),
+        )
+    });
 
     if let (Some(doc_store), Some(ingest_q)) =
         (document_store_arc.as_ref(), document_ingest_queue.as_ref())
@@ -635,6 +658,10 @@ pub async fn start_chat_session(
     }
     gatekeeper.register(Arc::new(crate::tools::system::SystemHealthTool {
         config: config.clone(),
+        token_metrics: Some(crate::engine::TokenMetricsReader::new(
+            token_metrics_rx.clone(),
+        )),
+        openrouter_mode: engine.openrouter_mode_handle(),
     }));
 
     gatekeeper.register(Arc::new(crate::tools::media::MediaCatalogTool {
@@ -798,8 +825,7 @@ pub async fn start_chat_session(
         tracing::info!("document_rag enabled but store offline — doc:* tools not registered");
     }
 
-    let registered_tool_names: Arc<[String]> =
-        gatekeeper.registered_tool_names().into();
+    let registered_tool_names: Arc<[String]> = gatekeeper.registered_tool_names().into();
 
     let descriptor_registry = {
         let registry = crate::tools::ToolDescriptorRegistry::load_embedded()?;
@@ -889,8 +915,7 @@ pub async fn start_chat_session(
 
     if config.vault_reindex_on_write {
         if let Some(semantic) = semantic_arc.clone() {
-            let debounce =
-                std::time::Duration::from_millis(config.vault_watch.debounce_ms.max(1));
+            let debounce = std::time::Duration::from_millis(config.vault_watch.debounce_ms.max(1));
             crate::memory::reindex_watch::spawn_vault_semantic_reindex_watch(
                 cancel_token.child_token(),
                 debounce,
@@ -922,9 +947,7 @@ pub async fn start_chat_session(
             .map(|name| {
                 let per_tool_rules = gatekeeper
                     .parameters_root_schema_for(name)
-                    .and_then(|schema| {
-                        crate::engine::grammar::schema_to_gbnf_rule(name, &schema)
-                    })
+                    .and_then(|schema| crate::engine::grammar::schema_to_gbnf_rule(name, &schema))
                     .map(|(_rule_name, rules)| rules);
 
                 if per_tool_rules.is_some() {
@@ -940,8 +963,7 @@ pub async fn start_chat_session(
             })
             .collect();
 
-        let grammar =
-            crate::engine::grammar::compile_fcp_envelope_grammar_dynamic(&entries);
+        let grammar = crate::engine::grammar::compile_fcp_envelope_grammar_dynamic(&entries);
         tracing::info!(
             tool_count = tool_names.len(),
             typed_count,
@@ -1023,10 +1045,7 @@ pub async fn start_chat_session(
                                 continue;
                             }
                             let content = format!("{}{}", SYSTEM_ALARM_PREFIX, trimmed);
-                            orchestrator.chat_stack.push(crate::engine::Message {
-                                role: crate::engine::Role::User,
-                                content,
-                            });
+                            orchestrator.chat_stack.push(crate::engine::Message::user(content));
                             orchestrator.state = crate::orchestrator::state::AgentState::Chat;
                             last_input_time.store(
                                 std::time::SystemTime::now()
@@ -1095,10 +1114,7 @@ pub async fn start_chat_session(
                                     seconds_late
                                 )
                             };
-                            orchestrator.chat_stack.push(crate::engine::Message {
-                                role: crate::engine::Role::User,
-                                content,
-                            });
+                            orchestrator.chat_stack.push(crate::engine::Message::user(content));
                             orchestrator.state = crate::orchestrator::state::AgentState::Chat;
                             last_input_time.store(
                                 std::time::SystemTime::now()
@@ -1169,10 +1185,7 @@ pub async fn start_chat_session(
                                 alarm_record_id,
                                 seconds_late
                             );
-                            orchestrator.chat_stack.push(crate::engine::Message {
-                                role: crate::engine::Role::User,
-                                content,
-                            });
+                            orchestrator.chat_stack.push(crate::engine::Message::user(content));
                             orchestrator.state = crate::orchestrator::state::AgentState::Chat;
                             last_input_time.store(
                                 std::time::SystemTime::now()
@@ -1255,8 +1268,7 @@ pub async fn start_chat_session(
                         ))
                         .await;
                     ingest_defer_notified = true;
-                    orchestrator.activity_line =
-                        Some("Waiting for document ingest…".into());
+                    orchestrator.activity_line = Some("Waiting for document ingest…".into());
                     orchestrator.queued_inputs = pending_inputs.len();
                     orchestrator.broadcast_state().await;
                 }
@@ -1278,8 +1290,7 @@ pub async fn start_chat_session(
                     );
                     let _ = presentation_tx_err
                         .send(SessionEvent::SystemError(
-                            "[ui] Vision is disabled in config — image attachment rejected."
-                                .into(),
+                            "[ui] Vision is disabled in config — image attachment rejected.".into(),
                         ))
                         .await;
                     continue;
@@ -1303,9 +1314,7 @@ pub async fn start_chat_session(
                     orchestrator.activity_line = Some("Transcribing voice…".into());
                     orchestrator.broadcast_state().await;
                     let _ = presentation_tx_err
-                        .send(SessionEvent::SystemError(
-                            "[ui] Transcribing voice…".into(),
-                        ))
+                        .send(SessionEvent::SystemError("[ui] Transcribing voice…".into()))
                         .await;
                     match crate::util::audio::transcribe_audio(
                         &orchestrator.config,
@@ -1324,8 +1333,7 @@ pub async fn start_chat_session(
                                 );
                                 let _ = presentation_tx_err
                                     .send(SessionEvent::SystemError(
-                                        "[ui] Could not transcribe audio — empty result."
-                                            .into(),
+                                        "[ui] Could not transcribe audio — empty result.".into(),
                                     ))
                                     .await;
                                 orchestrator.activity_line = None;
@@ -1334,9 +1342,7 @@ pub async fn start_chat_session(
                                 continue;
                             }
                             let caption = ing.display.trim();
-                            let merged = if caption.is_empty()
-                                || caption == "(voice message)"
-                            {
+                            let merged = if caption.is_empty() || caption == "(voice message)" {
                                 t.to_string()
                             } else {
                                 format!("{t}\n\n{caption}")
@@ -1367,10 +1373,7 @@ pub async fn start_chat_session(
                         }
                     }
                 } else {
-                    (
-                        ing.display.clone(),
-                        build_user_for_model(&ing),
-                    )
+                    (ing.display.clone(), build_user_for_model(&ing))
                 };
 
                 tracing::info!(
@@ -1403,10 +1406,9 @@ pub async fn start_chat_session(
                         .as_secs(),
                     std::sync::atomic::Ordering::Relaxed,
                 );
-                orchestrator.chat_stack.push(crate::engine::Message {
-                    role: crate::engine::Role::User,
-                    content: for_model,
-                });
+                orchestrator
+                    .chat_stack
+                    .push(crate::engine::Message::user(for_model));
                 orchestrator.state = crate::orchestrator::state::AgentState::Chat;
                 let pulse_discord = ing.source == InputSource::Discord;
                 if pulse_discord {

@@ -5,10 +5,11 @@
 `LlmEngine::generate(stack, available_tools_json, stream_tx)`:
 
 - **`stack`:** `&[Message]` with roles `system` | `user` | `assistant`.
-- **`available_tools_json`:** second argument; not used by the hot path in either backend (tool schemas live inside the assembled system prompt). `LlamaCppClient` uses its cached grammar instead.
+- **`available_tools_json`:** second argument; not used by the hot path in any backend (tool schemas live inside the assembled system prompt). `LlamaCppClient` uses its cached grammar instead.
 - **`stream_tx`:** optional; TUI can stream tokens (not all paths enable it).
+- **`LlmGenerateOptions`:** per-call knobs — `grammar_override` (llama.cpp GBNF subset), `attach_session_grammar`, and `response_json_schema: Option<Arc<serde_json::Value>>` (OpenRouter strict `response_format`, mutually exclusive with grammar by backend).
 
-Two implementations compile unconditionally; `AppConfig::llm_backend` determines which is instantiated at runtime.
+Three implementations compile unconditionally; `AppConfig::llm_backend` determines which is instantiated at runtime (dispatch via the `AnyEngine` enum in `engine/mod.rs`).
 
 ## Ollama client (`engine/ollama.rs`)
 
@@ -39,6 +40,26 @@ pub struct LlamaCppClient {
 
 Grammar is set via `set_grammar()` after construction, called from `chat_session.rs` once the dynamic grammar is compiled from registered tools.
 
+## OpenRouter client (`engine/openrouter.rs`)
+
+Hosted chat over OpenRouter's OpenAI-compatible **`/chat/completions`** — same wire shape as `LlamaCppClient`, remote transport:
+
+- **Construction gates:** validates `[openrouter]` config, refuses to build unless `consent_acknowledged = true` (privacy gate — vault content, tool outputs, and memories transit to a third party), reads the API key from the env var named by `api_key_env` (never persisted; `Authorization` header marked sensitive).
+- **Structured output:** instead of GBNF, sends `response_format: { type: "json_schema", strict: true, ... }` from `LlmGenerateOptions::response_json_schema`. A session-level atomic **downgrade ladder** (`json_schema` → `json_object` → off) reacts to HTTP 400 model rejections and retries in place. `provider.require_parameters = true` prevents the router from silently dropping the schema; `provider.data_collection = "deny"` by default.
+- **Streaming:** SSE with `stream_options: { include_usage: true }` (otherwise streamed turns report zero tokens/cost); handles `: OPENROUTER PROCESSING` keep-alive comments and surfaces **mid-stream error objects** as `FcpError` instead of skipping them. Hosted **reasoning** arrives on a separate delta field — logged as telemetry, never contaminates the envelope content.
+- **Resilience:** bounded exponential backoff (`max_retries`) honoring `Retry-After` for 429/5xx; 401 → `FcpError::Config`, 402 → `NetworkFault`, 429 → `FcpError::RateLimited`. Timeouts are `request_timeout_secs` (total) + `stream_idle_timeout_secs` (inter-chunk), not the local-tuned generation timeout.
+- **Cost accounting:** per-turn cost from OpenRouter's reported credits or local `price_per_mtok_in/out`; published with reasoning tokens via the extended token-metrics snapshot.
+
+Shared message normalization (`system` ordering, trailing-assistant merging, `&[Message]` → wire array) lives in **`engine/openai_wire.rs`**, used by both `LlamaCppClient` and `OpenRouterClient`.
+
+## Structured output schemas (`engine/structured/`)
+
+OpenRouter's analogue of the GBNF compiler — same inputs, different target:
+
+- **`schema_to_openai.rs`:** lowers each tool's `schemars::RootSchema` into the OpenAI strict-mode JSON-schema subset (inlines `$ref`s, makes optional fields nullable unions since strict mode requires all properties in `required`, rejects `oneOf`/`anyOf`/`allOf`). Unsupported constructs degrade gracefully to a permissive empty-object args schema — mirroring `schema_to_gbnf.rs` fallback.
+- **`envelope_schema.rs`:** builds the full FCP envelope schema (`thought`, `status`, `message_to_user`, `tool_calls`) with a per-tool discriminated union for `tool_calls`; when no tools are offered, `tool_calls` is constrained to the empty array.
+- Per-turn caching lives in the orchestrator (`core/openai_schema_subset.rs`, `JsonSchemaSubsetCache`), parallel to `GbnfSubsetCache`.
+
 ## EmbeddingProvider trait (`engine/embedding.rs`)
 
 Abstracts vector generation so `ToolRouter` and `SemanticBrain` are backend-agnostic:
@@ -55,7 +76,7 @@ Two implementations:
 - **`OllamaEmbedding`** — wraps `Arc<Ollama>` + `embed_model_name`; extracts the logic that was previously inlined in `ToolRouter` and `SemanticBrain`.
 - **`LlamaCppEmbedding`** — wraps `reqwest::Client` + embed server URL; calls llama-server's `/v1/embeddings` endpoint.
 
-`ToolRouter` and `SemanticBrain` both take `Arc<dyn EmbeddingProvider>` at construction. `chat_session.rs` instantiates the right provider based on `llm_backend`.
+`ToolRouter` and `SemanticBrain` both take `Arc<dyn EmbeddingProvider>` at construction. `chat_session.rs` instantiates the right provider based on **`resolved_embed_backend()`** (decoupled from `llm_backend`): embeddings are always local, so OpenRouter chat pairs with an Ollama or llama.cpp embed daemon. OpenRouter has no embeddings endpoint.
 
 ## GBNF grammar compiler (`engine/grammar/`)
 
@@ -92,7 +113,7 @@ Translates each tool's `parameters_schema()` (`schemars::RootSchema`) into GBNF 
 
 ## Token metrics (`engine/token_metrics.rs`)
 
-`watch::Sender` / `Receiver` for last prompt/generated token counts. Both `OllamaClient` and `LlamaCppClient` publish snapshots for the UI header.
+`watch::Sender` / `Receiver` for last prompt/generated token counts. All three clients publish snapshots for the UI header. For hosted backends the snapshot carries extra fields: `last_reasoning_tokens`, `last_cost_micro_usd`, and a running `session_cost_micro_usd` (published via `publish_with_cost`; local backends delegate through `publish` with zeros). The TUI status line and `system:health` surface reasoning tokens + cost when present.
 
 ## Reasoning router (`engine/router.rs`)
 
@@ -106,3 +127,4 @@ Used in `tool_router.rs` for embedding similarity (not re-exported as a shared u
 
 - `engine/ollama.rs` tests use **wiremock** for HTTP failure paths; live Ollama not required.
 - `engine/grammar/` has **35 tests** covering: envelope compilation, tool name generation, JSON Schema to GBNF translation for all tool types, round-trip validation, graceful fallback for unsupported schemas.
+- `engine/openrouter.rs` uses **wiremock** end to end: SSE streaming + usage, auth header, schema enforcement, 400-triggered mode downgrades, 401/402/429/5xx mapping, mid-stream errors, cost/reasoning metrics. `engine/structured/` tests cover schema lowering + envelope building; secret hygiene is asserted in `config.rs` (key never serialized) and `system:health` (key never reported).

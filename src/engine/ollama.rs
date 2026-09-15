@@ -60,6 +60,9 @@ impl LlmEngine for OllamaClient {
                 Role::System => MessageRole::System,
                 Role::User => MessageRole::User,
                 Role::Assistant => MessageRole::Assistant,
+                // Native tool-result frames are OpenRouter-only; fold onto user so
+                // the text still reaches local chat templates.
+                Role::Tool => MessageRole::User,
             };
 
             let mut content = msg.content.clone();
@@ -94,8 +97,7 @@ impl LlmEngine for OllamaClient {
 
         use ollama_rs::models::ModelOptions;
 
-        let mut gen_options = ModelOptions::default()
-            .num_ctx(self.config.num_ctx as u64);
+        let mut gen_options = ModelOptions::default().num_ctx(self.config.num_ctx as u64);
         if let Some(t) = options.temperature {
             gen_options = gen_options.temperature(t);
         }
@@ -176,6 +178,8 @@ impl LlmEngine for OllamaClient {
 
             Ok(EngineResponse {
                 content: full_content,
+                reasoning: String::new(),
+                tool_calls: Vec::new(),
                 prompt_tokens,
                 generated_tokens,
                 generation_ms,
@@ -208,6 +212,8 @@ impl LlmEngine for OllamaClient {
                     );
                     Ok(EngineResponse {
                         content,
+                        reasoning: String::new(),
+                        tool_calls: Vec::new(),
                         prompt_tokens,
                         generated_tokens,
                         generation_ms,
@@ -248,7 +254,9 @@ mod tests {
             .build();
         let engine = OllamaClient::new(client, Arc::new(config));
 
-        let result = engine.generate(&[], "{}", None, LlmGenerateOptions::default()).await;
+        let result = engine
+            .generate(&[], "{}", None, LlmGenerateOptions::default())
+            .await;
 
         match result {
             Err(FcpError::NetworkFault(_)) => (),
@@ -281,7 +289,9 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let result = engine.generate(&[], "{}", None, LlmGenerateOptions::default()).await;
+        let result = engine
+            .generate(&[], "{}", None, LlmGenerateOptions::default())
+            .await;
 
         match result {
             Err(FcpError::EngineFault(_)) => (),
@@ -337,5 +347,9 @@ mod tests {
         assert_eq!(result.content, "Hello world");
         assert_eq!(result.prompt_tokens, 10);
         assert_eq!(result.generated_tokens, 5);
+        assert!(
+            result.tool_calls.is_empty(),
+            "Ollama never returns native tool_calls"
+        );
     }
 }

@@ -1,9 +1,9 @@
 //! Benchmark runner - main entry point for executing benchmarks.
 
+use crate::benchmark::metrics::{StepTiming, SuiteSpeedAggregate};
 use crate::benchmark::{
     BenchmarkHarness, BenchmarkReport, IsolationMode, QualityMetrics, SpeedMetrics, SuiteRegistry,
 };
-use crate::benchmark::metrics::{StepTiming, SuiteSpeedAggregate};
 use crate::config::{AppConfig, LlmBackend};
 use crate::engine::AnyEngine;
 use crate::engine::llama_cpp::LlamaCppClient;
@@ -69,9 +69,7 @@ pub async fn run_benchmark(
     let registry = SuiteRegistry::new();
     let suite = registry
         .get(suite_name)
-        .ok_or_else(|| FcpError::Config(
-            format!("Unknown benchmark suite: {}", suite_name)
-        ))?;
+        .ok_or_else(|| FcpError::Config(format!("Unknown benchmark suite: {}", suite_name)))?;
 
     tracing::info!(
         suite = suite_name,
@@ -82,20 +80,19 @@ pub async fn run_benchmark(
     // When `benchmark_num_ctx` is set, override `num_ctx` so the managed llama-server
     // allocates a smaller KV cache.  Reduces VRAM pressure that can crash the display
     // stack on dual-GPU systems under rapid back-to-back inference.
-    let bench_config: std::borrow::Cow<'_, AppConfig> = if config.benchmark_num_ctx > 0
-        && config.llm_backend == LlmBackend::LlamaCpp
-    {
-        let mut c = config.clone();
-        tracing::info!(
-            original_num_ctx = config.num_ctx,
-            benchmark_num_ctx = config.benchmark_num_ctx,
-            "Benchmark: overriding num_ctx for managed llama-server"
-        );
-        c.num_ctx = config.benchmark_num_ctx;
-        std::borrow::Cow::Owned(c)
-    } else {
-        std::borrow::Cow::Borrowed(config)
-    };
+    let bench_config: std::borrow::Cow<'_, AppConfig> =
+        if config.benchmark_num_ctx > 0 && config.llm_backend == LlmBackend::LlamaCpp {
+            let mut c = config.clone();
+            tracing::info!(
+                original_num_ctx = config.num_ctx,
+                benchmark_num_ctx = config.benchmark_num_ctx,
+                "Benchmark: overriding num_ctx for managed llama-server"
+            );
+            c.num_ctx = config.benchmark_num_ctx;
+            std::borrow::Cow::Owned(c)
+        } else {
+            std::borrow::Cow::Borrowed(config)
+        };
 
     // Start peripherals (LLM backend + Qdrant)
     tracing::info!(backend = %config.llm_backend, "Checking peripheral daemons");
@@ -121,29 +118,29 @@ pub async fn run_benchmark(
     let ephemeral = Arc::new(EphemeralMemory::new(config.workspace.clone()));
 
     // Embeddings: vault config selects Ollama vs llama-server embed endpoint
-    let embed_provider: Arc<dyn crate::engine::EmbeddingProvider> = if config.llm_backend
-        == LlmBackend::LlamaCpp
-    {
-        let lc = config.validate_llamacpp_config()?;
-        Arc::new(crate::engine::embedding::LlamaCppEmbedding::new(
-            &lc.embed_server_url,
-            config.generation_timeout_secs,
-        )?)
-    } else {
-        let parsed_url = url::Url::parse(&config.ollama_host)
-            .map_err(|e| FcpError::Config(format!("Invalid ollama_host URL: {e}")))?;
-        let host = format!(
-            "{}://{}",
-            parsed_url.scheme(),
-            parsed_url.host_str().unwrap_or("localhost")
-        );
-        let port = parsed_url.port().unwrap_or(11434);
-        let ollama_client = Ollama::builder().host(host).port(port).build();
-        Arc::new(crate::engine::embedding::OllamaEmbedding::new(
-            Arc::new(ollama_client),
-            config_arc.embed_model_name.clone(),
-        ))
-    };
+    // (decoupled from the chat backend so OpenRouter chat keeps local embeddings).
+    let embed_provider: Arc<dyn crate::engine::EmbeddingProvider> =
+        if config.resolved_embed_backend() == crate::config::EmbedBackend::LlamaCpp {
+            let lc = config.validate_llamacpp_embed_config()?;
+            Arc::new(crate::engine::embedding::LlamaCppEmbedding::new(
+                &lc.embed_server_url,
+                config.generation_timeout_secs,
+            )?)
+        } else {
+            let parsed_url = url::Url::parse(&config.ollama_host)
+                .map_err(|e| FcpError::Config(format!("Invalid ollama_host URL: {e}")))?;
+            let host = format!(
+                "{}://{}",
+                parsed_url.scheme(),
+                parsed_url.host_str().unwrap_or("localhost")
+            );
+            let port = parsed_url.port().unwrap_or(11434);
+            let ollama_client = Ollama::builder().host(host).port(port).build();
+            Arc::new(crate::engine::embedding::OllamaEmbedding::new(
+                Arc::new(ollama_client),
+                config_arc.embed_model_name.clone(),
+            ))
+        };
 
     let semantic_arc: Option<Arc<crate::memory::semantic::SemanticBrain>> =
         match crate::memory::semantic::SemanticBrain::new_with_connect_retries(
@@ -196,6 +193,8 @@ pub async fn run_benchmark(
     }));
     gatekeeper.register(Arc::new(crate::tools::system::SystemHealthTool {
         config: config_arc.clone(),
+        token_metrics: None,
+        openrouter_mode: None,
     }));
     gatekeeper.register(Arc::new(crate::tools::clock::ClockNowTool));
 
@@ -244,35 +243,34 @@ pub async fn run_benchmark(
         let port = parsed_url.port().unwrap_or(11434);
         let client = Ollama::builder().host(host).port(port).build();
         let (token_metrics_tx, _token_metrics_rx) = token_metrics::channel();
-        let probe_engine = OllamaClient::with_token_metrics(
-            client.clone(),
-            config_arc.clone(),
-            token_metrics_tx,
-        );
+        let probe_engine =
+            OllamaClient::with_token_metrics(client.clone(), config_arc.clone(), token_metrics_tx);
         let probe_arc = Arc::new(probe_engine);
         println!(
             "[benchmark] Sampling model latency (one chat probe; Ollama-reported tokens & timings)..."
         );
-        let speed_sample =
-            match crate::benchmark::speed_probe::probe_ollama_chat_latency(probe_arc.as_ref()).await
-            {
-                Ok(s) => {
-                    tracing::info!(
-                        prompt_tok_s = s.prompt_throughput(),
-                        gen_tok_s = s.generation_throughput(),
-                        total_ms = s.total_duration.as_millis(),
-                        "Benchmark speed probe completed"
-                    );
-                    s
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "Benchmark speed probe failed; speed metrics will be zeros"
-                    );
-                    SpeedMetrics::default()
-                }
-            };
+        let speed_sample = match crate::benchmark::speed_probe::probe_ollama_chat_latency(
+            probe_arc.as_ref(),
+        )
+        .await
+        {
+            Ok(s) => {
+                tracing::info!(
+                    prompt_tok_s = s.prompt_throughput(),
+                    gen_tok_s = s.generation_throughput(),
+                    total_ms = s.total_duration.as_millis(),
+                    "Benchmark speed probe completed"
+                );
+                s
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Benchmark speed probe failed; speed metrics will be zeros"
+                );
+                SpeedMetrics::default()
+            }
+        };
         let (token_metrics_tx2, _token_metrics_rx2) = token_metrics::channel();
         let engine_for_orchestrator = AnyEngine::Ollama(OllamaClient::with_token_metrics(
             client,
@@ -280,10 +278,21 @@ pub async fn run_benchmark(
             token_metrics_tx2,
         ));
         (speed_sample, engine_for_orchestrator)
+    } else if config.llm_backend == LlmBackend::OpenRouter {
+        // Hosted backend: skip the latency probe (a paid, non-deterministic call).
+        println!(
+            "[benchmark] OpenRouter backend: skipping speed probe (hosted; speed metrics will be zeros)"
+        );
+        let (token_metrics_tx, _token_metrics_rx) = token_metrics::channel();
+        let engine_for_orchestrator = AnyEngine::OpenRouter(
+            crate::engine::OpenRouterClient::new(config_arc.clone())?
+                .with_token_metrics(token_metrics_tx),
+        );
+        (SpeedMetrics::default(), engine_for_orchestrator)
     } else {
         let (token_metrics_tx, _token_metrics_rx) = token_metrics::channel();
-        let probe_client = LlamaCppClient::new(config_arc.clone())?
-            .with_token_metrics(token_metrics_tx);
+        let probe_client =
+            LlamaCppClient::new(config_arc.clone())?.with_token_metrics(token_metrics_tx);
         println!(
             "[benchmark] Sampling model latency (one chat probe; llama-server usage & wall timings)..."
         );
@@ -372,7 +381,12 @@ pub async fn run_benchmark(
             tokio::time::sleep(Duration::from_millis(cooldown_ms)).await;
         }
         let scenario_started = std::time::Instant::now();
-        println!("[benchmark] Scenario {}/{}: {}", idx + 1, suite.len(), scenario.name);
+        println!(
+            "[benchmark] Scenario {}/{}: {}",
+            idx + 1,
+            suite.len(),
+            scenario.name
+        );
 
         match harness
             .run_scenario_with_orchestrator(
@@ -383,8 +397,16 @@ pub async fn run_benchmark(
             .await
         {
             Ok((result, step_timings)) => {
-                let status = if result.succeeded { "✓ PASS" } else { "✗ FAIL" };
-                println!("[benchmark]   {} ({}ms)", status, result.duration.as_millis());
+                let status = if result.succeeded {
+                    "✓ PASS"
+                } else {
+                    "✗ FAIL"
+                };
+                println!(
+                    "[benchmark]   {} ({}ms)",
+                    status,
+                    result.duration.as_millis()
+                );
                 if result.succeeded {
                     suite_timing_scenarios = suite_timing_scenarios.saturating_add(1);
                     suite_timing_steps.extend(step_timings);
@@ -419,7 +441,7 @@ pub async fn run_benchmark(
     for result in &scenario_results {
         quality_metrics.add_scenario_result(result.clone());
     }
-    
+
     // Cleanup
     println!("[benchmark] Cleaning up...");
     let cleanup_report = harness.cleanup().await?;
@@ -474,7 +496,11 @@ pub async fn run_benchmark(
             qdrant_collection_removed: true,
             staged_memories_removed: cleanup_report.staged_removed,
             ephemeral_entries_removed: cleanup_report.ephemeral_removed,
-            cleanup_failures: cleanup_report.failures.iter().map(|f| f.error.clone()).collect(),
+            cleanup_failures: cleanup_report
+                .failures
+                .iter()
+                .map(|f| f.error.clone())
+                .collect(),
         },
     };
 
@@ -502,9 +528,10 @@ pub async fn run_benchmark(
             }
         }
         _ => {
-            return Err(FcpError::Config(
-                format!("Unknown output format: {}", output_format)
-            ));
+            return Err(FcpError::Config(format!(
+                "Unknown output format: {}",
+                output_format
+            )));
         }
     }
 
@@ -522,7 +549,10 @@ async fn log_nvidia_vram_snapshot(label: &str) {
     let label = label.to_string();
     let result = tokio::task::spawn_blocking(move || {
         std::process::Command::new("nvidia-smi")
-            .args(["--query-gpu=index,name,memory.used,memory.total,temperature.gpu,power.draw", "--format=csv,noheader,nounits"])
+            .args([
+                "--query-gpu=index,name,memory.used,memory.total,temperature.gpu,power.draw",
+                "--format=csv,noheader,nounits",
+            ])
             .output()
     })
     .await;
@@ -547,7 +577,12 @@ async fn log_nvidia_vram_snapshot(label: &str) {
 const BENCH_CONSOLE_W: usize = 76;
 
 fn bench_sep_line(ch: char) {
-    println!("{}", std::iter::repeat(ch).take(BENCH_CONSOLE_W).collect::<String>());
+    println!(
+        "{}",
+        std::iter::repeat(ch)
+            .take(BENCH_CONSOLE_W)
+            .collect::<String>()
+    );
 }
 
 fn bench_section(title: &str) {
@@ -662,8 +697,7 @@ fn print_console_report(report: &BenchmarkReport) {
             "Step samples",
             &format!(
                 "{}  ({} passing scenarios)",
-                report.suite_speed.step_samples,
-                report.suite_speed.contributing_scenarios
+                report.suite_speed.step_samples, report.suite_speed.contributing_scenarios
             ),
         );
         bench_kv(
@@ -706,10 +740,7 @@ fn print_console_report(report: &BenchmarkReport) {
 
     bench_sep_line('=');
     println!();
-    println!(
-        "  Report file:  .fcp/benchmarks/{}.json",
-        report.run_id
-    );
+    println!("  Report file:  .fcp/benchmarks/{}.json", report.run_id);
     println!();
     println!("  eris benchmark --list");
     println!("  eris benchmark --diff '<baseline-run-id>..<current-run-id>'");
@@ -721,21 +752,31 @@ fn print_console_report(report: &BenchmarkReport) {
 /// Generate markdown report.
 fn generate_markdown_report(report: &BenchmarkReport) -> String {
     let mut md = String::new();
-    
+
     md.push_str(&format!("# Benchmark Report: {}\n\n", report.model_name));
     md.push_str("## Metadata\n\n");
     md.push_str("| Field | Value |\n");
     md.push_str("|-------|-------|\n");
     md.push_str(&format!("| **Run ID** | `{}` |\n", report.run_id));
     md.push_str(&format!("| **Suite** | {} |\n", report.suite));
-    md.push_str(&format!("| **Date** | {} |\n", report.timestamp.format("%Y-%m-%d %H:%M:%S UTC")));
-    md.push_str(&format!("| **Isolation Mode** | {} |\n\n", report.isolation_mode));
+    md.push_str(&format!(
+        "| **Date** | {} |\n",
+        report.timestamp.format("%Y-%m-%d %H:%M:%S UTC")
+    ));
+    md.push_str(&format!(
+        "| **Isolation Mode** | {} |\n\n",
+        report.isolation_mode
+    ));
 
     md.push_str("## Safety Checklist\n\n");
     md.push_str("- [x] External side effects blocked\n");
     md.push_str(&format!(
         "- [{}] Temp vault cleaned\n",
-        if report.cleanup_report.temp_vault_cleaned { "x" } else { " " }
+        if report.cleanup_report.temp_vault_cleaned {
+            "x"
+        } else {
+            " "
+        }
     ));
     md.push_str(&format!(
         "- [x] {} staged memories removed\n\n",
@@ -745,12 +786,26 @@ fn generate_markdown_report(report: &BenchmarkReport) -> String {
     md.push_str("## Quality Metrics\n\n");
     md.push_str("| Metric | Value |\n");
     md.push_str("|--------|-------|\n");
-    md.push_str(&format!("| JSON Parse Success | {:.1}% |\n", report.quality.json_success_rate()));
-    md.push_str(&format!("| Recovery Success | {:.1}% |\n", report.quality.recovery_success_rate()));
-    md.push_str(&format!("| Tool Valid Rate | {:.1}% |\n", report.quality.tool_valid_rate()));
-    md.push_str(&format!("| Timeout Rate | {:.1}% |\n", report.quality.timeout_rate()));
-    md.push_str(&format!("| **Overall Quality Score** | **{:.1}%** |\n\n", 
-        report.quality.overall_quality_score()));
+    md.push_str(&format!(
+        "| JSON Parse Success | {:.1}% |\n",
+        report.quality.json_success_rate()
+    ));
+    md.push_str(&format!(
+        "| Recovery Success | {:.1}% |\n",
+        report.quality.recovery_success_rate()
+    ));
+    md.push_str(&format!(
+        "| Tool Valid Rate | {:.1}% |\n",
+        report.quality.tool_valid_rate()
+    ));
+    md.push_str(&format!(
+        "| Timeout Rate | {:.1}% |\n",
+        report.quality.timeout_rate()
+    ));
+    md.push_str(&format!(
+        "| **Overall Quality Score** | **{:.1}%** |\n\n",
+        report.quality.overall_quality_score()
+    ));
 
     md.push_str("## Suite timing (passed scenarios)\n\n");
     md.push_str("Means over orchestrator `step()` completions from **successful scenarios only** (different pass rates ⇒ different workload mixes between models).\n\n");
@@ -780,13 +835,19 @@ fn generate_markdown_report(report: &BenchmarkReport) -> String {
     md.push_str("| Scenario | Status | Rounds | Duration |\n");
     md.push_str("|----------|--------|--------|----------|\n");
     for result in &report.quality.scenario_results {
-        let status = if result.succeeded { "✓ Pass" } else { "✗ Fail" };
-        md.push_str(&format!("| {} | {} | {}/{} | {}ms |\n",
+        let status = if result.succeeded {
+            "✓ Pass"
+        } else {
+            "✗ Fail"
+        };
+        md.push_str(&format!(
+            "| {} | {} | {}/{} | {}ms |\n",
             result.scenario_name,
             status,
             result.rounds_taken,
             result.max_rounds,
-            result.duration.as_millis()));
+            result.duration.as_millis()
+        ));
     }
 
     md.push('\n');

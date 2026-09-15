@@ -71,6 +71,8 @@ pub struct ContextAssembler {
     pub core_dir: PathBuf,
     identity: tokio::sync::watch::Receiver<Arc<str>>,
     staged_memory_prompt_max_chars: usize,
+    /// Phrase-map description column cap (`slim_tool_description_preview_chars`; `0` = no truncation).
+    slim_tool_description_preview_chars: usize,
     /// When true, append field-order instructions to the system prompt
     /// (the llama.cpp GBNF grammar requires a fixed key order).
     is_grammar_constrained: bool,
@@ -91,6 +93,7 @@ impl ContextAssembler {
             core_dir: vault_root.join(workspace).join("00_Invariants"),
             identity,
             staged_memory_prompt_max_chars,
+            slim_tool_description_preview_chars: 120,
             is_grammar_constrained: false,
             turn_prefetch_block: None,
             turn_document_prefetch_block: None,
@@ -107,6 +110,11 @@ impl ContextAssembler {
 
     pub fn with_grammar_constraint(mut self, enabled: bool) -> Self {
         self.is_grammar_constrained = enabled;
+        self
+    }
+
+    pub fn with_slim_tool_description_preview_chars(mut self, chars: usize) -> Self {
+        self.slim_tool_description_preview_chars = chars;
         self
     }
 
@@ -176,7 +184,11 @@ impl ContextAssembler {
             out.push_str("\n\n");
             out.push_str(prefetch);
         }
-        if let Some(doc_block) = self.turn_document_prefetch_block.as_ref().filter(|b| !b.is_empty()) {
+        if let Some(doc_block) = self
+            .turn_document_prefetch_block
+            .as_ref()
+            .filter(|b| !b.is_empty())
+        {
             out.push_str("\n\n");
             out.push_str(doc_block);
         }
@@ -225,7 +237,11 @@ impl ContextAssembler {
         let filtered = filter_tools_by_offered_order(allowed, offered_tool_names);
         let tool_rows: Vec<(String, String)> =
             filtered.iter().filter_map(tool_row_from_entry).collect();
-        let phrase_map = super::compendium::build_phrase_compendium(descriptors, &tool_rows);
+        let phrase_map = super::compendium::build_phrase_compendium(
+            descriptors,
+            &tool_rows,
+            self.slim_tool_description_preview_chars,
+        );
         let mut slim_tools = filtered;
         strip_parameters_from_tool_values(&mut slim_tools);
         tracing::info!(
@@ -437,15 +453,12 @@ impl ContextAssembler {
 }
 
 fn tools_need_session_reference_time(tools: &[serde_json::Value]) -> bool {
-    tools
-        .iter()
-        .filter_map(tool_name_from_entry)
-        .any(|n| {
-            n == "db:find_connections"
-                || n == "weather:current"
-                || n == "weather:forecast"
-                || n.starts_with("calendar:")
-        })
+    tools.iter().filter_map(tool_name_from_entry).any(|n| {
+        n == "db:find_connections"
+            || n == "weather:current"
+            || n == "weather:forecast"
+            || n.starts_with("calendar:")
+    })
 }
 
 fn append_session_reference_time_if_needed(
@@ -641,6 +654,8 @@ mod tests {
         let mut gatekeeper = crate::tools::gatekeeper::Gatekeeper::new();
         gatekeeper.register(Arc::new(crate::tools::system::health::SystemHealthTool {
             config: Arc::new(crate::config::AppConfig::default()),
+            token_metrics: None,
+            openrouter_mode: None,
         }));
         let assembled = assembler
             .assemble_slim_tool_map(&state, &ephemeral, &gatekeeper, None, &[], false)

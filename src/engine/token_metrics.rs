@@ -20,6 +20,13 @@ pub struct LlmTokenSnapshot {
     /// EWMA of the same quantity as [`Self::last_tps_milli`] (×1000 fixed-point). Zero until first
     /// non-zero sample.
     pub ewma_tps_milli: u32,
+    /// Hosted-reasoning tokens for the last generation (bill as output; 0 for local backends).
+    pub last_reasoning_tokens: usize,
+    /// Cost of the last generation in micro-USD (`None` for local backends — local is free).
+    /// Micro-USD keeps this struct `Eq`; display as `micro / 1_000_000.0` USD.
+    pub last_cost_micro_usd: Option<u64>,
+    /// Running session cost in micro-USD, accumulated across generations (0 for local backends).
+    pub session_cost_micro_usd: u64,
 }
 
 impl LlmTokenSnapshot {
@@ -45,6 +52,19 @@ pub fn publish(
     generated_tokens: usize,
     generation_ms: u64,
 ) {
+    publish_with_cost(tx, prompt_tokens, generated_tokens, generation_ms, 0, None);
+}
+
+/// Publish counts plus hosted-backend extras: reasoning tokens and per-generation cost.
+/// The session cost accumulator carries forward from the previous snapshot.
+pub fn publish_with_cost(
+    tx: &Option<tokio::sync::watch::Sender<LlmTokenSnapshot>>,
+    prompt_tokens: usize,
+    generated_tokens: usize,
+    generation_ms: u64,
+    reasoning_tokens: usize,
+    cost_micro_usd: Option<u64>,
+) {
     let Some(tx) = tx else {
         return;
     };
@@ -53,9 +73,8 @@ pub fn publish(
         .unwrap_or_default()
         .as_millis() as u64;
     let last_tps_milli = if generation_ms > 0 && generated_tokens > 0 {
-        let v = (generated_tokens as u128)
-            .saturating_mul(1_000_000)
-            / u128::from(generation_ms.max(1));
+        let v =
+            (generated_tokens as u128).saturating_mul(1_000_000) / u128::from(generation_ms.max(1));
         u32::try_from(v.min(u128::from(u32::MAX))).unwrap_or(u32::MAX)
     } else {
         0
@@ -70,6 +89,9 @@ pub fn publish(
         let b = u64::from(last_tps_milli);
         u32::try_from((a * 85 + b * 15) / 100).unwrap_or(u32::MAX)
     };
+    let session_cost_micro_usd = prev
+        .session_cost_micro_usd
+        .saturating_add(cost_micro_usd.unwrap_or(0));
     drop(prev);
     let snap = LlmTokenSnapshot {
         prompt_tokens,
@@ -78,6 +100,9 @@ pub fn publish(
         last_generation_ms: generation_ms,
         last_tps_milli,
         ewma_tps_milli,
+        last_reasoning_tokens: reasoning_tokens,
+        last_cost_micro_usd: cost_micro_usd,
+        session_cost_micro_usd,
     };
     let _ = tx.send(snap);
 }
@@ -116,5 +141,26 @@ mod tests {
         assert_eq!(s.last_generation_ms, 1000);
         assert_eq!(s.last_tps_milli, 5000);
         assert_eq!(s.ewma_tps_milli, 5000);
+        assert_eq!(s.last_cost_micro_usd, None);
+        assert_eq!(s.session_cost_micro_usd, 0);
+    }
+
+    #[test]
+    fn publish_with_cost_accumulates_session_total() {
+        let (tx, rx) = channel();
+        let tx = Some(tx);
+        publish_with_cost(&tx, 10, 5, 1000, 340, Some(1_500));
+        publish_with_cost(&tx, 20, 8, 1000, 0, Some(2_500));
+        let r = TokenMetricsReader::new(rx);
+        let s = r.snapshot();
+        assert_eq!(s.last_cost_micro_usd, Some(2_500));
+        assert_eq!(s.session_cost_micro_usd, 4_000);
+        assert_eq!(s.last_reasoning_tokens, 0);
+
+        // Local publish keeps the session accumulator intact.
+        publish(&tx, 1, 1, 100);
+        let s = r.snapshot();
+        assert_eq!(s.last_cost_micro_usd, None);
+        assert_eq!(s.session_cost_micro_usd, 4_000);
     }
 }

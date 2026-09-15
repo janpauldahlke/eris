@@ -3,19 +3,19 @@
 use crate::executive::error::{FcpError, Result};
 use crate::ingest::{bound_chunks_and_preview, truncate_char_boundary};
 use crate::tools::web::allowlist::{enforce_allowlist, load_allowlist};
+use crate::tools::web::artifact::WebOutboundLink;
 use crate::tools::web::budget::WebBudget;
 use crate::tools::web::cache::{WebMissionStore, WebPageRecord};
 use crate::tools::web::consent::{
-    accept_texts_for_host, fetch_with_consent_blocking, load_consent_profiles, ConsentOutcome,
+    ConsentOutcome, accept_texts_for_host, fetch_with_consent_blocking, load_consent_profiles,
 };
 use crate::tools::web::context::{WebFetcherKind, WebToolContext};
 use crate::tools::web::fetcher::{FetchedPage, WebFetcher};
-use crate::tools::web::ledger::{host_from_normalized_url, WebCacheHit};
+use crate::tools::web::ledger::{WebCacheHit, host_from_normalized_url};
 use crate::tools::web::links::{
-    absolutize_outbound_links, filter_same_host_links, is_news_today_homepage_mission,
-    rank_headline_links, rank_internal_links_with_cap, HEADLINE_LINK_CAP, INTERNAL_LINK_CAP,
+    HEADLINE_LINK_CAP, INTERNAL_LINK_CAP, absolutize_outbound_links, filter_same_host_links,
+    is_news_today_homepage_mission, rank_headline_links, rank_internal_links_with_cap,
 };
-use crate::tools::web::artifact::WebOutboundLink;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -163,10 +163,7 @@ pub async fn run_vault_web_fetch(
         });
     }
 
-    let allowlist = load_allowlist(
-        &ctx.vault_root,
-        ctx.web_allowlist_override.as_deref(),
-    )?;
+    let allowlist = load_allowlist(&ctx.vault_root, ctx.web_allowlist_override.as_deref())?;
     enforce_allowlist(ctx.web.allowlist_enabled, &args.url, &allowlist)?;
 
     let budget = WebBudget::from_parts(
@@ -354,9 +351,16 @@ async fn fetch_paginated(
 
     loop {
         let page = if offset == 0 {
-            let (page, consent) =
-                fetch_page_with_optional_consent(ctx, host, fetcher, url, selector, budget.page_max_tokens, offset)
-                    .await?;
+            let (page, consent) = fetch_page_with_optional_consent(
+                ctx,
+                host,
+                fetcher,
+                url,
+                selector,
+                budget.page_max_tokens,
+                offset,
+            )
+            .await?;
             consent_outcome = consent;
             page
         } else {
@@ -406,11 +410,15 @@ async fn fetch_page_with_optional_consent(
     offset: u32,
 ) -> Result<(FetchedPage, Option<ConsentOutcome>)> {
     if !ctx.web.consent_helper_enabled || ctx.web.use_legacy_batch {
-        let page = fetcher.fetch_page(url, selector, max_tokens, offset).await?;
+        let page = fetcher
+            .fetch_page(url, selector, max_tokens, offset)
+            .await?;
         return Ok((page, None));
     }
     let WebFetcherKind::Browser39 { binary } = &ctx.fetcher else {
-        let page = fetcher.fetch_page(url, selector, max_tokens, offset).await?;
+        let page = fetcher
+            .fetch_page(url, selector, max_tokens, offset)
+            .await?;
         return Ok((page, None));
     };
     let profiles = load_consent_profiles(&ctx.vault_root)?;
@@ -811,4 +819,3 @@ pub(crate) fn sanitize_markdown_noise(markdown: &str) -> String {
     }
     out.join("\n")
 }
-

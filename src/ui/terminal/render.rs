@@ -42,7 +42,7 @@ fn fmt_infer_duration(ms: u64) -> String {
 }
 
 fn format_token_status_line(engine: &str, snap: &LlmTokenSnapshot) -> String {
-    format!(
+    let mut line = format!(
         "{engine} · prompt {} · completion {} · {} tokens · infer {} · {} tok/s this reply · avg {} tok/s",
         snap.prompt_tokens,
         snap.generated_tokens,
@@ -50,7 +50,19 @@ fn format_token_status_line(engine: &str, snap: &LlmTokenSnapshot) -> String {
         fmt_infer_duration(snap.last_generation_ms),
         fmt_tok_per_s_milli(snap.last_tps_milli),
         fmt_tok_per_s_milli(snap.ewma_tps_milli),
-    )
+    );
+    if snap.last_reasoning_tokens > 0 {
+        line.push_str(&format!(" · +{} reasoning", snap.last_reasoning_tokens));
+    }
+    // Hosted backends only; local backends never publish a cost (local = free).
+    if let Some(last) = snap.last_cost_micro_usd {
+        line.push_str(&format!(
+            " · ${:.4} this reply · ${:.4} session",
+            last as f64 / 1_000_000.0,
+            snap.session_cost_micro_usd as f64 / 1_000_000.0,
+        ));
+    }
+    line
 }
 
 /// Word-wrap chat text to `width` display cells so scroll math matches the Paragraph (no widget wrap).
@@ -342,6 +354,7 @@ pub fn draw(f: &mut Frame, app: &TuiApp, llm_tokens: &LlmTokenSnapshot) {
     let engine_name = match app.state.llm_backend {
         LlmBackend::Ollama => "Ollama",
         LlmBackend::LlamaCpp => "llama.cpp",
+        LlmBackend::OpenRouter => "OpenRouter",
     };
     let tok_status = format_token_status_line(engine_name, llm_tokens);
 

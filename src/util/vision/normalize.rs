@@ -112,9 +112,10 @@ fn format_allowed(format: ImageFormat, config: &VisionConfig) -> bool {
         ImageFormat::WebP => "webp",
         _ => return false,
     };
-    config.allowed_extensions.iter().any(|e| {
-        e.eq_ignore_ascii_case(ext) || (ext == "jpeg" && e.eq_ignore_ascii_case("jpg"))
-    })
+    config
+        .allowed_extensions
+        .iter()
+        .any(|e| e.eq_ignore_ascii_case(ext) || (ext == "jpeg" && e.eq_ignore_ascii_case("jpg")))
 }
 
 #[cfg(test)]
@@ -168,8 +169,9 @@ mod tests {
             ..VisionConfig::default()
         };
         // 1280×960 is enough to exercise resize + JPEG budget without OOM when tests run in parallel.
-        let img: ImageBuffer<Rgb<u8>, Vec<u8>> =
-            ImageBuffer::from_fn(1280, 960, |x, y| Rgb([(x % 256) as u8, (y % 256) as u8, 128]));
+        let img: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::from_fn(1280, 960, |x, y| {
+            Rgb([(x % 256) as u8, (y % 256) as u8, 128])
+        });
         let mut raw = Vec::new();
         img.write_to(&mut Cursor::new(&mut raw), ImageFormat::Png)
             .expect("png");

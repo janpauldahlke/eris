@@ -92,6 +92,11 @@ pub const DUPLICATE_SUPPRESS_IDLE_GUIDANCE: &str = r#"[FCP DUPLICATE TOOL — US
 All tool_calls in your last batch were skipped as duplicates of calls already made this turn. Do not repeat them. Reply with status Idle, a non-empty message_to_user summarizing prior tool results, and tool_calls [].
 [/FCP DUPLICATE TOOL — USER REPLY]"#;
 
+/// OpenRouter Chat: tools are omitted this hop. Answer from the results already on the stack.
+pub const POST_TOOL_TALK_NOW_GUIDANCE: &str = r#"[FCP POST-TOOL — ANSWER NOW]
+You have tool results above. Tools are not offered this hop. Reply now: status Idle, a non-empty message_to_user in full sentences that explains what the results mean for the user, and tool_calls []. Do not invent another tool call.
+[/FCP POST-TOOL — ANSWER NOW]"#;
+
 /// True when the latest user turn asks to remember, save, or catalog an uploaded image.
 pub fn user_wants_media_catalog(user: &str) -> bool {
     let lower = user.to_lowercase();
@@ -155,9 +160,11 @@ mod tests {
             "Recover message must embed POST_TOOL_FAILURE_TRUST_GUIDANCE so Idle cannot regress to false success claims"
         );
         assert!(msg.contains("network timeout"));
-        assert!(msg.contains(
-            crate::orchestrator::context::resolved_tool_recovery::PROTOCOL_FAULT_PREFIX
-        ));
+        assert!(
+            msg.contains(
+                crate::orchestrator::context::resolved_tool_recovery::PROTOCOL_FAULT_PREFIX
+            )
+        );
     }
 
     #[test]
@@ -169,10 +176,7 @@ mod tests {
 
     #[test]
     fn vision_see_catalog_nudge_includes_path_and_description() {
-        let msg = vision_see_catalog_nudge(
-            "99_USER_UPLOADED/images/abc.jpg",
-            "A red truck.",
-        );
+        let msg = vision_see_catalog_nudge("99_USER_UPLOADED/images/abc.jpg", "A red truck.");
         assert!(msg.contains("media:catalog"));
         assert!(msg.contains("99_USER_UPLOADED/images/abc.jpg"));
         assert!(msg.contains("A red truck."));
@@ -205,9 +209,12 @@ mod tests {
     #[test]
     fn ensure_web_find_paired_when_fetch_targeted() {
         use std::collections::HashSet;
-        let allowed: HashSet<String> =
-            ["web:fetch", "web:find"].iter().map(|s| (*s).to_string()).collect();
-        let mut targeted: HashSet<String> = ["web:fetch"].iter().map(|s| (*s).to_string()).collect();
+        let allowed: HashSet<String> = ["web:fetch", "web:find"]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        let mut targeted: HashSet<String> =
+            ["web:fetch"].iter().map(|s| (*s).to_string()).collect();
         super::ensure_web_find_paired_with_fetch_tools(&mut targeted, &allowed);
         assert!(targeted.contains("web:find"));
     }

@@ -13,13 +13,9 @@ pub async fn persist_normalized_image(
     vision: &VisionConfig,
     normalized: NormalizedImage,
 ) -> Result<ImageAttachment> {
-    let blob = persist_content_addressed(
-        workspace_root,
-        &vision.upload_dir,
-        &normalized.bytes,
-        "jpg",
-    )
-    .await?;
+    let blob =
+        persist_content_addressed(workspace_root, &vision.upload_dir, &normalized.bytes, "jpg")
+            .await?;
     let filename = blob
         .relative_path
         .rsplit('/')

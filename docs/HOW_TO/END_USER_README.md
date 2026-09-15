@@ -1,6 +1,6 @@
 # Eris — quick start for users
 
-Eris is a **local**, vault-centric assistant: you keep your notes in a folder (the **vault**), run `eris chat` from that folder, and chat in the terminal or in a small browser window on your machine. Two LLM backends are available: **Ollama** (default, easiest setup) or **llama.cpp** (direct GGUF inference with grammar-enforced structured output). Optional Qdrant holds semantic memory over your notes.
+Eris is a **local**, vault-centric assistant: you keep your notes in a folder (the **vault**), run `eris chat` from that folder, and chat in the terminal or in a small browser window on your machine. Three LLM backends are available: **Ollama** (default, easiest setup), **llama.cpp** (direct GGUF inference with grammar-enforced structured output), or **OpenRouter** (hosted models via an API key — chat leaves your machine; embeddings and notes stay local). Optional Qdrant holds semantic memory over your notes.
 
 This page is for **people installing a pre-built binary**. Developers building from source should use the [project README](../../README.md).
 

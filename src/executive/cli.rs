@@ -196,8 +196,15 @@ mod tests {
     fn test_cli_benchmark_default() {
         let args = vec!["eris", "benchmark"];
         let cli = parse_from(args).unwrap();
-        
-        if let Commands::Benchmark { suite, format, isolation, no_dry_run, .. } = cli.command {
+
+        if let Commands::Benchmark {
+            suite,
+            format,
+            isolation,
+            no_dry_run,
+            ..
+        } = cli.command
+        {
             assert_eq!(suite, "standard");
             assert_eq!(format, "table");
             assert_eq!(isolation, "strict");
@@ -211,7 +218,7 @@ mod tests {
     fn test_cli_benchmark_suite_selection() {
         let args = vec!["eris", "benchmark", "--suite", "quick"];
         let cli = parse_from(args).unwrap();
-        
+
         if let Commands::Benchmark { suite, .. } = cli.command {
             assert_eq!(suite, "quick");
         } else {
@@ -223,7 +230,7 @@ mod tests {
     fn test_cli_benchmark_output_format() {
         let args = vec!["eris", "benchmark", "--format", "json"];
         let cli = parse_from(args).unwrap();
-        
+
         if let Commands::Benchmark { format, .. } = cli.command {
             assert_eq!(format, "json");
         } else {
@@ -235,7 +242,7 @@ mod tests {
     fn test_cli_benchmark_list_mode() {
         let args = vec!["eris", "benchmark", "--list"];
         let cli = parse_from(args).unwrap();
-        
+
         if let Commands::Benchmark { list, .. } = cli.command {
             assert!(list);
         } else {
@@ -247,7 +254,7 @@ mod tests {
     fn test_cli_benchmark_isolation_mode() {
         let args = vec!["eris", "benchmark", "--isolation", "relaxed"];
         let cli = parse_from(args).unwrap();
-        
+
         if let Commands::Benchmark { isolation, .. } = cli.command {
             assert_eq!(isolation, "relaxed");
         } else {
@@ -257,19 +264,11 @@ mod tests {
 
     #[test]
     fn test_cli_benchmark_diff_vaults() {
-        let args = vec![
-            "eris",
-            "benchmark",
-            "--diff-vaults",
-            "gemma",
-            "nemo",
-        ];
+        let args = vec!["eris", "benchmark", "--diff-vaults", "gemma", "nemo"];
         let cli = parse_from(args).unwrap();
 
         if let Commands::Benchmark {
-            diff_vaults,
-            suite,
-            ..
+            diff_vaults, suite, ..
         } = cli.command
         {
             assert_eq!(

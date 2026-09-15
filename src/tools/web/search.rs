@@ -39,10 +39,7 @@ pub fn load_search_engine_template(vault_root: &Path) -> Result<String> {
     }
     let raw = std::fs::read_to_string(&path).map_err(FcpError::Io)?;
     let table: toml::Value = toml::from_str(&raw).map_err(|e| {
-        FcpError::Config(format!(
-            "invalid browser39 config {}: {e}",
-            path.display()
-        ))
+        FcpError::Config(format!("invalid browser39 config {}: {e}", path.display()))
     })?;
     table
         .get("search")
@@ -109,9 +106,9 @@ impl Tool for WebSearchTool {
             self.ctx.web_allowlist_override.as_deref(),
         )?;
         enforce_allowlist(self.ctx.web.allowlist_enabled, &url, &allowlist)?;
-        let note = args.mission_note.unwrap_or_else(|| {
-            format!("web:search: {}", args.query.trim())
-        });
+        let note = args
+            .mission_note
+            .unwrap_or_else(|| format!("web:search: {}", args.query.trim()));
         match run_vault_web_fetch(
             &self.ctx,
             WebFetchArgs {

@@ -93,7 +93,9 @@ impl<E: LlmEngine> Orchestrator<E> {
 
         let max_passes = self.config.condensation_max_chained_passes.max(1);
         let retain_ratio = self.config.condensation_retain_ratio;
-        let ceiling = self.config.condensation_stack_est_ceiling_tokens(self.num_ctx);
+        let ceiling = self
+            .config
+            .condensation_stack_est_ceiling_tokens(self.num_ctx);
 
         let mut any_fold = false;
         let mut nothing_on_first_plan = false;
@@ -123,11 +125,9 @@ impl<E: LlmEngine> Orchestrator<E> {
             );
             crate::orchestrator::context::ensure_condensation_user_query_tail(&mut summarize_stack);
 
-            let retain_budget = crate::orchestrator::context::retain_budget_tokens(
-                self.num_ctx,
-                retain_ratio,
-            )
-            .max(32);
+            let retain_budget =
+                crate::orchestrator::context::retain_budget_tokens(self.num_ctx, retain_ratio)
+                    .max(32);
             let fold_est =
                 crate::orchestrator::context::estimate_stack_tokens(&plan.messages_to_fold);
             let kept_est = crate::orchestrator::context::estimate_stack_tokens(&plan.kept_tail);
@@ -171,17 +171,16 @@ impl<E: LlmEngine> Orchestrator<E> {
                     },
                 )
                 .await?;
-            let json_out =
-                crate::orchestrator::context::normalize_rolling_summary_response(&response.content)?;
+            let json_out = crate::orchestrator::context::normalize_rolling_summary_response(
+                &response.content,
+            )?;
 
             let mut new_stack = Vec::new();
             new_stack.push(plan.main_system.clone());
             if let Some(jit) = plan.jit.clone() {
                 new_stack.push(jit);
             }
-            new_stack.push(crate::orchestrator::context::rolling_summary_system_message(
-                &json_out,
-            ));
+            new_stack.push(crate::orchestrator::context::rolling_summary_system_message(&json_out));
             for m in plan.kept_tail {
                 new_stack.push(m);
             }

@@ -13,13 +13,9 @@ pub async fn persist_normalized_audio(
     audio: &AudioConfig,
     normalized: NormalizedAudio,
 ) -> Result<AudioAttachment> {
-    let blob = persist_content_addressed(
-        workspace_root,
-        &audio.upload_dir,
-        &normalized.bytes,
-        "wav",
-    )
-    .await?;
+    let blob =
+        persist_content_addressed(workspace_root, &audio.upload_dir, &normalized.bytes, "wav")
+            .await?;
     let filename = blob
         .relative_path
         .rsplit('/')

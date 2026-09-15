@@ -1,9 +1,7 @@
 //! Split a raw LLM reply into the leading JSON object and any trailing text.
 
 use crate::orchestrator::state::LlmResponse;
-use schemars::schema::{
-    InstanceType, RootSchema, Schema, SchemaObject, SingleOrVec,
-};
+use schemars::schema::{InstanceType, RootSchema, Schema, SchemaObject, SingleOrVec};
 use std::borrow::Cow;
 use std::collections::HashSet;
 
@@ -106,10 +104,7 @@ pub fn extract_message_to_user_best_effort(raw: &str) -> Option<String> {
 /// After at least one successful tool this turn, accept salvage when Idle was intended.
 #[must_use]
 pub fn raw_looks_like_idle_reply_intent(raw: &str) -> bool {
-    let collapsed: String = raw
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .collect();
+    let collapsed: String = raw.chars().filter(|c| !c.is_whitespace()).collect();
     let lower = collapsed.to_ascii_lowercase();
     lower.contains("\"status\":\"idle\"")
         || lower.contains("\"status\":\"reflect\"")
@@ -193,7 +188,8 @@ fn scan_tool_name_tokens_in_text(text: &str, names: &mut Vec<String>) {
             continue;
         }
         let start = i;
-        while i < len && (bytes[i].is_ascii_lowercase() || bytes[i].is_ascii_digit() || bytes[i] == b'_')
+        while i < len
+            && (bytes[i].is_ascii_lowercase() || bytes[i].is_ascii_digit() || bytes[i] == b'_')
         {
             i += 1;
         }
@@ -204,7 +200,8 @@ fn scan_tool_name_tokens_in_text(text: &str, names: &mut Vec<String>) {
         if i >= len || !bytes[i].is_ascii_lowercase() {
             continue;
         }
-        while i < len && (bytes[i].is_ascii_lowercase() || bytes[i].is_ascii_digit() || bytes[i] == b'_')
+        while i < len
+            && (bytes[i].is_ascii_lowercase() || bytes[i].is_ascii_digit() || bytes[i] == b'_')
         {
             i += 1;
         }
@@ -326,8 +323,9 @@ pub fn infer_tools_from_user_message(user: &str) -> Vec<String> {
         || lower.contains("fetch that")
         || lower.contains("fetch the")
         || lower.contains("receipt_summary");
-    let wants_news =
-        lower.contains("news:today") || lower.contains("headline_count") || lower.contains("deep_fetch");
+    let wants_news = lower.contains("news:today")
+        || lower.contains("headline_count")
+        || lower.contains("deep_fetch");
     if wants_find {
         out.push("web:find".into());
     }
@@ -388,12 +386,11 @@ pub fn infer_tools_from_user_message(user: &str) -> Vec<String> {
     out
 }
 
-/// Last successful tool from the chat stack (system tool-success lines).
+/// Last successful tool from the chat stack (system or native `role:"tool"` success lines).
 pub fn last_tool_name_from_chat_stack(stack: &[crate::engine::Message]) -> Option<String> {
-    use crate::orchestrator::context::try_parse_tool_success_line;
+    use crate::orchestrator::context::message_is_tool_success;
     for msg in stack.iter().rev() {
-        if msg.role == "system"
-            && let Some(ts) = try_parse_tool_success_line(&msg.content)
+        if let Some(ts) = message_is_tool_success(msg)
             && ts.tool_name.contains(':')
         {
             return Some(ts.tool_name.to_string());
@@ -410,6 +407,95 @@ pub fn parse_llm_response_protocol(raw: &str) -> Result<LlmResponse, serde_json:
     Ok(parsed)
 }
 
+/// Project an [`crate::engine::EngineResponse`] into the orchestrator envelope.
+///
+/// Native OpenRouter tool calls skip envelope JSON entirely. Talk turns with non-JSON
+/// `content` (hosted tools path) become `message_to_user`. Envelope JSON from local
+/// backends and the OpenRouter `response_format` downgrade still parse as today.
+/// Hosted `reasoning` fills `thought` when the envelope left it empty.
+pub fn llm_response_from_engine(
+    response: &crate::engine::EngineResponse,
+) -> Result<LlmResponse, serde_json::Error> {
+    if !response.tool_calls.is_empty() {
+        let mut parsed = LlmResponse::from_native_tool_calls(
+            response.reasoning.clone(),
+            map_native_tool_calls(&response.tool_calls),
+        );
+        parsed.normalize_tool_calls();
+        return Ok(parsed);
+    }
+    match parse_llm_response_protocol(&response.content) {
+        Ok(mut parsed) => {
+            if parsed.thought.is_empty() && !response.reasoning.is_empty() {
+                parsed.thought = response.reasoning.clone();
+            }
+            Ok(parsed)
+        }
+        Err(e) => {
+            let trimmed = response.content.trim();
+            if trimmed.is_empty() || trimmed.starts_with('{') {
+                return Err(e);
+            }
+            Ok(LlmResponse::from_native_talk(
+                response.reasoning.clone(),
+                Some(response.content.clone()),
+            ))
+        }
+    }
+}
+
+/// Stable OpenAI `tool_call_id` for a native call. Empty/missing provider ids become `call_{index}`.
+pub fn native_tool_call_id(call: &crate::engine::EngineToolCall, index: usize) -> String {
+    call.id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("call_{index}"))
+}
+
+/// Fill empty `EngineToolCall.id` values so the assistant wire frame and `role:"tool"`
+/// results share the same ids. Idempotent when ids are already present.
+pub fn stabilize_engine_tool_call_ids(calls: &mut [crate::engine::EngineToolCall]) {
+    for (i, c) in calls.iter_mut().enumerate() {
+        c.id = Some(native_tool_call_id(c, i));
+    }
+}
+
+fn map_native_tool_calls(
+    calls: &[crate::engine::EngineToolCall],
+) -> Vec<crate::orchestrator::state::ToolCall> {
+    calls
+        .iter()
+        .enumerate()
+        .map(|(i, c)| crate::orchestrator::state::ToolCall {
+            name: c.name.clone(),
+            args: parse_native_arguments(&c.arguments),
+            id: None,
+            provider_call_id: Some(native_tool_call_id(c, i)),
+        })
+        .collect()
+}
+
+fn parse_native_arguments(raw: &str) -> serde_json::Value {
+    match serde_json::from_str(&crate::engine::openai_wire::sanitize_tool_call_arguments(
+        raw,
+    )) {
+        Ok(serde_json::Value::Object(map)) => serde_json::Value::Object(map),
+        Ok(_) => {
+            tracing::warn!("native tool arguments were JSON but not an object; using empty object");
+            serde_json::json!({})
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "native tool arguments JSON parse failed; using empty object"
+            );
+            serde_json::json!({})
+        }
+    }
+}
+
 /// Full recovery payload for [`crate::orchestrator::state::LoopDirective::RecoverFromFuckup`].
 pub fn llm_json_parse_recovery_message(err: &serde_json::Error, raw: &str) -> String {
     let hint_body = if raw_appears_to_start_without_json_object(raw) {
@@ -417,10 +503,7 @@ pub fn llm_json_parse_recovery_message(err: &serde_json::Error, raw: &str) -> St
     } else {
         LLM_JSON_PARSE_RECOVERY_HINT_BODY
     };
-    format!(
-        "{err}\n\n{}\n{}",
-        FCP_JSON_REPAIR_MARKER, hint_body
-    )
+    format!("{err}\n\n{}\n{}", FCP_JSON_REPAIR_MARKER, hint_body)
 }
 
 /// Same as [`llm_json_parse_recovery_message`] plus a capped single-line excerpt of the raw model output (for the recovery LLM pass only).
@@ -688,11 +771,7 @@ pub fn strip_leading_redacted_thinking_block(raw: &str) -> &str {
         return raw;
     };
     let after = trimmed[pos + "</think>".len()..].trim_start();
-    if after.is_empty() {
-        raw
-    } else {
-        after
-    }
+    if after.is_empty() { raw } else { after }
 }
 
 /// `true` when there is non-whitespace after the first complete JSON object **and** that object
@@ -810,52 +889,31 @@ mod tests {
     #[test]
     fn select_recovery_router_beats_last_tool_on_chat_stack() {
         use crate::engine::Message;
-        let allowed: HashSet<String> = [
-            "clock:now",
-            "vault:search",
-            "vault:list",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect();
-        let stack = vec![Message {
-            role: crate::engine::Role::System,
-            content: "Tool 'clock:now' succeeded: SUCCESS: 16:00".to_string(),
-        }];
-        let router = vec![
-            "vault:search".to_string(),
-            "vault:list".to_string(),
-        ];
+        let allowed: HashSet<String> = ["clock:now", "vault:search", "vault:list"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let stack = vec![Message::system(
+            "Tool 'clock:now' succeeded: SUCCESS: 16:00".to_string(),
+        )];
+        let router = vec!["vault:search".to_string(), "vault:list".to_string()];
         let user = "Search the vault for Talos and synthesis mentions.";
         let raw = "I am ready to search but have not executed yet.";
-        let selected = select_recovery_targeted_tools(
-            Some(raw),
-            user,
-            &[],
-            &router,
-            &stack,
-            &allowed,
-            0,
-        );
+        let selected =
+            select_recovery_targeted_tools(Some(raw), user, &[], &router, &stack, &allowed, 0);
         assert_eq!(selected, vec!["vault:search".to_string()]);
     }
 
     #[test]
     fn select_recovery_talos_turn8_regression() {
         use crate::engine::Message;
-        let allowed: HashSet<String> = [
-            "clock:now",
-            "vault:search",
-            "vault:list",
-            "vault:read",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect();
-        let stack = vec![Message {
-            role: crate::engine::Role::System,
-            content: "Tool 'clock:now' succeeded: SUCCESS: current time".to_string(),
-        }];
+        let allowed: HashSet<String> = ["clock:now", "vault:search", "vault:list", "vault:read"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let stack = vec![Message::system(
+            "Tool 'clock:now' succeeded: SUCCESS: current time".to_string(),
+        )];
         let router = vec![
             "vault:search".to_string(),
             "vault:taglist".to_string(),
@@ -863,15 +921,8 @@ mod tests {
         ];
         let user = "Search the vault for any notes mentioning synthesis or Talos.";
         let raw = "I am ready to search the vault for mentions of \"synthesis\" or \"Talos\", but I have not executed the search yet. Please confirm if you would like me to proceed with `vault:search` for these terms.";
-        let selected = select_recovery_targeted_tools(
-            Some(raw),
-            user,
-            &[],
-            &router,
-            &stack,
-            &allowed,
-            0,
-        );
+        let selected =
+            select_recovery_targeted_tools(Some(raw), user, &[], &router, &stack, &allowed, 0);
         assert_eq!(selected, vec!["vault:search".to_string()]);
     }
 
@@ -882,10 +933,9 @@ mod tests {
             .into_iter()
             .map(String::from)
             .collect();
-        let stack = vec![Message {
-            role: crate::engine::Role::System,
-            content: "Tool 'clock:now' succeeded: SUCCESS".to_string(),
-        }];
+        let stack = vec![Message::system(
+            "Tool 'clock:now' succeeded: SUCCESS".to_string(),
+        )];
         let selected = select_recovery_targeted_tools(
             None,
             "Read my identity file",
@@ -915,7 +965,10 @@ mod tests {
             &allowed,
             0,
         );
-        assert_eq!(selected, vec!["clock:now".to_string(), "vault:search".to_string()]);
+        assert_eq!(
+            selected,
+            vec!["clock:now".to_string(), "vault:search".to_string()]
+        );
     }
 
     #[test]
@@ -996,10 +1049,7 @@ mod tests {
     fn natural_language_schema_enum_field() {
         let schema = schemars::schema_for!(VaultWriteArgs);
         let out = natural_language_schema_description("vault:write", &schema, "x");
-        assert!(
-            out.contains("overwrite") && out.contains("append"),
-            "{out}"
-        );
+        assert!(out.contains("overwrite") && out.contains("append"), "{out}");
     }
 
     #[derive(Debug, Deserialize, JsonSchema)]
@@ -1010,5 +1060,160 @@ mod tests {
         let schema = schemars::schema_for!(EmptyArgs);
         let out = natural_language_schema_description("t:noop", &schema, "bad");
         assert!(out.contains("No arguments required."));
+    }
+
+    #[test]
+    fn native_tool_calls_map_to_llm_response_reflect() {
+        use crate::engine::{EngineResponse, EngineToolCall};
+        use crate::orchestrator::state::LoopAction;
+        let response = EngineResponse {
+            tool_calls: vec![EngineToolCall {
+                id: Some("call_1".into()),
+                name: "memory:query".into(),
+                arguments: r#"{"query":"foo"}"#.into(),
+            }],
+            reasoning: "looking it up".into(),
+            ..Default::default()
+        };
+        let parsed = llm_response_from_engine(&response).expect("project");
+        assert_eq!(parsed.status(), LoopAction::Reflect);
+        assert_eq!(parsed.thought, "looking it up");
+        assert!(parsed.message_to_user.is_none());
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.tool_calls[0].name, "memory:query");
+        assert_eq!(parsed.tool_calls[0].args["query"], "foo");
+        assert_eq!(parsed.tool_calls[0].id, None);
+        assert_eq!(
+            parsed.tool_calls[0].provider_call_id.as_deref(),
+            Some("call_1")
+        );
+    }
+
+    #[test]
+    fn native_tool_arguments_keep_first_object_when_concatenated() {
+        use crate::engine::{EngineResponse, EngineToolCall};
+        let response = EngineResponse {
+            tool_calls: vec![EngineToolCall {
+                id: Some("call_1".into()),
+                name: "vault:search".into(),
+                arguments: r#"{"query":"who am I"}{"path":"."}"#.into(),
+            }],
+            ..Default::default()
+        };
+        let parsed = llm_response_from_engine(&response).expect("project");
+        assert_eq!(parsed.tool_calls[0].args["query"], "who am I");
+        assert!(parsed.tool_calls[0].args.get("path").is_none());
+    }
+
+    #[test]
+    fn talk_turn_without_tool_calls_maps_to_idle() {
+        use crate::engine::EngineResponse;
+        use crate::orchestrator::state::LoopAction;
+        let response = EngineResponse {
+            content: "Hello from the model.".into(),
+            reasoning: "brief think".into(),
+            ..Default::default()
+        };
+        let parsed = llm_response_from_engine(&response).expect("project");
+        assert_eq!(parsed.status(), LoopAction::Idle);
+        assert_eq!(
+            parsed.message_to_user.as_deref(),
+            Some("Hello from the model.")
+        );
+        assert_eq!(parsed.thought, "brief think");
+        assert!(parsed.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn arguments_string_parsed_into_args_value() {
+        use crate::engine::{EngineResponse, EngineToolCall};
+        let ok = EngineResponse {
+            tool_calls: vec![EngineToolCall {
+                id: None,
+                name: "vault:read".into(),
+                arguments: r#"{"relative_path":"x.md"}"#.into(),
+            }],
+            ..Default::default()
+        };
+        let parsed = llm_response_from_engine(&ok).expect("project");
+        assert_eq!(parsed.tool_calls[0].args["relative_path"], "x.md");
+        assert_eq!(
+            parsed.tool_calls[0].provider_call_id.as_deref(),
+            Some("call_0"),
+            "missing provider id is synthesized"
+        );
+
+        let bad = EngineResponse {
+            tool_calls: vec![EngineToolCall {
+                id: None,
+                name: "vault:read".into(),
+                arguments: "not-json".into(),
+            }],
+            ..Default::default()
+        };
+        let parsed = llm_response_from_engine(&bad).expect("project");
+        assert_eq!(parsed.tool_calls[0].args, serde_json::json!({}));
+    }
+
+    #[test]
+    fn reasoning_field_routed_to_thought_not_content() {
+        use crate::engine::EngineResponse;
+        let response = EngineResponse {
+            content: r#"{"thought":"","status":"Idle","message_to_user":"hi","tool_calls":[]}"#
+                .into(),
+            reasoning: "hosted trace".into(),
+            ..Default::default()
+        };
+        let parsed = llm_response_from_engine(&response).expect("project");
+        assert_eq!(parsed.thought, "hosted trace");
+        assert_eq!(parsed.message_to_user.as_deref(), Some("hi"));
+        assert!(
+            !parsed.thought.contains("hi"),
+            "reasoning must not be mixed with content"
+        );
+    }
+
+    #[test]
+    fn last_tool_name_reads_native_tool_role() {
+        use crate::engine::Message;
+        let line = crate::orchestrator::context::format_tool_success_line("memory:query", "ok");
+        let stack = vec![
+            Message::system("prompt"),
+            Message::assistant_with_tool_calls("", vec![]),
+            Message::tool(line, "call_1"),
+        ];
+        assert_eq!(
+            last_tool_name_from_chat_stack(&stack).as_deref(),
+            Some("memory:query")
+        );
+    }
+
+    #[test]
+    fn stabilize_engine_tool_call_ids_fills_and_is_idempotent() {
+        use crate::engine::EngineToolCall;
+        let mut calls = vec![
+            EngineToolCall {
+                id: None,
+                name: "a".into(),
+                arguments: "{}".into(),
+            },
+            EngineToolCall {
+                id: Some("  ".into()),
+                name: "b".into(),
+                arguments: "{}".into(),
+            },
+            EngineToolCall {
+                id: Some("kept".into()),
+                name: "c".into(),
+                arguments: "{}".into(),
+            },
+        ];
+        stabilize_engine_tool_call_ids(&mut calls);
+        assert_eq!(calls[0].id.as_deref(), Some("call_0"));
+        assert_eq!(calls[1].id.as_deref(), Some("call_1"));
+        assert_eq!(calls[2].id.as_deref(), Some("kept"));
+        stabilize_engine_tool_call_ids(&mut calls);
+        assert_eq!(calls[0].id.as_deref(), Some("call_0"));
+        assert_eq!(calls[2].id.as_deref(), Some("kept"));
     }
 }

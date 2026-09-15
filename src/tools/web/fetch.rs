@@ -43,20 +43,17 @@ impl Tool for WebFetchTool {
 mod tests {
     use super::*;
     use crate::config::WebConfig;
+    use crate::tools::web::WebSessionLedger;
     use crate::tools::web::context::WebFetcherKind;
     use crate::tools::web::fetcher::MockWebFetcher;
-    use crate::tools::web::WebSessionLedger;
     use std::sync::Arc;
     use tokio::sync::Mutex;
 
     fn test_ctx(dir: &tempfile::TempDir) -> WebToolContext {
         let allowlist_path = dir.path().join(".fcp/web_allowlist.toml");
         std::fs::create_dir_all(allowlist_path.parent().expect("parent")).expect("mkdir");
-        std::fs::write(
-            &allowlist_path,
-            r#"patterns = ["https://example.com/**"]"#,
-        )
-        .expect("write allowlist");
+        std::fs::write(&allowlist_path, r#"patterns = ["https://example.com/**"]"#)
+            .expect("write allowlist");
         WebToolContext {
             vault_root: dir.path().to_path_buf(),
             web: WebConfig::default(),

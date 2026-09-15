@@ -1,8 +1,9 @@
-use crate::engine::{LlmEngine, LlmGenerateOptions};
+use crate::engine::{LlmEngine, LlmGenerateOptions, ToolChoice};
 use crate::executive::error::{FcpError, Result};
 use crate::orchestrator::context::{build_llm_view, estimate_stack_tokens};
 use crate::orchestrator::llm_support::json_envelope::{
-    parse_llm_response_protocol, split_leading_json_object, trailing_content_after_valid_llm_json,
+    llm_response_from_engine, split_leading_json_object, stabilize_engine_tool_call_ids,
+    trailing_content_after_valid_llm_json,
 };
 use crate::orchestrator::r#loop::directive_policy::decide_transition_from_directive;
 use crate::orchestrator::r#loop::tool_batch::ToolBatchDecision;
@@ -14,8 +15,8 @@ use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use super::{
-    llama_gbnf_subset::slim_offered_tool_names, Orchestrator, PromotionSuppressedDuringStep,
-    RECOVERY_BUDGET_EXHAUSTED_DECK_LINE, TOOL_ROUND_CAP_SYSTEM_GUIDANCE,
+    Orchestrator, PromotionSuppressedDuringStep, RECOVERY_BUDGET_EXHAUSTED_DECK_LINE,
+    TOOL_ROUND_CAP_SYSTEM_GUIDANCE, llama_gbnf_subset::slim_offered_tool_names,
 };
 use crate::config::AppConfig;
 
@@ -92,7 +93,8 @@ impl<E: LlmEngine> Orchestrator<E> {
         self.last_deck_message_body = None;
         self.last_prefetch_ms = 0;
         self.context_assembler.set_turn_prefetch_block(None);
-        self.context_assembler.set_turn_document_prefetch_block(None);
+        self.context_assembler
+            .set_turn_document_prefetch_block(None);
         let mut web_tool_activity = false;
         self.web_tool_calls_this_turn = 0;
         if let Some(ledger) = &self.web_ledger {
@@ -133,14 +135,16 @@ impl<E: LlmEngine> Orchestrator<E> {
 
             let memory_fut = async {
                 if let Some(semantic) = self.semantic.as_ref() {
-                    crate::memory::prefetch::run_turn_prefetch(semantic, &user_text, &self.config).await
+                    crate::memory::prefetch::run_turn_prefetch(semantic, &user_text, &self.config)
+                        .await
                 } else {
                     None
                 }
             };
             let doc_fut = async {
                 if let Some(ds) = self.document_store.as_ref() {
-                    crate::memory::prefetch::run_document_prefetch(ds, &user_text, &self.config).await
+                    crate::memory::prefetch::run_document_prefetch(ds, &user_text, &self.config)
+                        .await
                 } else {
                     None
                 }
@@ -158,7 +162,8 @@ impl<E: LlmEngine> Orchestrator<E> {
             if let Some(block) = doc_block {
                 let hit_count = block.matches("(from ").count().max(1);
                 activity_parts.push(format!("{hit_count} document passage(s)"));
-                self.context_assembler.set_turn_document_prefetch_block(Some(block));
+                self.context_assembler
+                    .set_turn_document_prefetch_block(Some(block));
             }
             if !activity_parts.is_empty() {
                 self.activity_line = Some(format!("Recalled {}", activity_parts.join(" + ")));
@@ -208,9 +213,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                 }
                 return Ok(());
             }
-            if self.tool_rounds >= self.max_tool_rounds
-                && self.state != AgentState::Reflect
-            {
+            if self.tool_rounds >= self.max_tool_rounds && self.state != AgentState::Reflect {
                 if !self.tool_round_cap_final_pass_pending {
                     self.tool_round_cap_final_pass_pending = true;
                     tracing::warn!(
@@ -231,10 +234,8 @@ impl<E: LlmEngine> Orchestrator<E> {
                         "{}\n\n(Current turn: {} successful tool executions; configured maximum per user turn is {}.)",
                         TOOL_ROUND_CAP_SYSTEM_GUIDANCE, self.tool_rounds, self.max_tool_rounds
                     );
-                    self.chat_stack.push(crate::engine::Message {
-                        role: crate::engine::Role::System,
-                        content: guidance,
-                    });
+                    self.chat_stack
+                        .push(crate::engine::Message::system(guidance));
                     tools_needed = false;
                     targeted_tools.clear();
                     continue;
@@ -358,14 +359,11 @@ impl<E: LlmEngine> Orchestrator<E> {
                 let user_line = self.last_user_content();
                 let fetch_offered = pre_llm_matched_tools.is_empty()
                     || pre_llm_matched_tools.iter().any(|n| n == "web:fetch");
-                if fetch_offered
-                    && crate::orchestrator::routing::user_text_has_url(user_line)
-                {
+                if fetch_offered && crate::orchestrator::routing::user_text_has_url(user_line) {
                     url_fetch_offered_this_hop = true;
                     if crate::orchestrator::routing::should_soft_compel_web_fetch(user_line) {
                         system_prompt.push_str("\n\n---\n\n");
-                        system_prompt
-                            .push_str(crate::orchestrator::routing::URL_SOFT_COMPEL_HINT);
+                        system_prompt.push_str(crate::orchestrator::routing::URL_SOFT_COMPEL_HINT);
                         url_soft_compel_injected = true;
                         tracing::info!(
                             category = routing_codes::CATEGORY_ROUTING,
@@ -462,6 +460,68 @@ impl<E: LlmEngine> Orchestrator<E> {
                 (None, true)
             };
 
+            // OpenRouter: same offered-tool decisions as the GBNF subset, compiled into both
+            // a strict envelope `response_format` (downgrade path) and native `tools[]`.
+            // Mutually exclusive with `grammar_override` by backend. The engine attaches
+            // `tools` when native calling is enabled; HTTP 400 falls back to the envelope.
+            //
+            // `tool_choice` is Auto while tools are offered: the model may talk
+            // (`message.content` / Idle) or continue tooling. `Required` forbids the
+            // summarize hop after `role:tool` results. The hard stop is
+            // [`Self::max_tool_rounds`], which sets `tools_needed = false` and omits `tools[]`
+            // for one final conversational pass (same as llama.cpp's empty-tool GBNF).
+            let (response_json_schema, native_tools, tool_choice) = if !self.config.is_openrouter()
+            {
+                (None, None, None)
+            } else if !tools_needed {
+                (
+                    Some(
+                        self.openai_schema_subset_cache
+                            .get_or_compile_subset(&self.gatekeeper, &[])?,
+                    ),
+                    None,
+                    None,
+                )
+            } else if !targeted_tools.is_empty() {
+                let names: Vec<String> = targeted_tools.iter().cloned().collect();
+                (
+                    Some(
+                        self.openai_schema_subset_cache
+                            .get_or_compile_subset(&self.gatekeeper, &names)?,
+                    ),
+                    Some(
+                        self.openai_schema_subset_cache
+                            .get_or_compile_native_tools(&self.gatekeeper, &names)?,
+                    ),
+                    Some(ToolChoice::Auto),
+                )
+            } else if slim_assembly {
+                let offered = slim_offered_tool_names(
+                    &pre_llm_matched_tools,
+                    self.tool_map_offer_cap,
+                    moltbook_overlay_latched,
+                    &self.gatekeeper,
+                    &self.state,
+                );
+                if offered.is_empty() {
+                    (None, None, None)
+                } else {
+                    (
+                        Some(
+                            self.openai_schema_subset_cache
+                                .get_or_compile_subset(&self.gatekeeper, &offered)?,
+                        ),
+                        Some(
+                            self.openai_schema_subset_cache
+                                .get_or_compile_native_tools(&self.gatekeeper, &offered)?,
+                        ),
+                        Some(ToolChoice::Auto),
+                    )
+                }
+            } else {
+                (None, None, None)
+            };
+
             let response_result = tokio::select! {
                 res = async {
                     let llm_started = Instant::now();
@@ -473,6 +533,9 @@ impl<E: LlmEngine> Orchestrator<E> {
                         },
                         grammar_override,
                         attach_session_grammar,
+                        response_json_schema,
+                        native_tools,
+                        tool_choice,
                     };
                     let out = self.engine.generate(&view, "", None, gen_options).await;
                     llm_ms_acc = llm_ms_acc.saturating_add(llm_started.elapsed().as_millis() as u64);
@@ -498,22 +561,20 @@ impl<E: LlmEngine> Orchestrator<E> {
                         "IDLE_STATE".to_string()
                     };
 
-                    self.chat_stack.push(crate::engine::Message {
-                        role: crate::engine::Role::System,
-                        content: prompt,
-                    });
+                    self.chat_stack.push(crate::engine::Message::system(prompt));
                     self.state = AgentState::Idle;
                     self.broadcast_state().await;
                     return Err(crate::executive::error::FcpError::Interrupted);
                 }
             };
 
-            let response = match response_result {
+            let mut response = match response_result {
                 Ok(res) => {
                     tracing::info!(
                         prompt_tokens = res.prompt_tokens,
                         generated_tokens = res.generated_tokens,
                         content_len = res.content.len(),
+                        native_tool_calls = res.tool_calls.len(),
                         "LLM response received"
                     );
                     tracing::debug!(raw_content = %res.content, "LLM raw output");
@@ -527,7 +588,11 @@ impl<E: LlmEngine> Orchestrator<E> {
                 }
             };
 
-            if trailing_json_recovery_triggered(&self.config, &response.content) {
+            stabilize_engine_tool_call_ids(&mut response.tool_calls);
+
+            if response.tool_calls.is_empty()
+                && trailing_json_recovery_triggered(&self.config, &response.content)
+            {
                 let (_, tail) = split_leading_json_object(&response.content);
                 let preview: String = tail.trim().chars().take(240).collect();
                 tracing::warn!(
@@ -561,7 +626,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                 return Ok(());
             }
 
-            let parsed = match parse_llm_response_protocol(&response.content) {
+            let parsed = match llm_response_from_engine(&response) {
                 Err(e) => {
                     tracing::warn!(
                         error = %e,
@@ -590,14 +655,27 @@ impl<E: LlmEngine> Orchestrator<E> {
                 Ok(p) => p,
             };
 
-            let deck_content =
-                self.stitch_pending_weather_report_into_content(&response.content);
-            self.emit_optional_user_message(&deck_content).await;
+            let deck_content = self.stitch_pending_weather_report_into_content(&response.content);
+            self.emit_optional_user_message_from_engine(&crate::engine::EngineResponse {
+                content: deck_content.clone(),
+                tool_calls: response.tool_calls.clone(),
+                reasoning: response.reasoning.clone(),
+                prompt_tokens: response.prompt_tokens,
+                generated_tokens: response.generated_tokens,
+                generation_ms: response.generation_ms,
+            })
+            .await;
 
-            self.chat_stack.push(crate::engine::Message {
-                role: crate::engine::Role::Assistant,
-                content: deck_content,
-            });
+            if response.tool_calls.is_empty() {
+                self.chat_stack
+                    .push(crate::engine::Message::assistant(deck_content));
+            } else {
+                self.chat_stack
+                    .push(crate::engine::Message::assistant_with_tool_calls(
+                        deck_content,
+                        response.tool_calls.clone(),
+                    ));
+            }
 
             let total_tokens = response.generated_tokens + response.prompt_tokens;
             let active_threshold_ratio = if web_tool_activity {
@@ -688,10 +766,21 @@ impl<E: LlmEngine> Orchestrator<E> {
                                 "Duplicate-only tool batch; forcing conversational pass without Recover"
                             );
                             self.state = AgentState::Chat;
-                            self.chat_stack.push(crate::engine::Message {
-                                role: crate::engine::Role::System,
-                                content: message,
-                            });
+                            self.chat_stack
+                                .push(crate::engine::Message::system(message));
+                            tools_needed = false;
+                            targeted_tools.clear();
+                            self.force_full_tool_schemas_in_llm_view = false;
+                            continue;
+                        }
+                        ToolBatchDecision::PostToolTalkPass { message } => {
+                            tracing::info!(
+                                event = "orchestrator.tools.post_tool_talk_pass",
+                                "Successful tool batch; omitting tools so the model must answer"
+                            );
+                            self.state = AgentState::Chat;
+                            self.chat_stack
+                                .push(crate::engine::Message::system(message));
                             tools_needed = false;
                             targeted_tools.clear();
                             self.force_full_tool_schemas_in_llm_view = false;

@@ -8,9 +8,7 @@ use serde_json::Value as JsonValue;
 
 use crate::config::AppConfig;
 use crate::executive::error::{FcpError, Result};
-use crate::tools::registration::{
-    DB_REST_API_PROFILES, WEATHER_API_PROFILES, WIKI_API_PROFILES,
-};
+use crate::tools::registration::{DB_REST_API_PROFILES, WEATHER_API_PROFILES, WIKI_API_PROFILES};
 use crate::vault_layout;
 
 use super::tools_config_schema::family_field_keys;
@@ -36,9 +34,11 @@ pub async fn merge_tools_into_toml(
     }
 
     let path = vault_layout::config_toml(vault_root);
-    let raw = tokio::fs::read_to_string(&path).await.map_err(FcpError::Io)?;
-    let mut doc: toml::Table = toml::from_str(&raw)
-        .map_err(|e| FcpError::Config(format!("parse config.toml: {e}")))?;
+    let raw = tokio::fs::read_to_string(&path)
+        .await
+        .map_err(FcpError::Io)?;
+    let mut doc: toml::Table =
+        toml::from_str(&raw).map_err(|e| FcpError::Config(format!("parse config.toml: {e}")))?;
 
     for (key, val) in &payload.values {
         if !allowed.iter().any(|k| k == key) {
@@ -89,14 +89,19 @@ fn apply_key(doc: &mut toml::Table, key: &str, val: &JsonValue) -> Result<()> {
             }
             doc.insert(key.to_string(), toml::Value::Integer(n as i64));
         }
-        "memory_query_default_top_k" | "memory_query_top_k_max" | "memory_query_default_max_total_chars" => {
+        "memory_query_default_top_k"
+        | "memory_query_top_k_max"
+        | "memory_query_default_max_total_chars" => {
             let n = json_usize(val)?;
             if n == 0 {
                 return Err(FcpError::Config(format!("{key} must be positive")));
             }
             doc.insert(key.to_string(), toml::Value::Integer(n as i64));
         }
-        "require_semantic_brain" | "news_today_enabled" | "weather_enabled" | "wiki_enabled"
+        "require_semantic_brain"
+        | "news_today_enabled"
+        | "weather_enabled"
+        | "wiki_enabled"
         | "db_rest_enabled" => {
             doc.insert(key.to_string(), toml::Value::Boolean(json_bool(val)?));
         }
@@ -122,7 +127,9 @@ fn apply_key(doc: &mut toml::Table, key: &str, val: &JsonValue) -> Result<()> {
         "web.search_enabled" => {
             set_nested_bool(doc, &["web"], "search_enabled", json_bool(val)?);
         }
-        "web.default_fetch_budget" | "web.max_fetches_per_user_turn" | "web.max_web_tool_calls_per_turn" => {
+        "web.default_fetch_budget"
+        | "web.max_fetches_per_user_turn"
+        | "web.max_web_tool_calls_per_turn" => {
             let n = json_u64(val)?;
             if n == 0 {
                 return Err(FcpError::Config(format!("{key} must be positive")));
@@ -130,7 +137,9 @@ fn apply_key(doc: &mut toml::Table, key: &str, val: &JsonValue) -> Result<()> {
             let field = key.strip_prefix("web.").expect("web prefix");
             set_nested_integer(doc, &["web"], field, n);
         }
-        "web.require_find_before_refetch" | "web.allowlist_enabled" | "web.explore_site_enabled" => {
+        "web.require_find_before_refetch"
+        | "web.allowlist_enabled"
+        | "web.explore_site_enabled" => {
             let field = key.strip_prefix("web.").expect("web prefix");
             set_nested_bool(doc, &["web"], field, json_bool(val)?);
         }
@@ -175,7 +184,9 @@ fn apply_key(doc: &mut toml::Table, key: &str, val: &JsonValue) -> Result<()> {
         "moltbook.timeout_secs" => {
             let n = json_u64(val)?;
             if n == 0 {
-                return Err(FcpError::Config("moltbook.timeout_secs must be positive".into()));
+                return Err(FcpError::Config(
+                    "moltbook.timeout_secs must be positive".into(),
+                ));
             }
             set_nested_integer(doc, &["moltbook"], "timeout_secs", n);
         }
@@ -226,7 +237,9 @@ fn apply_key(doc: &mut toml::Table, key: &str, val: &JsonValue) -> Result<()> {
             }
         }
         other => {
-            return Err(FcpError::Config(format!("unsupported tool config key: {other}")));
+            return Err(FcpError::Config(format!(
+                "unsupported tool config key: {other}"
+            )));
         }
     }
     Ok(())
@@ -369,10 +382,7 @@ base_url = "https://example.com"
         let config = AppConfig::default();
         let payload = ToolsUpdatePayload {
             family_id: "weather".into(),
-            values: BTreeMap::from([(
-                "weather_enabled".to_string(),
-                JsonValue::from(false),
-            )]),
+            values: BTreeMap::from([("weather_enabled".to_string(), JsonValue::from(false))]),
         };
         merge_tools_into_toml(dir.path(), &config, &payload)
             .await

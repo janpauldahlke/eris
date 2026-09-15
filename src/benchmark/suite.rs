@@ -172,14 +172,10 @@ impl SuiteRegistry {
 
     /// Register all predefined suites.
     fn register_predefined(&mut self) {
-        self.suites.insert(
-            "quick".to_string(),
-            Self::build_quick_suite(),
-        );
-        self.suites.insert(
-            "standard".to_string(),
-            Self::build_standard_suite(),
-        );
+        self.suites
+            .insert("quick".to_string(), Self::build_quick_suite());
+        self.suites
+            .insert("standard".to_string(), Self::build_standard_suite());
         self.suites.insert(
             "comprehensive".to_string(),
             Self::build_comprehensive_suite(),
@@ -203,14 +199,23 @@ impl SuiteRegistry {
     fn build_standard_suite() -> ScenarioSuite {
         let mut suite = Self::build_quick_suite();
         suite.name = "standard".to_string();
-        suite.description = "Core capability tests including multi-step reasoning (~2-3m)".to_string();
-        
+        suite.description =
+            "Core capability tests including multi-step reasoning (~2-3m)".to_string();
+
         // Add additional scenarios
-        suite.scenarios.push(super::scenarios::complex::multi_hop_research_chain());
-        suite.scenarios.push(super::scenarios::complex::memory_query_chain());
-        suite.scenarios.push(super::scenarios::complex::conditional_weather_check());
-        suite.scenarios.push(super::scenarios::adversarial::json_with_noise());
-        
+        suite
+            .scenarios
+            .push(super::scenarios::complex::multi_hop_research_chain());
+        suite
+            .scenarios
+            .push(super::scenarios::complex::memory_query_chain());
+        suite
+            .scenarios
+            .push(super::scenarios::complex::conditional_weather_check());
+        suite
+            .scenarios
+            .push(super::scenarios::adversarial::json_with_noise());
+
         suite
     }
 
@@ -219,15 +224,27 @@ impl SuiteRegistry {
         let mut suite = Self::build_standard_suite();
         suite.name = "comprehensive".to_string();
         suite.description = "Deep capability analysis including stress tests (~5-10m)".to_string();
-        
+
         // Add stress test scenarios
-        suite.scenarios.push(super::scenarios::adversarial::unicode_handling());
-        suite.scenarios.push(super::scenarios::adversarial::deeply_nested_json());
-        suite.scenarios.push(super::scenarios::adversarial::large_array_parsing());
-        suite.scenarios.push(super::scenarios::complex::error_recovery_simulation());
-        suite.scenarios.push(super::scenarios::complex::conditional_tool_selection());
-        suite.scenarios.push(super::scenarios::complex::multi_hop_with_branching());
-        
+        suite
+            .scenarios
+            .push(super::scenarios::adversarial::unicode_handling());
+        suite
+            .scenarios
+            .push(super::scenarios::adversarial::deeply_nested_json());
+        suite
+            .scenarios
+            .push(super::scenarios::adversarial::large_array_parsing());
+        suite
+            .scenarios
+            .push(super::scenarios::complex::error_recovery_simulation());
+        suite
+            .scenarios
+            .push(super::scenarios::complex::conditional_tool_selection());
+        suite
+            .scenarios
+            .push(super::scenarios::complex::multi_hop_with_branching());
+
         suite
     }
 }
@@ -248,13 +265,13 @@ mod tests {
     #[test]
     fn test_suite_sizes() {
         let registry = SuiteRegistry::new();
-        
+
         let quick = registry.get("quick").unwrap();
         assert!(!quick.is_empty());
-        
+
         let standard = registry.get("standard").unwrap();
         assert!(standard.len() >= quick.len());
-        
+
         let comprehensive = registry.get("comprehensive").unwrap();
         assert!(comprehensive.len() >= standard.len());
     }
@@ -280,7 +297,7 @@ mod tests {
 
         let json = serde_json::to_string(&scenario).unwrap();
         let deserialized: Scenario = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(scenario.name, deserialized.name);
         assert_eq!(scenario.steps.len(), deserialized.steps.len());
     }

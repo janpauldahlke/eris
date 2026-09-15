@@ -2,12 +2,13 @@
 
 ## Backend Selection
 
-Eris supports two LLM backends:
+Eris supports three LLM backends:
 
 - **Ollama** (default): Manages models via Ollama's API. Easiest setup.
 - **llama.cpp**: Direct GGUF model inference via llama-server. More control, GBNF grammar enforcement for structured output.
+- **OpenRouter**: Hosted chat via an API key (`OPENROUTER_API_KEY`, env-only). JSON Schema `response_format` instead of GBNF; embeddings stay local via `embed_backend`. Requires explicit privacy consent.
 
-See [LLAMA_CPP_SETUP.md](LLAMA_CPP_SETUP.md) for llama.cpp installation and configuration.
+See [LLAMA_CPP_SETUP.md](LLAMA_CPP_SETUP.md) for llama.cpp installation and configuration, and [OPENROUTER_SETUP.md](OPENROUTER_SETUP.md) for the hosted backend.
 
 Backend is selected during first-run ignition (`eris chat` in a fresh vault directory) or by setting `llm_backend` in `.fcp/config.toml`.
 

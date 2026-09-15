@@ -54,7 +54,10 @@ fn normalize_upload_blocking(raw: &[u8], config: &AudioConfig) -> Result<Normali
 
 fn extension_allowed(ext: &str, config: &AudioConfig) -> bool {
     let e = ext.trim_start_matches('.').to_ascii_lowercase();
-    config.allowed_extensions.iter().any(|a| a.to_ascii_lowercase() == e)
+    config
+        .allowed_extensions
+        .iter()
+        .any(|a| a.to_ascii_lowercase() == e)
 }
 
 fn sniff_suffix(raw: &[u8]) -> String {
@@ -162,7 +165,11 @@ fn parse_pcm_wav(raw: &[u8]) -> Result<Option<(u32, u16, Vec<u8>)>> {
     Ok(Some((sample_rate, channels, data)))
 }
 
-fn normalize_with_ffmpeg(raw: &[u8], suffix: &str, config: &AudioConfig) -> Result<NormalizedAudio> {
+fn normalize_with_ffmpeg(
+    raw: &[u8],
+    suffix: &str,
+    config: &AudioConfig,
+) -> Result<NormalizedAudio> {
     let ffmpeg = which_ffmpeg()?;
     let input = NamedTempFile::new().map_err(|e| FcpError::ToolFault {
         tool_name: "audio:upload".into(),
@@ -184,24 +191,9 @@ fn normalize_with_ffmpeg(raw: &[u8], suffix: &str, config: &AudioConfig) -> Resu
     let ar = config.target_sample_rate.to_string();
     let ac = config.target_channels.to_string();
     let status = Command::new(&ffmpeg)
-        .args([
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-i",
-        ])
+        .args(["-hide_banner", "-loglevel", "error", "-y", "-i"])
         .arg(&input_path)
-        .args([
-            "-ar",
-            &ar,
-            "-ac",
-            &ac,
-            "-t",
-            &max_d,
-            "-f",
-            "wav",
-        ])
+        .args(["-ar", &ar, "-ac", &ac, "-t", &max_d, "-f", "wav"])
         .arg(&output_path)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())

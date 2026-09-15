@@ -163,8 +163,8 @@ fn rel_path_for_reindex(
 ) -> Option<String> {
     let rel = path.strip_prefix(vault_root).ok()?;
     let key = rel.to_string_lossy().replace('\\', "/");
-    let eligible_ext = key.ends_with(".md")
-        || (key.starts_with("40_MEDIA/") && key.ends_with(".json"));
+    let eligible_ext =
+        key.ends_with(".md") || (key.starts_with("40_MEDIA/") && key.ends_with(".json"));
     if !eligible_ext {
         return None;
     }

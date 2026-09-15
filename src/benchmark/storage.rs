@@ -57,9 +57,10 @@ impl BenchmarkStorage {
 
         // Ensure directory exists
         std::fs::create_dir_all(&storage_dir).map_err(|e| {
-            FcpError::Io(std::io::Error::other(
-                format!("Failed to create benchmarks directory: {}", e),
-            ))
+            FcpError::Io(std::io::Error::other(format!(
+                "Failed to create benchmarks directory: {}",
+                e
+            )))
         })?;
 
         tracing::debug!(
@@ -74,32 +75,34 @@ impl BenchmarkStorage {
     pub fn save_report(&self, report: &BenchmarkReport) -> Result<PathBuf> {
         let filepath = report_json_path(&self.storage_dir, &report.run_id);
 
-        let json = serde_json::to_string_pretty(report).map_err(|e| {
-            FcpError::Config(format!("Failed to serialize report: {}", e))
-        })?;
+        let json = serde_json::to_string_pretty(report)
+            .map_err(|e| FcpError::Config(format!("Failed to serialize report: {}", e)))?;
 
         std::fs::write(&filepath, json).map_err(|e| {
-            FcpError::Io(std::io::Error::other(
-                format!("Failed to write report: {}", e),
-            ))
+            FcpError::Io(std::io::Error::other(format!(
+                "Failed to write report: {}",
+                e
+            )))
         })?;
 
         // Create/update "latest.json" symlink/pointer
         let latest_path = self.storage_dir.join("latest.json");
         let _ = std::fs::remove_file(&latest_path); // Ignore if doesn't exist
-        
+
         #[cfg(unix)]
         std::os::unix::fs::symlink(&filepath, &latest_path).map_err(|e| {
-            FcpError::Io(std::io::Error::other(
-                format!("Failed to create latest symlink: {}", e),
-            ))
+            FcpError::Io(std::io::Error::other(format!(
+                "Failed to create latest symlink: {}",
+                e
+            )))
         })?;
 
         #[cfg(not(unix))]
         std::fs::write(&latest_path, filepath.to_string_lossy().as_bytes()).map_err(|e| {
-            FcpError::Io(std::io::Error::other(
-                format!("Failed to write latest pointer: {}", e),
-            ))
+            FcpError::Io(std::io::Error::other(format!(
+                "Failed to write latest pointer: {}",
+                e
+            )))
         })?;
 
         tracing::info!(
@@ -119,14 +122,15 @@ impl BenchmarkStorage {
     /// Load a report from a specific path.
     pub fn load_report_from_path(&self, path: &Path) -> Result<BenchmarkReport> {
         let json = std::fs::read_to_string(path).map_err(|e| {
-            FcpError::Io(std::io::Error::other(
-                format!("Failed to read report from {}: {}", path.display(), e),
-            ))
+            FcpError::Io(std::io::Error::other(format!(
+                "Failed to read report from {}: {}",
+                path.display(),
+                e
+            )))
         })?;
 
-        let report: BenchmarkReport = serde_json::from_str(&json).map_err(|e| {
-            FcpError::Config(format!("Failed to parse report: {}", e))
-        })?;
+        let report: BenchmarkReport = serde_json::from_str(&json)
+            .map_err(|e| FcpError::Config(format!("Failed to parse report: {}", e)))?;
 
         tracing::debug!(
             path = %path.display(),
@@ -158,9 +162,10 @@ impl BenchmarkStorage {
         #[cfg(unix)]
         {
             let target_path = std::fs::read_link(&latest_path).map_err(|e| {
-                FcpError::Io(std::io::Error::other(
-                    format!("Failed to read latest symlink: {}", e),
-                ))
+                FcpError::Io(std::io::Error::other(format!(
+                    "Failed to read latest symlink: {}",
+                    e
+                )))
             })?;
             self.load_report_from_path(&target_path)
         }
@@ -171,16 +176,18 @@ impl BenchmarkStorage {
         let mut reports = Vec::new();
 
         let entries = std::fs::read_dir(&self.storage_dir).map_err(|e| {
-            FcpError::Io(std::io::Error::other(
-                format!("Failed to read benchmarks directory: {}", e),
-            ))
+            FcpError::Io(std::io::Error::other(format!(
+                "Failed to read benchmarks directory: {}",
+                e
+            )))
         })?;
 
         for entry in entries {
             let entry = entry.map_err(|e| {
-                FcpError::Io(std::io::Error::other(
-                    format!("Failed to read directory entry: {}", e),
-                ))
+                FcpError::Io(std::io::Error::other(format!(
+                    "Failed to read directory entry: {}",
+                    e
+                )))
             })?;
 
             let path = entry.path();
@@ -258,11 +265,12 @@ impl BenchmarkStorage {
     /// Delete a specific report.
     pub fn delete_report(&self, run_id: &str) -> Result<()> {
         let filepath = report_json_path(&self.storage_dir, run_id);
-        
+
         std::fs::remove_file(&filepath).map_err(|e| {
-            FcpError::Io(std::io::Error::other(
-                format!("Failed to delete report: {}", e),
-            ))
+            FcpError::Io(std::io::Error::other(format!(
+                "Failed to delete report: {}",
+                e
+            )))
         })?;
 
         tracing::info!(
@@ -276,7 +284,7 @@ impl BenchmarkStorage {
     /// Clean up old reports, keeping only the most recent N.
     pub fn cleanup_old_reports(&self, keep_count: usize) -> Result<usize> {
         let all_reports = self.list_reports()?;
-        
+
         if all_reports.len() <= keep_count {
             return Ok(0);
         }
@@ -340,10 +348,10 @@ impl ReportInfo {
 /// Parse run IDs from diff argument (e.g., "run1..run2").
 pub fn parse_diff_argument(arg: &str) -> Result<(String, String)> {
     let parts: Vec<&str> = arg.split("..").collect();
-    
+
     if parts.len() != 2 {
         return Err(FcpError::Config(
-            "Diff argument must be in format 'run-id-1..run-id-2'".to_string()
+            "Diff argument must be in format 'run-id-1..run-id-2'".to_string(),
         ));
     }
 
@@ -353,7 +361,7 @@ pub fn parse_diff_argument(arg: &str) -> Result<(String, String)> {
 /// Find a report by partial ID or date.
 pub fn find_report_by_partial(storage: &BenchmarkStorage, partial: &str) -> Result<ReportInfo> {
     let reports = storage.list_reports()?;
-    
+
     // Try exact match first
     if let Some(info) = reports.iter().find(|r| r.run_id == partial) {
         return Ok(info.clone());
@@ -409,7 +417,11 @@ mod tests {
 
     fn create_test_report(name: &str) -> BenchmarkReport {
         BenchmarkReport {
-            run_id: format!("{}_{}", chrono::Utc::now().format("%Y-%m-%d_%H-%M-%S"), name),
+            run_id: format!(
+                "{}_{}",
+                chrono::Utc::now().format("%Y-%m-%d_%H-%M-%S"),
+                name
+            ),
             timestamp: chrono::Utc::now(),
             model_name: name.to_string(),
             suite: "quick".to_string(),
@@ -424,10 +436,15 @@ mod tests {
     #[test]
     fn storage_creates_directory() {
         let (temp_dir, storage) = create_temp_storage();
-        
+
         assert!(storage.storage_dir().exists());
-        assert!(storage.storage_dir().to_string_lossy().contains("benchmarks"));
-        
+        assert!(
+            storage
+                .storage_dir()
+                .to_string_lossy()
+                .contains("benchmarks")
+        );
+
         // temp_dir must be kept alive for the duration
         let _ = temp_dir;
     }
@@ -435,36 +452,36 @@ mod tests {
     #[test]
     fn save_and_load_report() {
         let (temp_dir, storage) = create_temp_storage();
-        
+
         let report = create_test_report("test-model");
         let saved_path = storage.save_report(&report).expect("save");
-        
+
         assert!(saved_path.exists());
-        
+
         let loaded = storage.load_report(&report.run_id).expect("load");
         assert_eq!(loaded.model_name, report.model_name);
-        
+
         let _ = temp_dir;
     }
 
     #[test]
     fn list_reports_returns_results() {
         let (temp_dir, storage) = create_temp_storage();
-        
+
         // Save multiple reports
         for i in 0..3 {
             let report = create_test_report(&format!("model-{}", i));
             storage.save_report(&report).expect("save");
         }
-        
+
         let list = storage.list_reports().expect("list");
         assert_eq!(list.len(), 3);
-        
+
         // Should be sorted by timestamp (newest first)
         for i in 0..list.len() - 1 {
             assert!(list[i].timestamp >= list[i + 1].timestamp);
         }
-        
+
         let _ = temp_dir;
     }
 
@@ -492,21 +509,21 @@ mod tests {
     #[test]
     fn cleanup_keeps_recent_reports() {
         let (temp_dir, storage) = create_temp_storage();
-        
+
         // Save 5 reports
         for i in 0..5 {
             let report = create_test_report(&format!("model-{}", i));
             storage.save_report(&report).expect("save");
             std::thread::sleep(std::time::Duration::from_millis(10)); // Ensure different timestamps
         }
-        
+
         // Cleanup, keeping only 2
         let deleted = storage.cleanup_old_reports(2).expect("cleanup");
         assert_eq!(deleted, 3);
-        
+
         let remaining = storage.list_reports().expect("list");
         assert_eq!(remaining.len(), 2);
-        
+
         let _ = temp_dir;
     }
 

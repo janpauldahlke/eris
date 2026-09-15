@@ -45,7 +45,7 @@ If `discord.enabled` is true but **`bot_token`** is unset/empty, **`discord_side
 
 - **`logger.rs`:** `tracing` subscriber with file appender under vault `.fcp/telemetry/logs/`. **No `println!` in logic** (per rules); user-facing stderr is reserved for startup/shutdown errors in `main` / teardown paths.
 - **`routing_codes.rs`:** Structured log field constants for pre-LLM routing outcomes.
-- **`preflight.rs`:** For non-`Chat` commands, checks Ollama/Qdrant reachability (or llama-server when `llm_backend = LlamaCpp`); **Chat** skips this global preflight and relies on `ensure_peripherals_for_chat` inside `start_chat_session`.
+- **`preflight.rs`:** For non-`Chat` commands, checks Ollama/Qdrant reachability (llama-server when `llm_backend = LlamaCpp`; for `OpenRouter` a free `GET /key` probe validates the API key — never a paid generation — plus the local embed daemon per `resolved_embed_backend()`); **Chat** skips this global preflight and relies on `ensure_peripherals_for_chat` inside `start_chat_session`.
 
 ## Idle heartbeat (`orchestrator/heartbeat/`)
 

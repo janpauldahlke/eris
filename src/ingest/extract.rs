@@ -114,7 +114,9 @@ async fn extract_pdf_from_path(path: &std::path::Path) -> Result<String> {
             if e.kind() == std::io::ErrorKind::NotFound {
                 Err(FcpError::ToolFault {
                     tool_name: "doc:ingest".into(),
-                    reason: "pdftotext not found — install poppler-utils (apt install poppler-utils)".into(),
+                    reason:
+                        "pdftotext not found — install poppler-utils (apt install poppler-utils)"
+                            .into(),
                 })
             } else {
                 Err(FcpError::ToolFault {

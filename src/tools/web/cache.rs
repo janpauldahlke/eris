@@ -210,8 +210,8 @@ impl WebMissionStore {
     pub fn read_page_meta(&self, mission_id: &str, artifact_id: &str) -> Result<WebPageRecord> {
         validate_path_token(mission_id, "mission_id")?;
         validate_path_token(artifact_id, "artifact_id")?;
-        let path = vault_layout::web_page_dir(&self.vault_root, mission_id, artifact_id)
-            .join("page.json");
+        let path =
+            vault_layout::web_page_dir(&self.vault_root, mission_id, artifact_id).join("page.json");
         let bytes = fs::read(&path).map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
                 FcpError::SchemaViolation(format!(
@@ -247,12 +247,7 @@ impl WebMissionStore {
         Ok(indices)
     }
 
-    pub fn read_chunk(
-        &self,
-        mission_id: &str,
-        artifact_id: &str,
-        index: u32,
-    ) -> Result<String> {
+    pub fn read_chunk(&self, mission_id: &str, artifact_id: &str, index: u32) -> Result<String> {
         validate_path_token(mission_id, "mission_id")?;
         validate_path_token(artifact_id, "artifact_id")?;
         let path = vault_layout::web_page_dir(&self.vault_root, mission_id, artifact_id)
@@ -352,8 +347,8 @@ mod tests {
         let loaded = store.load_manifest(&mid).expect("load");
         assert_eq!(loaded.mission_note.as_deref(), Some("Find product X price"));
 
-        let prose = fs::read_to_string(vault_layout::web_mission_prose(dir.path(), &mid))
-            .expect("prose");
+        let prose =
+            fs::read_to_string(vault_layout::web_mission_prose(dir.path(), &mid)).expect("prose");
         assert!(prose.contains("Find product X price"));
         assert!(prose.contains("web:find"));
     }
@@ -409,10 +404,7 @@ mod tests {
             .record_page_fetch(&mid, "https://a.test/", "https://a.test/", &aid)
             .expect("record");
         assert_eq!(manifest.fetch_budget.used, 1);
-        assert_eq!(
-            manifest.stop_reason.as_deref(),
-            Some("budget_exhausted")
-        );
+        assert_eq!(manifest.stop_reason.as_deref(), Some("budget_exhausted"));
         assert_eq!(manifest.budget_remaining(), 0);
     }
 

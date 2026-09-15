@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::llama_gbnf_subset::GbnfSubsetCache;
 use super::moltbook_browse_ledger::MoltbookBrowseLedger;
+use super::openai_schema_subset::JsonSchemaSubsetCache;
 use crate::tools::web::WebSessionLedger;
 
 /// Marker string in `thought` / `message_to_user` when the last user line was empty (debuggable in logs and TUI).
@@ -96,14 +97,15 @@ pub struct Orchestrator<E: LlmEngine> {
     /// LLM-only stack transform; stored [`Self::chat_stack`] is unchanged.
     pub context_view: ContextViewSettings,
     /// When true, next [`build_llm_view`] uses full `parameters` in the tool-def block (overrides slim view).
-    /// Set after a Gatekeeper schema fault when [`ToolBatchDecision::RetryWithTargetedSchema`] runs; cleared at [`Self::step`] entry and after any successful tool execution in a batch that returns [`ToolBatchDecision::Continue`].
+    /// Set after a Gatekeeper schema fault when [`ToolBatchDecision::RetryWithTargetedSchema`] runs; cleared at [`Self::step`] entry and after any successful tool execution in a batch that returns [`ToolBatchDecision::Continue`] or [`ToolBatchDecision::PostToolTalkPass`].
     pub force_full_tool_schemas_in_llm_view: bool,
     /// Monotonic counter incremented once per `step()` entry (log correlation; no span across await in `spawn`).
     pub turn_seq: u64,
     /// Shown in TUI Status while tools are pending; cleared when a final deck message is emitted or at `step` entry.
     pub activity_line: Option<String>,
     /// Latest engine token snapshot for web [`AgentStateUpdate`] (optional; TUI reads the same watch directly).
-    pub token_metrics_rx: Option<tokio::sync::watch::Receiver<crate::engine::token_metrics::LlmTokenSnapshot>>,
+    pub token_metrics_rx:
+        Option<tokio::sync::watch::Receiver<crate::engine::token_metrics::LlmTokenSnapshot>>,
     /// Last `message_to_user` body sent to the TUI deck this `step()`; avoids duplicate bubbles when Task → Reflect replays the same line.
     pub(crate) last_deck_message_body: Option<String>,
     /// After [`Self::max_tool_rounds`] successful tool runs in this `step()`, the next loop iteration runs one final conversational generation (no tools / no JIT), then idles.
@@ -121,6 +123,9 @@ pub struct Orchestrator<E: LlmEngine> {
     pub(super) recent_successful_tools: Vec<String>,
     /// llama.cpp only: memoized GBNF strings keyed by sorted tool names for per-turn subset grammar.
     pub(super) gbnf_subset_cache: GbnfSubsetCache,
+    /// OpenRouter only: memoized envelope JSON Schemas keyed by sorted tool names (same offered
+    /// list as the GBNF subset — the two constraints cannot drift apart).
+    pub(super) openai_schema_subset_cache: JsonSchemaSubsetCache,
     /// Anti-crawl ledger shared with web tools (reset at chat bootstrap).
     pub web_ledger: Option<Arc<tokio::sync::Mutex<WebSessionLedger>>>,
     /// `web:fetch` + `news:today` invocations this user turn (orchestrator cap).
@@ -191,7 +196,9 @@ impl<E: LlmEngine> Orchestrator<E> {
         config: Arc<AppConfig>,
         identity: tokio::sync::watch::Receiver<Arc<str>>,
         promotion_suppressed_during_step: Arc<AtomicBool>,
-        token_metrics_rx: Option<tokio::sync::watch::Receiver<crate::engine::token_metrics::LlmTokenSnapshot>>,
+        token_metrics_rx: Option<
+            tokio::sync::watch::Receiver<crate::engine::token_metrics::LlmTokenSnapshot>,
+        >,
         web_ledger: Option<Arc<tokio::sync::Mutex<WebSessionLedger>>>,
         semantic: Option<Arc<SemanticBrain>>,
         document_store: Option<Arc<crate::memory::document_store::DocumentStore>>,
@@ -207,7 +214,8 @@ impl<E: LlmEngine> Orchestrator<E> {
                 identity,
                 config.staged_memory_prompt_max_chars,
             )
-            .with_grammar_constraint(config.is_llamacpp()),
+            .with_grammar_constraint(config.is_llamacpp())
+            .with_slim_tool_description_preview_chars(config.slim_tool_description_preview_chars),
             tool_router,
             max_recovery_attempts,
             max_tool_rounds,
@@ -245,6 +253,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             recent_successful_tools: Vec::new(),
             token_metrics_rx,
             gbnf_subset_cache: GbnfSubsetCache::new(),
+            openai_schema_subset_cache: JsonSchemaSubsetCache::new(),
             web_ledger,
             web_tool_calls_this_turn: 0,
             semantic,

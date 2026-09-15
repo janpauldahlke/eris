@@ -17,6 +17,11 @@ pub enum FcpError {
     #[error("Network/Daemon Unreachable: {0}")]
     NetworkFault(String),
 
+    /// Hosted provider rate limit / quota exhaustion (HTTP 429) after bounded retries.
+    /// Distinct from [`FcpError::NetworkFault`] so the UI can message quota exhaustion clearly.
+    #[error("Rate limited by provider{}", retry_after_secs.map(|s| format!(" (retry after {s}s)")).unwrap_or_default())]
+    RateLimited { retry_after_secs: Option<u64> },
+
     #[error("Token Limit Breached: prompt requires {requested}, context is {available}")]
     ContextExhaustion { requested: usize, available: usize },
 

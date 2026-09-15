@@ -26,9 +26,7 @@ mod tests {
         assert!(is_recovery_system_content(
             "[SYSTEM] Invalid model output: trailing comma"
         ));
-        assert!(is_recovery_system_content(
-            "[SYSTEM] JSON repair"
-        ));
+        assert!(is_recovery_system_content("[SYSTEM] JSON repair"));
         assert!(is_recovery_system_content(
             "[SYSTEM] Recovery — schema retry"
         ));

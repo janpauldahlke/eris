@@ -4,5 +4,6 @@ mod tool_success;
 
 pub use tool_success::{
     ParsedSystemLine, TOOL_SUCCESS_INFIX, TOOL_SUCCESS_PREFIX, ToolSuccessLine,
-    format_tool_success_line, parse_system_line, try_parse_tool_success_line,
+    format_tool_success_line, message_is_tool_success, parse_system_line,
+    try_parse_tool_success_line,
 };

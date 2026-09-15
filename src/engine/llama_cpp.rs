@@ -1,4 +1,5 @@
 use crate::config::AppConfig;
+use crate::engine::openai_wire::{ChatMsg, to_wire_messages};
 use crate::engine::token_metrics;
 use crate::engine::{EngineResponse, LlmEngine, LlmGenerateOptions, Message};
 use crate::executive::error::{FcpError, Result};
@@ -34,7 +35,9 @@ fn grammar_stable_id(grammar: &str) -> u64 {
 /// prefix—matching [`crate::engine::ollama::OllamaClient`]'s `.think(false)` and keeping `message.content`
 /// usable for JSON / GBNF from the first token. When `true`, kwargs are omitted so the template may enable
 /// thinking (operators often pair with `llama-server --reasoning on` on recent builds).
-fn chat_template_kwargs_for_reasoning_config(enable_reasoning_fsm: bool) -> Option<serde_json::Value> {
+fn chat_template_kwargs_for_reasoning_config(
+    enable_reasoning_fsm: bool,
+) -> Option<serde_json::Value> {
     if enable_reasoning_fsm {
         None
     } else {
@@ -90,12 +93,6 @@ struct ChatCompletionRequest<'a> {
     chat_template_kwargs: Option<serde_json::Value>,
 }
 
-#[derive(Serialize, Debug, Clone)]
-struct ChatMsg {
-    role: String,
-    content: String,
-}
-
 #[derive(Deserialize)]
 struct ChatCompletionResponse {
     choices: Vec<Choice>,
@@ -122,102 +119,6 @@ struct DeltaContent {
 struct Usage {
     prompt_tokens: Option<usize>,
     completion_tokens: Option<usize>,
-}
-
-/// Normalize messages for chat templates that require all system content at
-/// the beginning (e.g. Qwen).  Merge leading consecutive system messages into
-/// one; re-role any later system messages as "user" so the wire payload never
-/// violates the "system-only-at-start" invariant.
-fn normalize_system_messages(messages: Vec<ChatMsg>) -> Vec<ChatMsg> {
-    if messages.is_empty() {
-        return messages;
-    }
-
-    let leading_system_count = messages
-        .iter()
-        .take_while(|m| m.role == "system")
-        .count();
-
-    let mut out = Vec::with_capacity(messages.len());
-
-    if leading_system_count > 1 {
-        let merged: String = messages[..leading_system_count]
-            .iter()
-            .map(|m| m.content.as_str())
-            .collect::<Vec<_>>()
-            .join("\n\n---\n\n");
-        out.push(ChatMsg {
-            role: "system".to_string(),
-            content: merged,
-        });
-    } else if leading_system_count == 1 {
-        out.push(ChatMsg {
-            role: messages[0].role.clone(),
-            content: messages[0].content.clone(),
-        });
-    }
-
-    let mut had_stray = false;
-    for m in messages.into_iter().skip(leading_system_count) {
-        if m.role == "system" {
-            had_stray = true;
-            out.push(ChatMsg {
-                role: "user".to_string(),
-                content: format!("[System] {}", m.content),
-            });
-        } else {
-            out.push(m);
-        }
-    }
-
-    if had_stray {
-        tracing::warn!(
-            "llama_cpp: stray system messages after non-system rows re-roled as user for strict chat template"
-        );
-    }
-
-    out
-}
-
-/// Coalesce consecutive same-role wire messages into one, guaranteeing strict
-/// `user`/`assistant` alternation after the leading system block.
-///
-/// This is the core of the long-context fix (see
-/// `docs/TODO/REFACTOR_LLAMACPP_CONTEXT_HANDLING.md`). After
-/// [`normalize_system_messages`] has folded stray `system` rows (tool results,
-/// directives) into `[System] …` **user** turns, a long tool-heavy session
-/// contains many *consecutive* `user` turns — a shape no chat template was
-/// trained on, which degrades quality deep into a session. Merging adjacent
-/// same-role turns restores the clean alternation the model expects, **without
-/// dropping any content** (safe for templates like Gemma that silently discard a
-/// native `tool` role — verified via `/apply-template`).
-///
-/// It also subsumes the old trailing-assistant merge: llama-server rejects two or
-/// more `assistant` messages at the tail, and coalescing collapses any run of
-/// assistant rows (trailing or interior) into a single wire message.
-fn coalesce_consecutive_roles(messages: Vec<ChatMsg>) -> Vec<ChatMsg> {
-    const SEP: &str = "\n\n";
-    let mut out: Vec<ChatMsg> = Vec::with_capacity(messages.len());
-    let mut coalesced_runs = 0usize;
-    for m in messages {
-        if let Some(last) = out.last_mut() {
-            if last.role == m.role {
-                last.content.push_str(SEP);
-                last.content.push_str(&m.content);
-                coalesced_runs += 1;
-                continue;
-            }
-        }
-        out.push(m);
-    }
-    if coalesced_runs > 0 {
-        tracing::debug!(
-            coalesced_runs,
-            wire_messages = out.len(),
-            "llama_cpp: coalesced consecutive same-role turns for clean template alternation"
-        );
-    }
-    out
 }
 
 async fn stream_sse_response(
@@ -289,14 +190,8 @@ impl LlmEngine for LlamaCppClient {
         stream_tx: Option<mpsc::UnboundedSender<String>>,
         options: LlmGenerateOptions,
     ) -> Result<EngineResponse> {
-        let raw_messages: Vec<ChatMsg> = stack
-            .iter()
-            .map(|m| ChatMsg {
-                role: m.role.as_str().to_string(),
-                content: m.content.clone(),
-            })
-            .collect();
-        let messages = coalesce_consecutive_roles(normalize_system_messages(raw_messages));
+        // Shared OpenAI-wire projection (normalize + coalesce) — same path as OpenRouter.
+        let messages = to_wire_messages(stack);
 
         let use_stream = stream_tx.is_some();
         let message_count = messages.len();
@@ -456,6 +351,8 @@ impl LlmEngine for LlamaCppClient {
 
         Ok(EngineResponse {
             content,
+            reasoning: String::new(),
+            tool_calls: Vec::new(),
             prompt_tokens,
             generated_tokens,
             generation_ms,
@@ -467,7 +364,6 @@ impl LlmEngine for LlamaCppClient {
 mod tests {
     use super::*;
     use crate::config::{LlamaCppConfig, LlmBackend};
-    use crate::engine::Role;
     use std::path::PathBuf;
     use tracing_test::traced_test;
     use wiremock::matchers::{method, path};
@@ -516,14 +412,18 @@ mod tests {
             .await;
 
         let client = make_client_from_mock(&mock_server.uri());
-        let stack = vec![Message {
-            role: Role::User,
-            content: "Hi".into(),
-        }];
-        let result = client.generate(&stack, "", None, LlmGenerateOptions::default()).await.expect("generate");
+        let stack = vec![Message::user("Hi")];
+        let result = client
+            .generate(&stack, "", None, LlmGenerateOptions::default())
+            .await
+            .expect("generate");
         assert_eq!(result.content, "Hello, world!");
         assert_eq!(result.prompt_tokens, 10);
         assert_eq!(result.generated_tokens, 5);
+        assert!(
+            result.tool_calls.is_empty(),
+            "llama.cpp never returns native tool_calls"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -553,11 +453,11 @@ mod tests {
             token_metrics_tx: Some(tx),
             grammar: None,
         };
-        let stack = vec![Message {
-            role: Role::User,
-            content: "Hi".into(),
-        }];
-        client.generate(&stack, "", None, LlmGenerateOptions::default()).await.expect("generate");
+        let stack = vec![Message::user("Hi")];
+        client
+            .generate(&stack, "", None, LlmGenerateOptions::default())
+            .await
+            .expect("generate");
         let snap = reader.snapshot();
         assert_eq!(snap.prompt_tokens, 42);
         assert_eq!(snap.generated_tokens, 7);
@@ -577,10 +477,7 @@ mod tests {
 
         let client = make_client_from_mock(&mock_server.uri());
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
-        let stack = vec![Message {
-            role: Role::User,
-            content: "Hi".into(),
-        }];
+        let stack = vec![Message::user("Hi")];
         let result = client
             .generate(&stack, "", Some(tx), LlmGenerateOptions::default())
             .await
@@ -611,10 +508,7 @@ mod tests {
 
         let client = make_client_from_mock(&mock_server.uri());
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
-        let stack = vec![Message {
-            role: Role::User,
-            content: "test".into(),
-        }];
+        let stack = vec![Message::user("test")];
         client
             .generate(&stack, "", Some(tx), LlmGenerateOptions::default())
             .await
@@ -648,11 +542,11 @@ mod tests {
             token_metrics_tx: None,
             grammar: None,
         };
-        let stack = vec![Message {
-            role: Role::User,
-            content: "Hi".into(),
-        }];
-        let err = client.generate(&stack, "", None, LlmGenerateOptions::default()).await.unwrap_err();
+        let stack = vec![Message::user("Hi")];
+        let err = client
+            .generate(&stack, "", None, LlmGenerateOptions::default())
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("timed out"));
     }
 
@@ -666,11 +560,11 @@ mod tests {
             .await;
 
         let client = make_client_from_mock(&mock_server.uri());
-        let stack = vec![Message {
-            role: Role::User,
-            content: "Hi".into(),
-        }];
-        let err = client.generate(&stack, "", None, LlmGenerateOptions::default()).await.unwrap_err();
+        let stack = vec![Message::user("Hi")];
+        let err = client
+            .generate(&stack, "", None, LlmGenerateOptions::default())
+            .await
+            .unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("500"));
         assert!(msg.contains("internal error"));
@@ -690,11 +584,11 @@ mod tests {
             token_metrics_tx: None,
             grammar: None,
         };
-        let stack = vec![Message {
-            role: Role::User,
-            content: "Hi".into(),
-        }];
-        let err = client.generate(&stack, "", None, LlmGenerateOptions::default()).await.unwrap_err();
+        let stack = vec![Message::user("Hi")];
+        let err = client
+            .generate(&stack, "", None, LlmGenerateOptions::default())
+            .await
+            .unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("connection refused") || msg.contains("request failed"));
     }
@@ -712,11 +606,11 @@ mod tests {
             .await;
 
         let client = make_client_from_mock(&mock_server.uri());
-        let stack = vec![Message {
-            role: Role::User,
-            content: "Hi".into(),
-        }];
-        let result = client.generate(&stack, "", None, LlmGenerateOptions::default()).await.expect("generate");
+        let stack = vec![Message::user("Hi")];
+        let result = client
+            .generate(&stack, "", None, LlmGenerateOptions::default())
+            .await
+            .expect("generate");
         assert_eq!(result.prompt_tokens, 0);
         assert_eq!(result.generated_tokens, 0);
     }
@@ -735,10 +629,7 @@ mod tests {
 
         let client = make_client_from_mock(&mock_server.uri());
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
-        let stack = vec![Message {
-            role: Role::User,
-            content: "test".into(),
-        }];
+        let stack = vec![Message::user("test")];
         let result = client
             .generate(&stack, "", Some(tx), LlmGenerateOptions::default())
             .await
@@ -766,10 +657,7 @@ mod tests {
 
         let client = make_client_from_mock(&mock_server.uri());
         let (tx, _rx) = mpsc::unbounded_channel::<String>();
-        let stack = vec![Message {
-            role: Role::User,
-            content: "test".into(),
-        }];
+        let stack = vec![Message::user("test")];
         let result = client
             .generate(&stack, "", Some(tx), LlmGenerateOptions::default())
             .await
@@ -807,10 +695,7 @@ mod tests {
             grammar: Some(Arc::new("SESSION_GRAMMAR_BLOAT_MARKER".repeat(400))),
         };
         let tiny: Arc<str> = Arc::from("tiny-root-gbnf");
-        let stack = vec![Message {
-            role: Role::User,
-            content: "Hi".into(),
-        }];
+        let stack = vec![Message::user("Hi")];
         client
             .generate(
                 &stack,
@@ -867,10 +752,7 @@ mod tests {
             token_metrics_tx: None,
             grammar: Some(Arc::new("large".repeat(500))),
         };
-        let stack = vec![Message {
-            role: Role::User,
-            content: "Hi".into(),
-        }];
+        let stack = vec![Message::user("Hi")];
         client
             .generate(
                 &stack,
@@ -928,10 +810,7 @@ mod tests {
     #[test]
     fn chat_template_kwargs_serialized_when_grammar_and_reasoning_disabled() {
         let req = ChatCompletionRequest {
-            messages: vec![ChatMsg {
-                role: "user".into(),
-                content: "hi".into(),
-            }],
+            messages: vec![ChatMsg::new("user", "hi")],
             stream: false,
             temperature: Some(0.7),
             n_predict: Some(-1),
@@ -955,220 +834,5 @@ mod tests {
         };
         let json = serde_json::to_value(&req).expect("serialize");
         assert!(json.get("chat_template_kwargs").is_none());
-    }
-
-    mod normalize_system_messages_tests {
-        use super::super::{ChatMsg, normalize_system_messages};
-
-        fn sys(s: &str) -> ChatMsg {
-            ChatMsg {
-                role: "system".into(),
-                content: s.into(),
-            }
-        }
-        fn user(s: &str) -> ChatMsg {
-            ChatMsg {
-                role: "user".into(),
-                content: s.into(),
-            }
-        }
-        fn asst(s: &str) -> ChatMsg {
-            ChatMsg {
-                role: "assistant".into(),
-                content: s.into(),
-            }
-        }
-
-        #[test]
-        fn empty_stack_unchanged() {
-            let out = normalize_system_messages(vec![]);
-            assert!(out.is_empty());
-        }
-
-        #[test]
-        fn single_system_at_front_unchanged() {
-            let out = normalize_system_messages(vec![sys("prompt"), user("hi")]);
-            assert_eq!(out.len(), 2);
-            assert_eq!(out[0].role, "system");
-            assert_eq!(out[0].content, "prompt");
-            assert_eq!(out[1].role, "user");
-        }
-
-        #[test]
-        fn multiple_leading_systems_merged() {
-            let out = normalize_system_messages(vec![
-                sys("main"),
-                sys("rolling summary"),
-                user("hi"),
-            ]);
-            assert_eq!(out.len(), 2);
-            assert_eq!(out[0].role, "system");
-            assert!(out[0].content.contains("main"));
-            assert!(out[0].content.contains("rolling summary"));
-            assert_eq!(out[1].role, "user");
-        }
-
-        #[test]
-        fn stray_system_after_user_reroled() {
-            let out = normalize_system_messages(vec![
-                sys("prompt"),
-                user("hello"),
-                asst("hi back"),
-                sys("Tool 'x:y' succeeded: data"),
-            ]);
-            assert_eq!(out.len(), 4);
-            assert_eq!(out[0].role, "system");
-            assert_eq!(out[3].role, "user");
-            assert!(out[3].content.starts_with("[System]"));
-            assert!(out[3].content.contains("Tool 'x:y' succeeded: data"));
-        }
-
-        #[test]
-        fn realistic_tool_turn_stack() {
-            let out = normalize_system_messages(vec![
-                sys("prompt"),
-                user("weather?"),
-                asst("{tool_calls: ...}"),
-                sys("Tool 'weather:get' succeeded: 25°C"),
-                sys("POST_TOOL_GUIDANCE"),
-                sys("JIT guidance"),
-            ]);
-            assert_eq!(out[0].role, "system");
-            assert_eq!(out[0].content, "prompt");
-            for m in &out[1..] {
-                assert_ne!(m.role, "system", "no system messages after index 0");
-            }
-            assert_eq!(out[3].role, "user");
-            assert!(out[3].content.contains("weather:get"));
-        }
-
-        #[test]
-        fn no_system_messages_at_all() {
-            let out = normalize_system_messages(vec![user("hi"), asst("hello")]);
-            assert_eq!(out.len(), 2);
-            assert_eq!(out[0].role, "user");
-            assert_eq!(out[1].role, "assistant");
-        }
-    }
-
-    mod coalesce_and_fold_projection_tests {
-        use super::super::{ChatMsg, coalesce_consecutive_roles, normalize_system_messages};
-        use crate::engine::{Message, Role};
-
-        fn user(s: &str) -> ChatMsg {
-            ChatMsg {
-                role: "user".into(),
-                content: s.into(),
-            }
-        }
-        fn asst(s: &str) -> ChatMsg {
-            ChatMsg {
-                role: "assistant".into(),
-                content: s.into(),
-            }
-        }
-
-        /// The full llama.cpp wire projection as applied in `generate`.
-        fn project(stack: &[Message]) -> Vec<ChatMsg> {
-            let raw: Vec<ChatMsg> = stack
-                .iter()
-                .map(|m| ChatMsg {
-                    role: m.role.as_str().to_string(),
-                    content: m.content.clone(),
-                })
-                .collect();
-            coalesce_consecutive_roles(normalize_system_messages(raw))
-        }
-
-        /// Invariant helper: after the (optional) single leading system message,
-        /// no two adjacent turns share a role, and no `system` appears past index 0.
-        fn assert_clean_alternation(out: &[ChatMsg]) {
-            for (i, m) in out.iter().enumerate() {
-                if i > 0 {
-                    assert_ne!(m.role, "system", "system message past index 0 at {i}");
-                }
-            }
-            for w in out.windows(2) {
-                assert_ne!(w[0].role, w[1].role, "adjacent same-role turns: {:?}", w);
-            }
-        }
-
-        #[test]
-        fn empty_and_single_unchanged() {
-            assert!(coalesce_consecutive_roles(vec![]).is_empty());
-            let out = coalesce_consecutive_roles(vec![asst("only")]);
-            assert_eq!(out.len(), 1);
-            assert_eq!(out[0].content, "only");
-        }
-
-        #[test]
-        fn consecutive_users_coalesced() {
-            let out = coalesce_consecutive_roles(vec![user("a"), user("b"), asst("c")]);
-            assert_eq!(out.len(), 2);
-            assert_eq!(out[0].role, "user");
-            assert!(out[0].content.contains('a') && out[0].content.contains('b'));
-            assert_eq!(out[1].role, "assistant");
-        }
-
-        #[test]
-        fn trailing_assistants_collapsed() {
-            let out = coalesce_consecutive_roles(vec![user("u"), asst("x"), asst("y"), asst("z")]);
-            assert_eq!(out.len(), 2);
-            assert_eq!(out[1].role, "assistant");
-            assert!(out[1].content.contains('x'));
-            assert!(out[1].content.contains('y'));
-            assert!(out[1].content.contains('z'));
-        }
-
-        #[test]
-        fn tool_heavy_session_stays_alternating_and_lossless() {
-            // Mimics a long agent loop: assistant tool-call, then several system
-            // rows (tool result + directives), repeated.
-            let stack = vec![
-                Message::system("MAIN PROMPT"),
-                Message::user("weather in berlin and paris?"),
-                Message::assistant("{\"tool_calls\":[{\"name\":\"weather:get\"}]}"),
-                Message::system("Tool 'weather:get' succeeded: Berlin 25C"),
-                Message::system("[SYSTEM] cap note"),
-                Message::assistant("{\"tool_calls\":[{\"name\":\"weather:get\"}]}"),
-                Message::system("Tool 'weather:get' succeeded: Paris 22C"),
-                Message::assistant("{\"message_to_user\":\"Berlin 25C, Paris 22C\"}"),
-            ];
-            let out = project(&stack);
-            assert_eq!(out[0].role, "system");
-            assert!(out[0].content.contains("MAIN PROMPT"));
-            assert_clean_alternation(&out);
-            // No tool-result content is lost anywhere in the wire payload.
-            let joined = out.iter().map(|m| m.content.as_str()).collect::<String>();
-            assert!(joined.contains("Berlin 25C"));
-            assert!(joined.contains("Paris 22C"));
-            assert!(joined.contains("cap note"));
-        }
-
-        #[test]
-        fn projection_is_idempotent_in_shape() {
-            let stack = vec![
-                Message::system("S"),
-                Message::user("u"),
-                Message::assistant("a"),
-                Message::system("tool ok"),
-                Message::system("more tool ok"),
-                Message::assistant("a2"),
-            ];
-            let once = project(&stack);
-            // Re-projecting the wire result (as if it were the canonical stack) must
-            // not further change the role structure.
-            let as_messages: Vec<Message> = once
-                .iter()
-                .map(|m| Message {
-                    role: Role::from_wire(&m.role),
-                    content: m.content.clone(),
-                })
-                .collect();
-            let twice = project(&as_messages);
-            let roles_once: Vec<&str> = once.iter().map(|m| m.role.as_str()).collect();
-            let roles_twice: Vec<&str> = twice.iter().map(|m| m.role.as_str()).collect();
-            assert_eq!(roles_once, roles_twice);
-        }
     }
 }

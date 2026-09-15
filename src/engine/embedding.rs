@@ -14,8 +14,8 @@ pub trait EmbeddingProvider: Send + Sync {
 
 // ── OllamaEmbedding ──
 
-use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use ollama_rs::Ollama;
+use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 
 pub struct OllamaEmbedding {
     ollama: Arc<Ollama>,
@@ -37,8 +37,7 @@ impl OllamaEmbedding {
 #[async_trait]
 impl EmbeddingProvider for OllamaEmbedding {
     async fn embed(&self, text: &str) -> Result<Vec<f32>> {
-        let request =
-            GenerateEmbeddingsRequest::new(self.model.clone(), text.to_string().into());
+        let request = GenerateEmbeddingsRequest::new(self.model.clone(), text.to_string().into());
         tracing::debug!(
             engine = "ollama",
             model = %self.model,
@@ -74,10 +73,7 @@ pub struct LlamaCppEmbedding {
 
 impl LlamaCppEmbedding {
     pub fn new(embed_server_url: &str, timeout_secs: u64) -> Result<Self> {
-        let embed_url = format!(
-            "{}/v1/embeddings",
-            embed_server_url.trim_end_matches('/')
-        );
+        let embed_url = format!("{}/v1/embeddings", embed_server_url.trim_end_matches('/'));
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(timeout_secs))
             .build()

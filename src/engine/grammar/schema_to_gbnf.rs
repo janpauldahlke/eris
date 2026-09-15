@@ -1,6 +1,5 @@
 use schemars::schema::{
-    ArrayValidation, InstanceType, ObjectValidation, RootSchema, Schema, SchemaObject,
-    SingleOrVec,
+    ArrayValidation, InstanceType, ObjectValidation, RootSchema, Schema, SchemaObject, SingleOrVec,
 };
 
 /// A compiled per-tool GBNF rule: `(rule_name, rule_body)`.
@@ -90,9 +89,7 @@ fn compile_schema_object(
         Some(InstanceType::String) => Some(compile_string(schema)),
         Some(InstanceType::Integer) | Some(InstanceType::Number) => Some("json-number".into()),
         Some(InstanceType::Boolean) => Some(r#"("true" | "false")"#.into()),
-        Some(InstanceType::Array) => {
-            compile_array(schema.array.as_deref(), parent_rule_name, ctx)
-        }
+        Some(InstanceType::Array) => compile_array(schema.array.as_deref(), parent_rule_name, ctx),
         Some(InstanceType::Null) => Some("\"null\"".into()),
         None => {
             if schema.enum_values.is_some() {
@@ -159,7 +156,11 @@ fn compile_object(
         None => return Some("\"{\" ws \"}\"".into()),
     };
 
-    if validation.additional_properties.as_deref().is_some_and(|s| !matches!(s, Schema::Bool(false))) {
+    if validation
+        .additional_properties
+        .as_deref()
+        .is_some_and(|s| !matches!(s, Schema::Bool(false)))
+    {
         if !validation.properties.is_empty() {
             // has both fixed properties and additional — we can still handle the fixed ones
             // but this is a complex edge case; fall back for safety
@@ -183,11 +184,8 @@ fn compile_object(
     }
     ctx.depth += 1;
 
-    let required_set: std::collections::HashSet<&str> = validation
-        .required
-        .iter()
-        .map(|s| s.as_str())
-        .collect();
+    let required_set: std::collections::HashSet<&str> =
+        validation.required.iter().map(|s| s.as_str()).collect();
 
     let mut sorted_keys: Vec<&String> = validation.properties.keys().collect();
     sorted_keys.sort();
@@ -256,10 +254,7 @@ fn compile_object(
 
     let mut parts = Vec::new();
     for (i, field) in all_fields.iter().enumerate() {
-        let kv = format!(
-            "\"\\\"{}\\\"\" ws \":\" ws {}",
-            field.key, field.expr
-        );
+        let kv = format!("\"\\\"{}\\\"\" ws \":\" ws {}", field.key, field.expr);
         if i == 0 {
             if field.required {
                 parts.push(kv);
@@ -315,12 +310,9 @@ fn compile_array(
 
     let list_rule_name = format!("{parent_rule_name}-list");
     let list_body = format!("{items_expr} (\",\" ws {items_expr})*");
-    ctx.extra_rules
-        .push((list_rule_name.clone(), list_body));
+    ctx.extra_rules.push((list_rule_name.clone(), list_body));
 
-    Some(format!(
-        "\"[\" ws ({list_rule_name})? ws \"]\"",
-    ))
+    Some(format!("\"[\" ws ({list_rule_name})? ws \"]\"",))
 }
 
 #[cfg(test)]
@@ -438,7 +430,10 @@ mod tests {
         let body = &rules[0].1;
         assert!(body.contains("["));
         assert!(body.contains("]"));
-        assert!(rules.len() >= 2, "should have the main rule + array list rule");
+        assert!(
+            rules.len() >= 2,
+            "should have the main rule + array list rule"
+        );
         let list_rule = &rules[1];
         assert!(list_rule.0.contains("list"));
         assert!(list_rule.1.contains("json-string"));
@@ -475,7 +470,10 @@ mod tests {
         let count_pos = body.find("count").unwrap();
         let name_pos = body.find("name").unwrap();
         let label_pos = body.find("label").unwrap();
-        assert!(count_pos < name_pos, "count before name (both required, alphabetical)");
+        assert!(
+            count_pos < name_pos,
+            "count before name (both required, alphabetical)"
+        );
         assert!(name_pos < label_pos, "label (optional) after all required");
     }
 

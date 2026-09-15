@@ -9,7 +9,10 @@ pub fn validate_audio_relative_path(
     relative_path: &str,
 ) -> Result<PathBuf> {
     let upload_norm = upload_dir.replace('\\', "/").trim_matches('/').to_string();
-    let rel_norm = relative_path.replace('\\', "/").trim_start_matches('/').to_string();
+    let rel_norm = relative_path
+        .replace('\\', "/")
+        .trim_start_matches('/')
+        .to_string();
     if rel_norm.contains("..") {
         return Err(FcpError::ToolFault {
             tool_name: "audio:ingress".into(),
@@ -28,12 +31,10 @@ pub fn validate_audio_relative_path(
     let canonical_root = workspace_root
         .canonicalize()
         .unwrap_or_else(|_| workspace_root.to_path_buf());
-    let canonical_target = target
-        .canonicalize()
-        .map_err(|e| FcpError::ToolFault {
-            tool_name: "audio:ingress".into(),
-            reason: format!("audio not found: {e}"),
-        })?;
+    let canonical_target = target.canonicalize().map_err(|e| FcpError::ToolFault {
+        tool_name: "audio:ingress".into(),
+        reason: format!("audio not found: {e}"),
+    })?;
     if !canonical_target.starts_with(&canonical_root) {
         return Err(FcpError::ToolFault {
             tool_name: "audio:ingress".into(),
@@ -75,11 +76,7 @@ pub fn preview_filename_allowed(name: &str) -> bool {
         return false;
     }
     let stem = lower.trim_end_matches(".wav");
-    !stem.is_empty()
-        && stem
-            .chars()
-            .all(|c| c.is_ascii_hexdigit() || c == '-')
-        && stem.len() >= 32
+    !stem.is_empty() && stem.chars().all(|c| c.is_ascii_hexdigit() || c == '-') && stem.len() >= 32
 }
 
 #[cfg(test)]
@@ -101,12 +98,8 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let root = dir.path();
         std::fs::create_dir_all(root.join("99_USER_UPLOADED/audio")).expect("mkdir");
-        let err = validate_audio_relative_path(
-            root,
-            "99_USER_UPLOADED/audio",
-            "../../etc/passwd",
-        )
-        .unwrap_err();
+        let err = validate_audio_relative_path(root, "99_USER_UPLOADED/audio", "../../etc/passwd")
+            .unwrap_err();
         assert!(err.to_string().contains("traversal") || err.to_string().contains("upload"));
     }
 }

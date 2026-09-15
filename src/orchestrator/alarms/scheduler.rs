@@ -200,7 +200,10 @@ mod tests {
                 assert_eq!(agenda_task_id, "self1");
                 assert_eq!(label, "loop task");
                 assert_eq!(plan, "continue the loop");
-                assert_eq!(checklist, vec!["clock:now".to_string(), "agenda:list".to_string()]);
+                assert_eq!(
+                    checklist,
+                    vec!["clock:now".to_string(), "agenda:list".to_string()]
+                );
             }
             other => panic!("unexpected alarm payload: {other:?}"),
         }

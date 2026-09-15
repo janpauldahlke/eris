@@ -71,6 +71,7 @@ Priority today: **agenda → mail → calendar → gated doc**.
 | `tool_match_margin` | `0.05` | Near-tie window for affinity cluster union |
 | `tool_unsure_fallback` | `full_roster` | After demotion: `full_roster` or `domain_cluster` |
 | `tool_map_offer_cap` | (see config) | Cap on slim/GBNF offered names |
+| `slim_tool_description_preview_chars` | `120` | Phrase-map description column length (`0` = full text) |
 
 ---
 

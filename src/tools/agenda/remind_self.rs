@@ -343,8 +343,7 @@ mod tests {
         let alarms_raw = fs::read_to_string(crate::vault_layout::alarms_json(dir.path()))
             .await
             .expect("read alarms.json");
-        let alarms: Vec<AlarmRecord> =
-            serde_json::from_str(&alarms_raw).expect("parse alarms");
+        let alarms: Vec<AlarmRecord> = serde_json::from_str(&alarms_raw).expect("parse alarms");
         assert_eq!(alarms.len(), 1);
         assert_eq!(alarms[0].agenda_kind.as_deref(), Some("self"));
         Ok(())

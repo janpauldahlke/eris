@@ -32,12 +32,8 @@ pub fn load_allowlist(vault_root: &Path, override_path: Option<&Path>) -> Result
         return Ok(WebAllowlistFile::default());
     }
     let raw = std::fs::read_to_string(&path).map_err(FcpError::Io)?;
-    let mut file: WebAllowlistFile = toml::from_str(&raw).map_err(|e| {
-        FcpError::Config(format!(
-            "invalid web allowlist {}: {e}",
-            path.display()
-        ))
-    })?;
+    let mut file: WebAllowlistFile = toml::from_str(&raw)
+        .map_err(|e| FcpError::Config(format!("invalid web allowlist {}: {e}", path.display())))?;
     for pattern in &mut file.patterns {
         *pattern = pattern.trim().to_string();
     }
@@ -45,11 +41,7 @@ pub fn load_allowlist(vault_root: &Path, override_path: Option<&Path>) -> Result
 }
 
 /// Enforce allowlist when `enabled`; no-op when disabled (operator toggle in `[web].allowlist_enabled`).
-pub fn enforce_allowlist(
-    enabled: bool,
-    url: &str,
-    allowlist: &WebAllowlistFile,
-) -> Result<()> {
+pub fn enforce_allowlist(enabled: bool, url: &str, allowlist: &WebAllowlistFile) -> Result<()> {
     if enabled {
         require_allowed(url, allowlist)
     } else {
@@ -65,11 +57,7 @@ pub fn require_allowed(url: &str, allowlist: &WebAllowlistFile) -> Result<()> {
                 .to_string(),
         });
     }
-    if allowlist
-        .patterns
-        .iter()
-        .any(|p| glob_match(p, url))
-    {
+    if allowlist.patterns.iter().any(|p| glob_match(p, url)) {
         Ok(())
     } else {
         Err(FcpError::PolicyViolation {
@@ -176,11 +164,7 @@ mod tests {
         let list = WebAllowlistFile {
             patterns: vec!["https://www.bbc.com/news/**".into()],
         };
-        assert!(require_allowed(
-            "https://www.bbc.com/news/world-123",
-            &list
-        )
-        .is_ok());
+        assert!(require_allowed("https://www.bbc.com/news/world-123", &list).is_ok());
         assert!(require_allowed("https://www.bbc.com/", &list).is_err());
     }
 
@@ -208,11 +192,7 @@ mod tests {
         let list = WebAllowlistFile {
             patterns: vec!["https://www.bbc.com/news/**".into()],
         };
-        assert!(require_allowed(
-            "https://www.bbc.com//news/world",
-            &list
-        )
-        .is_ok());
+        assert!(require_allowed("https://www.bbc.com//news/world", &list).is_ok());
     }
 
     #[test]
@@ -227,8 +207,11 @@ mod tests {
     fn empty_patterns_policy_error() {
         let err = require_allowed("https://example.com/", &WebAllowlistFile::default())
             .expect_err("empty");
-        assert_eq!(err.to_string(), format!(
-            "Policy violation [WEB_ALLOWLIST_EMPTY]: no patterns in .fcp/web_allowlist.toml — add glob patterns before fetching"
-        ));
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "Policy violation [WEB_ALLOWLIST_EMPTY]: no patterns in .fcp/web_allowlist.toml — add glob patterns before fetching"
+            )
+        );
     }
 }

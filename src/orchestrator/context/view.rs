@@ -13,7 +13,7 @@ use crate::orchestrator::llm_support::json_envelope::{
 use crate::tools::ToolContextViewHint;
 
 use super::resolved_tool_recovery::apply_omit_resolved_tool_recovery;
-use super::stack_lines::try_parse_tool_success_line;
+use super::stack_lines::message_is_tool_success;
 
 /// Start delimiter for the JSON tool-definition array inside the assembled system prompt ([`crate::orchestrator::context::ContextAssembler::build_tool_prompt`]).
 pub const FCP_TOOL_DEFS_BEGIN: &str = "<<<FCP_TOOL_DEFS_JSON>>>";
@@ -132,7 +132,9 @@ pub struct ContextViewSettings {
     pub full_tool_schemas_in_llm_view: bool,
     /// When true and [`Self::enabled`] is true, collapse resolved tool-recovery spans before successful tool batches in the LLM view only.
     pub omit_resolved_tool_recovery: bool,
-    /// When true and [`Self::enabled`] is true, replace assistant rows that are not valid protocol JSON with a short placeholder (canonical stack unchanged).
+    /// When true and [`Self::enabled`] is true, replace assistant rows that look like
+    /// *failed protocol JSON* (trim starts with `{`) with a short placeholder.
+    /// Native talk is bare prose and must stay visible on later hops.
     pub assistant_non_json_placeholder: bool,
     pub hints: Arc<HashMap<String, ToolContextViewHint>>,
 }
@@ -245,14 +247,16 @@ pub fn build_llm_view(messages: &[Message], settings: &ContextViewSettings) -> V
 
     for m in source {
         if m.role == "assistant"
+            && m.tool_calls.is_empty()
             && settings.assistant_non_json_placeholder
             && parse_llm_response_protocol(&m.content).is_err()
+            && m.content.trim_start().starts_with('{')
         {
             let n = m.content.chars().count();
             rewritten += 1;
             out.push(Message {
-                role: m.role,
                 content: format!("[FCP: non-protocol assistant output omitted; {n} chars]"),
+                ..m.clone()
             });
             continue;
         }
@@ -265,8 +269,8 @@ pub fn build_llm_view(messages: &[Message], settings: &ContextViewSettings) -> V
                 rewritten += 1;
             }
             out.push(Message {
-                role: m.role,
                 content: compact,
+                ..m.clone()
             });
             continue;
         }
@@ -292,15 +296,13 @@ pub fn build_llm_view(messages: &[Message], settings: &ContextViewSettings) -> V
                 "tool definitions slimmed for LLM view"
             );
             out.push(Message {
-                role: m.role,
                 content: new_content,
+                ..m.clone()
             });
             continue;
         }
 
-        if m.role == "system"
-            && let Some(ts) = try_parse_tool_success_line(&m.content)
-        {
+        if let Some(ts) = message_is_tool_success(m) {
             let tool_name = ts.tool_name;
             let body = ts.body;
             let hint = hints
@@ -318,8 +320,8 @@ pub fn build_llm_view(messages: &[Message], settings: &ContextViewSettings) -> V
                 rewritten += 1;
             }
             out.push(Message {
-                role: m.role,
                 content: new_content,
+                ..m.clone()
             });
             continue;
         }
@@ -361,10 +363,7 @@ mod tests {
 
     #[test]
     fn disabled_passes_through() {
-        let m = vec![Message {
-            role: crate::engine::Role::System,
-            content: "Tool 'x:y' succeeded: hello".to_string(),
-        }];
+        let m = vec![Message::system("Tool 'x:y' succeeded: hello".to_string())];
         let settings = ContextViewSettings::default();
         let v = build_llm_view(&m, &settings);
         assert_eq!(v.len(), 1);
@@ -374,10 +373,7 @@ mod tests {
     #[test]
     fn tool_line_snippet_default() {
         let body = "a".repeat(500);
-        let m = vec![Message {
-            role: crate::engine::Role::System,
-            content: format!("Tool 't:1' succeeded: {body}"),
-        }];
+        let m = vec![Message::system(format!("Tool 't:1' succeeded: {body}"))];
         let settings = ContextViewSettings {
             enabled: true,
             default_snippet_chars: 100,
@@ -396,10 +392,7 @@ mod tests {
     #[test]
     fn tool_line_full_keeps_original() {
         let line = "Tool 't:2' succeeded: payload".to_string();
-        let m = vec![Message {
-            role: crate::engine::Role::System,
-            content: line.clone(),
-        }];
+        let m = vec![Message::system(line.clone())];
         let settings = ContextViewSettings {
             enabled: true,
             default_snippet_chars: 10,
@@ -415,10 +408,7 @@ mod tests {
 
     #[test]
     fn tool_line_marker_only() {
-        let m = vec![Message {
-            role: crate::engine::Role::System,
-            content: "Tool 't:3' succeeded: huge".to_string(),
-        }];
+        let m = vec![Message::system("Tool 't:3' succeeded: huge".to_string())];
         let settings = ContextViewSettings {
             enabled: true,
             default_snippet_chars: 400,
@@ -435,10 +425,7 @@ mod tests {
     #[test]
     fn assistant_compact_strips_json_noise() {
         let raw = r#"{"thought":"x","status":"Reflect","message_to_user":"Hello","tool_calls":[{"name":"a:b","args":{}}]}"#;
-        let m = vec![Message {
-            role: crate::engine::Role::Assistant,
-            content: raw.to_string(),
-        }];
+        let m = vec![Message::assistant(raw.to_string())];
         let settings = ContextViewSettings {
             enabled: true,
             default_snippet_chars: 400,
@@ -457,10 +444,7 @@ mod tests {
 
     #[test]
     fn assistant_parse_failure_keeps_original_when_placeholder_disabled() {
-        let m = vec![Message {
-            role: crate::engine::Role::Assistant,
-            content: "not json at all".to_string(),
-        }];
+        let m = vec![Message::assistant("not json at all".to_string())];
         let settings = ContextViewSettings {
             enabled: true,
             default_snippet_chars: 400,
@@ -476,11 +460,8 @@ mod tests {
 
     #[test]
     fn assistant_parse_failure_rewrites_with_placeholder_when_enabled() {
-        let body = "not json at all";
-        let m = vec![Message {
-            role: crate::engine::Role::Assistant,
-            content: body.to_string(),
-        }];
+        let body = r#"{ "thought": "truncated"#;
+        let m = vec![Message::assistant(body.to_string())];
         let settings = ContextViewSettings {
             enabled: true,
             default_snippet_chars: 400,
@@ -496,6 +477,69 @@ mod tests {
             v[0].content,
             format!("[FCP: non-protocol assistant output omitted; {n} chars]")
         );
+    }
+
+    #[test]
+    fn native_talk_prose_is_kept_when_placeholder_enabled() {
+        let body = "It is currently 24.6 °C in Lisbon with clear skies.";
+        let m = vec![Message::assistant(body.to_string())];
+        let settings = ContextViewSettings {
+            enabled: true,
+            default_snippet_chars: 400,
+            assistant_compact: true,
+            full_tool_schemas_in_llm_view: false,
+            omit_resolved_tool_recovery: false,
+            assistant_non_json_placeholder: true,
+            hints: Arc::new(HashMap::new()),
+        };
+        let v = build_llm_view(&m, &settings);
+        assert_eq!(v[0].content, body);
+    }
+
+    #[test]
+    fn native_assistant_tool_calls_skip_non_json_placeholder() {
+        let m = vec![Message::assistant_with_tool_calls(
+            "",
+            vec![crate::engine::EngineToolCall {
+                id: Some("call_1".into()),
+                name: "memory:query".into(),
+                arguments: r#"{"query":"x"}"#.into(),
+            }],
+        )];
+        let settings = ContextViewSettings {
+            enabled: true,
+            default_snippet_chars: 400,
+            assistant_compact: true,
+            full_tool_schemas_in_llm_view: false,
+            omit_resolved_tool_recovery: false,
+            assistant_non_json_placeholder: true,
+            hints: Arc::new(HashMap::new()),
+        };
+        let v = build_llm_view(&m, &settings);
+        assert_eq!(v[0].content, "");
+        assert_eq!(v[0].tool_calls.len(), 1);
+    }
+
+    #[test]
+    fn tool_role_success_line_is_snippeted_like_system() {
+        let body = "a".repeat(500);
+        let m = vec![Message::tool(
+            format!("Tool 't:1' succeeded: {body}"),
+            "call_1",
+        )];
+        let settings = ContextViewSettings {
+            enabled: true,
+            default_snippet_chars: 100,
+            assistant_compact: false,
+            full_tool_schemas_in_llm_view: false,
+            omit_resolved_tool_recovery: false,
+            assistant_non_json_placeholder: false,
+            hints: hint_map(&[("t:1", ToolContextViewHint::Default)]),
+        };
+        let v = build_llm_view(&m, &settings);
+        assert_eq!(v[0].role, "tool");
+        assert!(v[0].content.contains("[tool] t:1 ok"));
+        assert!(v[0].content.contains("… [truncated]"));
     }
 
     #[test]
@@ -518,10 +562,7 @@ mod tests {
             json = json,
             end = FCP_TOOL_DEFS_END,
         );
-        let m = vec![Message {
-            role: crate::engine::Role::System,
-            content: full,
-        }];
+        let m = vec![Message::system(full)];
         let settings = ContextViewSettings {
             enabled: true,
             default_snippet_chars: 400,
@@ -546,10 +587,7 @@ mod tests {
             json = json,
             end = FCP_TOOL_DEFS_END,
         );
-        let m = vec![Message {
-            role: crate::engine::Role::System,
-            content: full,
-        }];
+        let m = vec![Message::system(full)];
         let settings = ContextViewSettings {
             enabled: true,
             default_snippet_chars: 400,
@@ -566,26 +604,11 @@ mod tests {
     #[test]
     fn omit_resolved_tool_recovery_then_tool_snippet_still_applies() {
         let stack = vec![
-            Message {
-                role: crate::engine::Role::User,
-                content: "hi".to_string(),
-            },
-            Message {
-                role: crate::engine::Role::Assistant,
-                content: "bad".to_string(),
-            },
-            Message {
-                role: crate::engine::Role::System,
-                content: "[SYSTEM] Invalid model output: x".to_string(),
-            },
-            Message {
-                role: crate::engine::Role::Assistant,
-                content: r#"{"tool_calls":[{"name":"t:1","args":{}}]}"#.to_string(),
-            },
-            Message {
-                role: crate::engine::Role::System,
-                content: format_tool_success_line("t:1", &"z".repeat(300)),
-            },
+            Message::user("hi".to_string()),
+            Message::assistant("bad".to_string()),
+            Message::system("[SYSTEM] Invalid model output: x".to_string()),
+            Message::assistant(r#"{"tool_calls":[{"name":"t:1","args":{}}]}"#.to_string()),
+            Message::system(format_tool_success_line("t:1", &"z".repeat(300))),
         ];
         let settings = ContextViewSettings {
             enabled: true,

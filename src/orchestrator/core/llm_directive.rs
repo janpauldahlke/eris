@@ -25,9 +25,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                 llm_json_parse_recovery_message_with_excerpt(err, raw)
             ))
         } else {
-            LoopDirective::RecoverFromFuckup(llm_json_parse_recovery_message_with_excerpt(
-                err, raw,
-            ))
+            LoopDirective::RecoverFromFuckup(llm_json_parse_recovery_message_with_excerpt(err, raw))
         }
     }
 
@@ -147,7 +145,8 @@ impl<E: LlmEngine> Orchestrator<E> {
                 }
                 if tool_mode_empty_action {
                     let msg = if self.config.is_llamacpp() {
-                        "Empty action: include tool_calls or a non-empty message_to_user.".to_string()
+                        "Empty action: include tool_calls or a non-empty message_to_user."
+                            .to_string()
                     } else {
                         "Tool-enabled mode forbids empty action: status Reflect with empty tool_calls and empty message_to_user. Use Reflect with tool_calls, or Idle with non-empty message_to_user.".to_string()
                     };
@@ -177,7 +176,8 @@ impl<E: LlmEngine> Orchestrator<E> {
             LoopAction::Task => {
                 if tool_mode_empty_action {
                     let msg = if self.config.is_llamacpp() {
-                        "Empty action: include tool_calls or a non-empty message_to_user.".to_string()
+                        "Empty action: include tool_calls or a non-empty message_to_user."
+                            .to_string()
                     } else {
                         "Tool-enabled mode forbids empty action: status Task with empty tool_calls and empty message_to_user. Use Reflect with tool_calls, or Idle with non-empty message_to_user.".to_string()
                     };
@@ -219,6 +219,8 @@ mod phase5_recovery_tests {
         ) -> crate::executive::error::Result<EngineResponse> {
             Ok(EngineResponse {
                 content: "{}".into(),
+                reasoning: String::new(),
+                tool_calls: Vec::new(),
                 prompt_tokens: 0,
                 generated_tokens: 0,
                 generation_ms: 0,

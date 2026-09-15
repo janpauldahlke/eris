@@ -43,7 +43,10 @@ fn main() -> ExitCode {
     print_samples(&lines, &["moltbook.browse.batch_ledger"], 5);
 
     println!("\n=== agenda.remind_at.xor_normalized (count) ===");
-    println!("{}", count_any(&lines, &["agenda.remind_at.xor_normalized"]));
+    println!(
+        "{}",
+        count_any(&lines, &["agenda.remind_at.xor_normalized"])
+    );
 
     println!("\n=== Moltbook response JSON parse (non-schema recovery path) ===");
     println!(
@@ -67,7 +70,9 @@ fn main() -> ExitCode {
         20,
     );
 
-    println!("\nDone. Soak pass: review counts above; confirm engagement floor met or last_blocker present in ledger lines.");
+    println!(
+        "\nDone. Soak pass: review counts above; confirm engagement floor met or last_blocker present in ledger lines."
+    );
     ExitCode::SUCCESS
 }
 

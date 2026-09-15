@@ -2,17 +2,23 @@ pub mod embedding;
 pub mod grammar;
 pub mod llama_cpp;
 pub mod ollama;
+pub(crate) mod openai_wire;
+pub mod openrouter;
 pub mod router;
+pub mod structured;
 pub mod token_metrics;
 pub mod traits;
 
 pub use self::embedding::EmbeddingProvider;
 pub use self::llama_cpp::LlamaCppClient;
+pub use self::openrouter::{OpenRouterClient, OpenRouterModeHandle};
 pub use self::token_metrics::{
     LlmTokenSnapshot, TokenMetricsReader, channel as token_metrics_channel,
     publish as publish_llm_token_snapshot,
 };
-pub use self::traits::{EngineResponse, LlmEngine, LlmGenerateOptions, Message, Role};
+pub use self::traits::{
+    EngineResponse, EngineToolCall, LlmEngine, LlmGenerateOptions, Message, Role, ToolChoice,
+};
 
 use self::ollama::OllamaClient;
 use async_trait::async_trait;
@@ -23,14 +29,25 @@ use tokio::sync::mpsc;
 pub enum AnyEngine {
     Ollama(OllamaClient),
     LlamaCpp(LlamaCppClient),
+    OpenRouter(OpenRouterClient),
 }
 
 impl AnyEngine {
-    /// Set the GBNF grammar on the inner engine (only meaningful for `LlamaCpp`).
+    /// Set the GBNF grammar on the inner engine (only meaningful for `LlamaCpp`;
+    /// OpenRouter constrains output via `response_format` instead).
     pub fn set_grammar(&mut self, grammar: String) {
         match self {
             Self::LlamaCpp(e) => e.set_grammar(grammar),
-            Self::Ollama(_) => {}
+            Self::Ollama(_) | Self::OpenRouter(_) => {}
+        }
+    }
+
+    /// Live OpenRouter structured-output ladder, if this engine is the hosted backend.
+    #[must_use]
+    pub fn openrouter_mode_handle(&self) -> Option<OpenRouterModeHandle> {
+        match self {
+            Self::OpenRouter(e) => Some(e.mode_handle()),
+            Self::Ollama(_) | Self::LlamaCpp(_) => None,
         }
     }
 }
@@ -45,8 +62,18 @@ impl LlmEngine for AnyEngine {
         options: LlmGenerateOptions,
     ) -> crate::executive::error::Result<EngineResponse> {
         match self {
-            Self::Ollama(e) => e.generate(stack, available_tools_json, stream_tx, options).await,
-            Self::LlamaCpp(e) => e.generate(stack, available_tools_json, stream_tx, options).await,
+            Self::Ollama(e) => {
+                e.generate(stack, available_tools_json, stream_tx, options)
+                    .await
+            }
+            Self::LlamaCpp(e) => {
+                e.generate(stack, available_tools_json, stream_tx, options)
+                    .await
+            }
+            Self::OpenRouter(e) => {
+                e.generate(stack, available_tools_json, stream_tx, options)
+                    .await
+            }
         }
     }
 }

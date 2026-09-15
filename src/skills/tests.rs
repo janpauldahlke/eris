@@ -2,7 +2,9 @@ use tempfile::tempdir;
 
 use super::jit::build_jit_skill_guidance;
 use super::seed::seed_runtime_skills;
-use super::store::{SkillCreateInput, create_or_update_vault_skill, list_vault_skills, load_vault_skill_by_id};
+use super::store::{
+    SkillCreateInput, create_or_update_vault_skill, list_vault_skills, load_vault_skill_by_id,
+};
 use super::types::SkillPriority;
 
 #[tokio::test(flavor = "current_thread")]

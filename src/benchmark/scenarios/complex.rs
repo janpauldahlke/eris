@@ -1,9 +1,7 @@
 //! Multi-step and conditional benchmark scenarios (struct-based `Step` model).
 
-use crate::benchmark::suite::{
-    CleanupAction, CleanupStep, Scenario, Step, SuccessCriteria,
-};
 use crate::benchmark::IsolationMode;
+use crate::benchmark::suite::{CleanupAction, CleanupStep, Scenario, Step, SuccessCriteria};
 
 /// Multi-hop research: system → vault → memory.
 pub fn multi_hop_research_chain() -> Scenario {
@@ -21,7 +19,9 @@ pub fn multi_hop_research_chain() -> Scenario {
             },
             Step {
                 description: "Read from vault".to_string(),
-                user_prompt: "Now read the Identity file from the vault (00_Invariants/Identity.md).".to_string(),
+                user_prompt:
+                    "Now read the Identity file from the vault (00_Invariants/Identity.md)."
+                        .to_string(),
                 expected_tool_calls: vec!["vault:read".to_string()],
                 arg_validator: None,
                 content_validator: None,
@@ -29,8 +29,9 @@ pub fn multi_hop_research_chain() -> Scenario {
             },
             Step {
                 description: "Stage findings to memory".to_string(),
-                user_prompt: "Stage a short summary of what you learned about the system and agent."
-                    .to_string(),
+                user_prompt:
+                    "Stage a short summary of what you learned about the system and agent."
+                        .to_string(),
                 expected_tool_calls: vec!["memory:stage".to_string()],
                 arg_validator: None,
                 content_validator: None,
@@ -190,8 +191,9 @@ pub fn multi_hop_with_branching() -> Scenario {
             },
             Step {
                 description: "Find agent info".to_string(),
-                user_prompt: "Find information about the agent — read Identity.md or search the vault."
-                    .to_string(),
+                user_prompt:
+                    "Find information about the agent — read Identity.md or search the vault."
+                        .to_string(),
                 expected_tool_calls: vec!["vault:read".to_string(), "vault:search".to_string()],
                 arg_validator: None,
                 content_validator: None,
