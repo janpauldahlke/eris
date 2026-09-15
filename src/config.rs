@@ -1051,6 +1051,9 @@ pub struct AppConfig {
     /// When [`Self::slim_tool_prompt`] is true and the semantic router returned hits, include at most this many tools (in router order). `0` means no cap (use full hit list). Ignored when the router returns no hits (full allowed roster, still slim).
     #[serde(default = "default_tool_map_offer_cap")]
     pub tool_map_offer_cap: usize,
+    /// Max characters of each tool description in the slim `[FCP_TOOL_PHRASE_MAP]` preview column. `0` = no truncation.
+    #[serde(default = "default_slim_tool_description_preview_chars")]
+    pub slim_tool_description_preview_chars: usize,
     /// Command used when chat startup asks to launch a local Ollama if unreachable.
     #[serde(default = "default_ollama_daemon")]
     pub ollama_daemon: DaemonCommand,
@@ -1258,6 +1261,11 @@ fn default_slim_tool_prompt() -> bool {
 /// With slim tool prompt + semantic hits, cap how many matched tools appear in the phrase map; `0` = no cap.
 fn default_tool_map_offer_cap() -> usize {
     0
+}
+
+/// Phrase-map description column cap (matches the historic hardcoded 120-char preview).
+fn default_slim_tool_description_preview_chars() -> usize {
+    120
 }
 
 fn default_tool_single_hit_floor() -> f32 {
@@ -2021,6 +2029,7 @@ impl Default for AppConfig {
             tool_descriptor_jit_max_chars: default_tool_descriptor_jit_max_chars(),
             slim_tool_prompt: default_slim_tool_prompt(),
             tool_map_offer_cap: default_tool_map_offer_cap(),
+            slim_tool_description_preview_chars: default_slim_tool_description_preview_chars(),
             ollama_daemon: default_ollama_daemon(),
             unload_ollama_models_on_chat_exit: default_unload_ollama_models_on_chat_exit(),
             qdrant_daemon: default_qdrant_daemon(),

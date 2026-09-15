@@ -87,7 +87,7 @@ When `tools` are attached, Eris does **not** also send the strict envelope
 If a model rejects `tools` with HTTP 400, Eris disables native tools for the rest of
 the session and retries with the envelope `response_format` ladder:
 
-1. **`native_tools`** (default) — `tools[]` + `tool_choice` (`required` when the router is confident, else `auto`).
+1. **`native_tools`** (default) — `tools[]` + `tool_choice: auto` while tools are offered (talk or continue tooling). After `max_tool_rounds`, tools are omitted for one final conversational pass. Never `required` on the live path — that blocked the summarize hop.
 2. **`json_schema`** — `response_format: { type: "json_schema", strict: true, ... }` from the offered-tool subset.
 3. **`json_object`** — valid JSON guaranteed, shape enforced by prompt + recovery loop.
 4. **`off`** — prompt-only, identical to the Ollama recovery behavior.

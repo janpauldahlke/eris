@@ -1,6 +1,6 @@
 use super::*;
 use crate::config::AppConfig;
-use crate::engine::{EngineResponse, LlmEngine, LlmGenerateOptions, Message};
+use crate::engine::{EngineResponse, EngineToolCall, LlmEngine, LlmGenerateOptions, Message};
 use crate::executive::error::Result;
 use crate::memory::ephemeral::EphemeralMemory;
 use crate::orchestrator::context::ContextViewSettings;
@@ -1097,4 +1097,94 @@ async fn emit_optional_user_message_tool_round_skips_transcript_uses_activity_li
         }
         e => panic!("expected StateUpdate with activity_line, got {e:?}"),
     }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn emit_optional_user_message_native_prose_reaches_deck() {
+    let (pres_tx, mut pres_rx) = mpsc::channel::<SessionEvent>(32);
+    let mut orch = orchestrator_with_presentation(pres_tx).await;
+    orch.emit_optional_user_message("I found 12 matching notes and listed the vault folders.")
+        .await;
+
+    match pres_rx.recv().await.expect("event 1") {
+        SessionEvent::IncomingMessage(m) => {
+            assert!(m.contains("I found 12 matching notes"), "{m}");
+        }
+        e => panic!("expected IncomingMessage for native talk, got {e:?}"),
+    }
+    match pres_rx.recv().await.expect("event 2") {
+        SessionEvent::StateUpdate(_) => {}
+        e => panic!("expected StateUpdate from broadcast_state, got {e:?}"),
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn emit_optional_user_message_from_engine_emits_hosted_reasoning_then_talk() {
+    let (pres_tx, mut pres_rx) = mpsc::channel::<SessionEvent>(32);
+    let mut orch = orchestrator_with_presentation(pres_tx).await;
+    orch.emit_optional_user_message_from_engine(&EngineResponse {
+        content: "Hamburg is currently 14°C.".to_string(),
+        reasoning: "Weather and wiki results are enough to answer.".to_string(),
+        ..Default::default()
+    })
+    .await;
+
+    match pres_rx.recv().await.expect("event 1") {
+        SessionEvent::ModelThought(t) => {
+            assert_eq!(t, "Weather and wiki results are enough to answer.");
+        }
+        e => panic!("expected ModelThought, got {e:?}"),
+    }
+    match pres_rx.recv().await.expect("event 2") {
+        SessionEvent::IncomingMessage(m) => {
+            assert!(m.contains("Hamburg is currently 14°C."), "{m}");
+        }
+        e => panic!("expected IncomingMessage, got {e:?}"),
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn emit_optional_user_message_from_engine_native_tools_stay_off_deck() {
+    let (pres_tx, mut pres_rx) = mpsc::channel::<SessionEvent>(32);
+    let mut orch = orchestrator_with_presentation(pres_tx).await;
+    orch.emit_optional_user_message_from_engine(&EngineResponse {
+        content: String::new(),
+        tool_calls: vec![EngineToolCall {
+            id: Some("call_0".to_string()),
+            name: "vault:search".to_string(),
+            arguments: "{}".to_string(),
+        }],
+        ..Default::default()
+    })
+    .await;
+
+    match pres_rx.recv().await.expect("event 1") {
+        SessionEvent::StateUpdate(u) => {
+            let line = u.activity_line.expect("activity_line");
+            assert!(line.contains("vault:search"), "{line}");
+        }
+        e => panic!("expected StateUpdate with activity_line, got {e:?}"),
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn emit_optional_user_message_invalid_json_object_does_not_emit_deck() {
+    let (pres_tx, mut pres_rx) = mpsc::channel::<SessionEvent>(32);
+    let mut orch = orchestrator_with_presentation(pres_tx).await;
+    orch.emit_optional_user_message(r#"{"thought":"broken""#)
+        .await;
+    assert!(
+        pres_rx.try_recv().is_err(),
+        "broken envelope JSON must stay silent so recovery can run"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn stitch_pending_weather_report_appends_to_native_prose() {
+    let (pres_tx, _pres_rx) = mpsc::channel::<SessionEvent>(32);
+    let mut orch = orchestrator_with_presentation(pres_tx).await;
+    orch.pending_weather_deck_report = Some("14°C, light rain.".to_string());
+    let out = orch.stitch_pending_weather_report_into_content("Here is Hamburg.");
+    assert_eq!(out, "Here is Hamburg.\n\n14°C, light rain.");
+    assert!(orch.pending_weather_deck_report.is_none());
 }

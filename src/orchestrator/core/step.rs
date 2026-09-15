@@ -464,6 +464,12 @@ impl<E: LlmEngine> Orchestrator<E> {
             // a strict envelope `response_format` (downgrade path) and native `tools[]`.
             // Mutually exclusive with `grammar_override` by backend. The engine attaches
             // `tools` when native calling is enabled; HTTP 400 falls back to the envelope.
+            //
+            // `tool_choice` is Auto while tools are offered: the model may talk
+            // (`message.content` / Idle) or continue tooling. `Required` forbids the
+            // summarize hop after `role:tool` results. The hard stop is
+            // [`Self::max_tool_rounds`], which sets `tools_needed = false` and omits `tools[]`
+            // for one final conversational pass (same as llama.cpp's empty-tool GBNF).
             let (response_json_schema, native_tools, tool_choice) = if !self.config.is_openrouter()
             {
                 (None, None, None)
@@ -487,7 +493,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                         self.openai_schema_subset_cache
                             .get_or_compile_native_tools(&self.gatekeeper, &names)?,
                     ),
-                    Some(ToolChoice::Required),
+                    Some(ToolChoice::Auto),
                 )
             } else if slim_assembly {
                 let offered = slim_offered_tool_names(
@@ -509,7 +515,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                             self.openai_schema_subset_cache
                                 .get_or_compile_native_tools(&self.gatekeeper, &offered)?,
                         ),
-                        Some(ToolChoice::Required),
+                        Some(ToolChoice::Auto),
                     )
                 }
             } else {
@@ -650,7 +656,15 @@ impl<E: LlmEngine> Orchestrator<E> {
             };
 
             let deck_content = self.stitch_pending_weather_report_into_content(&response.content);
-            self.emit_optional_user_message(&deck_content).await;
+            self.emit_optional_user_message_from_engine(&crate::engine::EngineResponse {
+                content: deck_content.clone(),
+                tool_calls: response.tool_calls.clone(),
+                reasoning: response.reasoning.clone(),
+                prompt_tokens: response.prompt_tokens,
+                generated_tokens: response.generated_tokens,
+                generation_ms: response.generation_ms,
+            })
+            .await;
 
             if response.tool_calls.is_empty() {
                 self.chat_stack

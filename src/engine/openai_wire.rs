@@ -56,9 +56,45 @@ impl ChatToolCall {
             kind: "function".to_string(),
             function: ChatToolCallFunction {
                 name: call.name.clone(),
-                arguments: call.arguments.clone(),
+                arguments: sanitize_tool_call_arguments(&call.arguments),
             },
         }
+    }
+}
+
+/// Keep the first JSON object in a tool-call `arguments` string.
+///
+/// Gateways that omit or reuse `tool_calls[].index` can concatenate two objects.
+/// Echoing that blob on the next turn makes LiteLLM `json.loads` raise
+/// `Extra data: line 1 column N`.
+pub(crate) fn sanitize_tool_call_arguments(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return "{}".to_string();
+    }
+    let mut stream = serde_json::Deserializer::from_str(trimmed).into_iter::<serde_json::Value>();
+    match stream.next() {
+        Some(Ok(serde_json::Value::Object(map))) => match stream.next() {
+            None => trimmed.to_string(),
+            Some(_) => {
+                tracing::warn!(
+                    "tool-call arguments contained trailing JSON; keeping the first object"
+                );
+                serde_json::Value::Object(map).to_string()
+            }
+        },
+        Some(Ok(_)) => {
+            tracing::warn!("tool-call arguments were JSON but not an object; using empty object");
+            "{}".to_string()
+        }
+        Some(Err(e)) => {
+            tracing::warn!(
+                error = %e,
+                "tool-call arguments JSON parse failed; using empty object"
+            );
+            "{}".to_string()
+        }
+        None => "{}".to_string(),
     }
 }
 
@@ -183,6 +219,25 @@ mod tests {
     }
     fn asst(s: &str) -> ChatMsg {
         ChatMsg::new("assistant", s)
+    }
+
+    #[test]
+    fn sanitize_keeps_a_single_object_verbatim() {
+        assert_eq!(
+            sanitize_tool_call_arguments(r#"{"query":"foo"}"#),
+            r#"{"query":"foo"}"#
+        );
+        assert_eq!(sanitize_tool_call_arguments("  "), "{}");
+    }
+
+    #[test]
+    fn sanitize_keeps_first_object_when_gateway_concatenated_two() {
+        let raw = r#"{"query":"who am I"}{"limit":10}"#;
+        let out = sanitize_tool_call_arguments(raw);
+        let value: serde_json::Value = serde_json::from_str(&out).expect("json");
+        assert_eq!(value["query"], "who am I");
+        assert!(value.get("limit").is_none());
+        serde_json::from_str::<serde_json::Value>(&out).expect("must be a single JSON value");
     }
 
     mod normalize_system_messages_tests {
@@ -388,6 +443,33 @@ mod tests {
             assert_eq!(assistant.tool_calls[0].id.as_deref(), Some("call_1"));
             assert_eq!(assistant.tool_calls[0].function.name, "memory:query");
             assert_eq!(assistant.tool_calls[0].kind, "function");
+        }
+
+        #[test]
+        fn concatenated_tool_arguments_are_sanitized_on_the_wire() {
+            use crate::engine::EngineToolCall;
+            let stack = vec![
+                Message::system("S"),
+                Message::user("u"),
+                Message::assistant_with_tool_calls(
+                    "",
+                    vec![EngineToolCall {
+                        id: Some("call_1".into()),
+                        name: "vault:search".into(),
+                        arguments: r#"{"query":"who am I"}{"limit":10}"#.into(),
+                    }],
+                ),
+            ];
+            let out = project(&stack);
+            let assistant = out
+                .iter()
+                .find(|m| m.role == "assistant")
+                .expect("assistant");
+            let args = &assistant.tool_calls[0].function.arguments;
+            serde_json::from_str::<serde_json::Value>(args).expect("single JSON value");
+            let value: serde_json::Value = serde_json::from_str(args).expect("json");
+            assert_eq!(value["query"], "who am I");
+            assert!(value.get("limit").is_none());
         }
 
         #[test]

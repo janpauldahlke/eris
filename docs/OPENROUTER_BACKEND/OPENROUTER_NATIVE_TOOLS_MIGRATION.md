@@ -164,7 +164,7 @@ Make `OpenRouterClient` send `tools`/`tool_choice` and project the native respon
   ```
 - `parameters` comes from the SAME per-tool lowered schema Phase 0 produces (reuse `tool_args_schema` / the subset cache). Set `strict: true` where the model supports it.
 - When `tools` is attached, DO NOT also attach the strict envelope `response_format`. They are mutually exclusive for tool turns. (Keep the envelope `response_format` path as the downgrade for models without tool support.)
-- `tool_choice`: from the pre-LLM router decision in `src/orchestrator/core/step.rs`. When the router is confident (targeted/slim subset non-empty) send `"required"`; otherwise `"auto"`. Plumb a new optional field on `LlmGenerateOptions` (e.g. `tool_choice: Option<ToolChoice>`), ignored by local backends.
+- `tool_choice`: from `src/orchestrator/core/step.rs`. While tools are offered, send `"auto"` so the model may talk (`message.content` / Idle) **or** continue tooling after `role:tool` results. Do **not** send `"required"` on those hops — that forbids the user-facing summarize turn (the nachvollziehbare hop GBNF still forces via the envelope). Tools stay attached until `max_tool_rounds`; that cap omits `tools[]` for one final conversational pass. `"required"` remains a valid engine value for tests / future use. Plumb `LlmGenerateOptions.tool_choice`, ignored by local backends.
 
 **Offered-tool set.** Reuse the existing offered/targeted logic in `step.rs` (the `response_json_schema` branch around lines 469-500). Where that computes the OpenAI schema subset, also (or instead) build the `tools[]` list for OpenRouter from the identical names, so router / constraint / validation cannot drift.
 

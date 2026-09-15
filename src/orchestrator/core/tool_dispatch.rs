@@ -623,8 +623,16 @@ impl<E: LlmEngine> Orchestrator<E> {
         }
 
         if let Some(reason) = recoverable_msg {
+            let registered = self.gatekeeper.registered_tool_names();
             for tool_name in recoverable_failed_tools {
-                targeted_tools.insert(tool_name);
+                if registered.iter().any(|n| n == &tool_name) {
+                    targeted_tools.insert(tool_name);
+                } else {
+                    tracing::warn!(
+                        tool = %tool_name,
+                        "Recovery will not target an unregistered tool name"
+                    );
+                }
             }
             let allowed: HashSet<String> = self
                 .gatekeeper
@@ -639,7 +647,6 @@ impl<E: LlmEngine> Orchestrator<E> {
                 .collect();
             // Widen failed tools to their domain clusters so recovery is not locked onto
             // the single wrong tool (e.g. doc:ingest → all doc:* + dialog seeds).
-            let registered = self.gatekeeper.registered_tool_names();
             let expanded = crate::orchestrator::routing::expand_names_to_domain_clusters(
                 targeted_tools.iter().cloned(),
                 &registered,

@@ -478,11 +478,9 @@ fn map_native_tool_calls(
 }
 
 fn parse_native_arguments(raw: &str) -> serde_json::Value {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return serde_json::json!({});
-    }
-    match serde_json::from_str::<serde_json::Value>(trimmed) {
+    match serde_json::from_str(&crate::engine::openai_wire::sanitize_tool_call_arguments(
+        raw,
+    )) {
         Ok(serde_json::Value::Object(map)) => serde_json::Value::Object(map),
         Ok(_) => {
             tracing::warn!("native tool arguments were JSON but not an object; using empty object");
@@ -1089,6 +1087,22 @@ mod tests {
             parsed.tool_calls[0].provider_call_id.as_deref(),
             Some("call_1")
         );
+    }
+
+    #[test]
+    fn native_tool_arguments_keep_first_object_when_concatenated() {
+        use crate::engine::{EngineResponse, EngineToolCall};
+        let response = EngineResponse {
+            tool_calls: vec![EngineToolCall {
+                id: Some("call_1".into()),
+                name: "vault:search".into(),
+                arguments: r#"{"query":"who am I"}{"path":"."}"#.into(),
+            }],
+            ..Default::default()
+        };
+        let parsed = llm_response_from_engine(&response).expect("project");
+        assert_eq!(parsed.tool_calls[0].args["query"], "who am I");
+        assert!(parsed.tool_calls[0].args.get("path").is_none());
     }
 
     #[test]

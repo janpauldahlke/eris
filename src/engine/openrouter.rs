@@ -13,7 +13,7 @@
 use crate::config::{
     AppConfig, DataCollection, OpenRouterConfig, OpenRouterReasoning, ResponseFormatMode,
 };
-use crate::engine::openai_wire::{ChatMsg, to_wire_messages};
+use crate::engine::openai_wire::{ChatMsg, sanitize_tool_call_arguments, to_wire_messages};
 use crate::engine::structured::OpenAiNativeTool;
 use crate::engine::token_metrics::{self, LlmTokenSnapshot};
 use crate::engine::{
@@ -357,29 +357,171 @@ struct PartialToolCall {
     arguments: String,
 }
 
-fn apply_tool_call_delta(acc: &mut BTreeMap<u32, PartialToolCall>, delta: &DeltaToolCall) {
-    let idx = delta.index.unwrap_or(0);
-    let entry = acc.entry(idx).or_default();
+enum NameMerge {
+    Keep,
+    Set(String),
+    Collide,
+}
+
+fn merge_tool_name(existing: &str, incoming: &str) -> NameMerge {
+    if incoming.is_empty() {
+        return NameMerge::Keep;
+    }
+    if existing.is_empty() {
+        return NameMerge::Set(incoming.to_string());
+    }
+    if incoming == existing {
+        return NameMerge::Keep;
+    }
+    if incoming.starts_with(existing) {
+        return NameMerge::Set(incoming.to_string());
+    }
+    if existing.starts_with(incoming) {
+        return NameMerge::Keep;
+    }
+    // Distinct complete names (`vault:search` vs `vault:list`) must not concatenate.
+    let existing_complete = existing.contains(':') && !existing.ends_with(':');
+    let incoming_complete = incoming.contains(':') && !incoming.ends_with(':');
+    if existing_complete && incoming_complete {
+        return NameMerge::Collide;
+    }
+    NameMerge::Set(format!("{existing}{incoming}"))
+}
+
+fn next_tool_index(acc: &BTreeMap<u32, PartialToolCall>) -> u32 {
+    acc.keys()
+        .next_back()
+        .copied()
+        .map_or(0, |k| k.saturating_add(1))
+}
+
+fn json_object_complete(raw: &str) -> bool {
+    let trimmed = raw.trim();
+    !trimmed.is_empty()
+        && matches!(
+            serde_json::from_str::<serde_json::Value>(trimmed),
+            Ok(serde_json::Value::Object(_))
+        )
+}
+
+fn resolve_tool_call_index(acc: &BTreeMap<u32, PartialToolCall>, delta: &DeltaToolCall) -> u32 {
     if let Some(id) = delta.id.as_deref().filter(|s| !s.is_empty()) {
-        entry.id = Some(id.to_string());
+        if let Some((&idx, _)) = acc.iter().find(|(_, p)| p.id.as_deref() == Some(id)) {
+            return idx;
+        }
+        if let Some(idx) = delta.index {
+            match acc.get(&idx) {
+                Some(existing) if existing.id.as_deref().is_some_and(|old| old != id) => {
+                    return next_tool_index(acc);
+                }
+                _ => return idx,
+            }
+        }
+        return next_tool_index(acc);
     }
-    let Some(function) = delta.function.as_ref() else {
-        return;
-    };
-    if let Some(name) = function.name.as_deref().filter(|s| !s.is_empty()) {
-        entry.name.push_str(name);
+
+    if let Some(idx) = delta.index {
+        return idx;
     }
-    if let Some(args) = &function.arguments {
-        match args {
-            serde_json::Value::String(s) => entry.arguments.push_str(s),
-            other => {
-                // Full object in one chunk (non-fragmented gateway).
-                if entry.arguments.is_empty() {
-                    entry.arguments = other.to_string();
+
+    acc.iter()
+        .find(|(_, p)| !json_object_complete(&p.arguments))
+        .map(|(&k, _)| k)
+        .or_else(|| acc.keys().next_back().copied())
+        .unwrap_or(0)
+}
+
+fn dest_index_for_arguments(acc: &BTreeMap<u32, PartialToolCall>, idx: u32, fragment: &str) -> u32 {
+    let occupied_complete = acc
+        .get(&idx)
+        .is_some_and(|e| json_object_complete(&e.arguments));
+    if occupied_complete && fragment.trim_start().starts_with('{') {
+        for (&k, v) in acc.iter() {
+            if k > idx && !json_object_complete(&v.arguments) {
+                return k;
+            }
+        }
+    }
+    idx
+}
+
+fn apply_tool_call_delta(acc: &mut BTreeMap<u32, PartialToolCall>, delta: &DeltaToolCall) {
+    let mut idx = resolve_tool_call_index(acc, delta);
+
+    if let Some(name) = delta
+        .function
+        .as_ref()
+        .and_then(|f| f.name.as_deref())
+        .filter(|s| !s.is_empty())
+        && let Some(existing) = acc.get(&idx)
+        && matches!(merge_tool_name(&existing.name, name), NameMerge::Collide)
+    {
+        idx = next_tool_index(acc);
+        tracing::warn!(
+            provider_index = ?delta.index,
+            incoming_name = name,
+            split_index = idx,
+            "OpenRouter SSE: distinct tool name reused an occupied index; splitting parallel call"
+        );
+    }
+
+    {
+        let entry = acc.entry(idx).or_default();
+        if let Some(id) = delta.id.as_deref().filter(|s| !s.is_empty())
+            && entry.id.as_deref().map_or(true, |old| old == id)
+        {
+            entry.id = Some(id.to_string());
+        }
+
+        let Some(function) = delta.function.as_ref() else {
+            return;
+        };
+
+        if let Some(name) = function.name.as_deref().filter(|s| !s.is_empty()) {
+            match merge_tool_name(&entry.name, name) {
+                NameMerge::Keep => {}
+                NameMerge::Set(merged) => entry.name = merged,
+                NameMerge::Collide => {
+                    entry.name = name.to_string();
                 }
             }
         }
     }
+
+    let Some(function) = delta.function.as_ref() else {
+        return;
+    };
+    let Some(args) = function.arguments.as_ref() else {
+        return;
+    };
+
+    let dest_empty = acc
+        .get(&idx)
+        .map(|e| e.arguments.is_empty())
+        .unwrap_or(true);
+    let fragment = match args {
+        serde_json::Value::String(s) => {
+            if s.is_empty() {
+                return;
+            }
+            s.clone()
+        }
+        other if dest_empty => other.to_string(),
+        _ => return,
+    };
+
+    let dest_idx = dest_index_for_arguments(acc, idx, &fragment);
+    if dest_idx != idx {
+        tracing::warn!(
+            from_index = idx,
+            to_index = dest_idx,
+            "OpenRouter SSE: overflowing complete JSON args onto the next parallel tool call"
+        );
+    }
+    acc.entry(dest_idx)
+        .or_default()
+        .arguments
+        .push_str(&fragment);
 }
 
 fn finalize_tool_calls(acc: BTreeMap<u32, PartialToolCall>) -> Vec<EngineToolCall> {
@@ -388,7 +530,7 @@ fn finalize_tool_calls(acc: BTreeMap<u32, PartialToolCall>) -> Vec<EngineToolCal
         .map(|p| EngineToolCall {
             id: p.id,
             name: p.name,
-            arguments: p.arguments,
+            arguments: sanitize_tool_call_arguments(&p.arguments),
         })
         .collect()
 }
@@ -1368,6 +1510,133 @@ mod tests {
         assert!(result.content.is_empty());
         assert_eq!(result.prompt_tokens, 5);
         assert_eq!(result.generated_tokens, 3);
+    }
+
+    fn delta_call(
+        index: Option<u32>,
+        id: Option<&str>,
+        name: Option<&str>,
+        arguments: Option<serde_json::Value>,
+    ) -> DeltaToolCall {
+        DeltaToolCall {
+            index,
+            id: id.map(str::to_string),
+            function: Some(DeltaFunction {
+                name: name.map(str::to_string),
+                arguments,
+            }),
+        }
+    }
+
+    #[test]
+    fn omitted_index_parallel_calls_split_by_name() {
+        let mut acc = BTreeMap::new();
+        apply_tool_call_delta(
+            &mut acc,
+            &delta_call(
+                None,
+                Some("call_a"),
+                Some("vault:search"),
+                Some(serde_json::json!("")),
+            ),
+        );
+        apply_tool_call_delta(
+            &mut acc,
+            &delta_call(None, None, Some("vault:list"), Some(serde_json::json!(""))),
+        );
+        apply_tool_call_delta(
+            &mut acc,
+            &delta_call(
+                None,
+                None,
+                None,
+                Some(serde_json::json!(r#"{"query":"who am I"}"#)),
+            ),
+        );
+        apply_tool_call_delta(
+            &mut acc,
+            &delta_call(None, None, None, Some(serde_json::json!("{}"))),
+        );
+        let calls = finalize_tool_calls(acc);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].id.as_deref(), Some("call_a"));
+        assert_eq!(calls[0].name, "vault:search");
+        assert_eq!(calls[0].arguments, r#"{"query":"who am I"}"#);
+        assert_eq!(calls[1].name, "vault:list");
+        assert_eq!(calls[1].arguments, "{}");
+    }
+
+    #[test]
+    fn reused_index_zero_overflows_complete_args_to_next_call() {
+        let mut acc = BTreeMap::new();
+        apply_tool_call_delta(
+            &mut acc,
+            &delta_call(
+                Some(0),
+                Some("call_a"),
+                Some("vault:search"),
+                Some(serde_json::json!("")),
+            ),
+        );
+        apply_tool_call_delta(
+            &mut acc,
+            &delta_call(
+                Some(0),
+                None,
+                Some("vault:list"),
+                Some(serde_json::json!("")),
+            ),
+        );
+        apply_tool_call_delta(
+            &mut acc,
+            &delta_call(
+                Some(0),
+                None,
+                None,
+                Some(serde_json::json!(r#"{"query":"who am I"}"#)),
+            ),
+        );
+        apply_tool_call_delta(
+            &mut acc,
+            &delta_call(Some(0), None, None, Some(serde_json::json!("{}"))),
+        );
+        let calls = finalize_tool_calls(acc);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].name, "vault:search");
+        assert_eq!(calls[0].arguments, r#"{"query":"who am I"}"#);
+        assert_eq!(calls[1].name, "vault:list");
+        assert_eq!(calls[1].arguments, "{}");
+    }
+
+    #[test]
+    fn name_fragments_of_the_same_tool_still_concatenate() {
+        let mut acc = BTreeMap::new();
+        apply_tool_call_delta(
+            &mut acc,
+            &delta_call(
+                Some(0),
+                Some("call_1"),
+                Some("vault:"),
+                Some(serde_json::json!("")),
+            ),
+        );
+        apply_tool_call_delta(
+            &mut acc,
+            &delta_call(Some(0), None, Some("search"), Some(serde_json::json!(""))),
+        );
+        apply_tool_call_delta(
+            &mut acc,
+            &delta_call(
+                Some(0),
+                None,
+                None,
+                Some(serde_json::json!(r#"{"query":"foo"}"#)),
+            ),
+        );
+        let calls = finalize_tool_calls(acc);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "vault:search");
+        assert_eq!(calls[0].arguments, r#"{"query":"foo"}"#);
     }
 
     #[tokio::test(flavor = "current_thread")]

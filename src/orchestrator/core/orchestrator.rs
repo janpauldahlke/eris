@@ -214,7 +214,8 @@ impl<E: LlmEngine> Orchestrator<E> {
                 identity,
                 config.staged_memory_prompt_max_chars,
             )
-            .with_grammar_constraint(config.is_llamacpp()),
+            .with_grammar_constraint(config.is_llamacpp())
+            .with_slim_tool_description_preview_chars(config.slim_tool_description_preview_chars),
             tool_router,
             max_recovery_attempts,
             max_tool_rounds,
