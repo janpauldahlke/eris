@@ -698,6 +698,7 @@ mod tests {
                     .expect("SeqEngine: unexpected extra generate call");
                 Ok(EngineResponse {
                     content,
+                    reasoning: String::new(),
                     tool_calls: Vec::new(),
                     prompt_tokens: 0,
                     generated_tokens: 0,

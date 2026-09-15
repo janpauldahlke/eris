@@ -1,8 +1,8 @@
-use crate::engine::{LlmEngine, LlmGenerateOptions};
+use crate::engine::{LlmEngine, LlmGenerateOptions, ToolChoice};
 use crate::executive::error::{FcpError, Result};
 use crate::orchestrator::context::{build_llm_view, estimate_stack_tokens};
 use crate::orchestrator::llm_support::json_envelope::{
-    parse_llm_response_protocol, split_leading_json_object, trailing_content_after_valid_llm_json,
+    llm_response_from_engine, split_leading_json_object, trailing_content_after_valid_llm_json,
 };
 use crate::orchestrator::r#loop::directive_policy::decide_transition_from_directive;
 use crate::orchestrator::r#loop::tool_batch::ToolBatchDecision;
@@ -459,22 +459,34 @@ impl<E: LlmEngine> Orchestrator<E> {
                 (None, true)
             };
 
-            // OpenRouter: parallel branch to the GBNF subset above — same offered-tool decisions,
-            // but compiled into a strict `response_format` JSON Schema. Mutually exclusive with
-            // `grammar_override` by backend. `None` (full-roster / empty-offered cases) lets the
-            // engine fall back to `json_object`, backed by the existing recovery loop.
-            let response_json_schema = if !self.config.is_openrouter() {
-                None
+            // OpenRouter: same offered-tool decisions as the GBNF subset, compiled into both
+            // a strict envelope `response_format` (downgrade path) and native `tools[]`.
+            // Mutually exclusive with `grammar_override` by backend. The engine attaches
+            // `tools` when native calling is enabled; HTTP 400 falls back to the envelope.
+            let (response_json_schema, native_tools, tool_choice) = if !self.config.is_openrouter()
+            {
+                (None, None, None)
             } else if !tools_needed {
-                Some(
-                    self.openai_schema_subset_cache
-                        .get_or_compile_subset(&self.gatekeeper, &[])?,
+                (
+                    Some(
+                        self.openai_schema_subset_cache
+                            .get_or_compile_subset(&self.gatekeeper, &[])?,
+                    ),
+                    None,
+                    None,
                 )
             } else if !targeted_tools.is_empty() {
                 let names: Vec<String> = targeted_tools.iter().cloned().collect();
-                Some(
-                    self.openai_schema_subset_cache
-                        .get_or_compile_subset(&self.gatekeeper, &names)?,
+                (
+                    Some(
+                        self.openai_schema_subset_cache
+                            .get_or_compile_subset(&self.gatekeeper, &names)?,
+                    ),
+                    Some(
+                        self.openai_schema_subset_cache
+                            .get_or_compile_native_tools(&self.gatekeeper, &names)?,
+                    ),
+                    Some(ToolChoice::Required),
                 )
             } else if slim_assembly {
                 let offered = slim_offered_tool_names(
@@ -485,15 +497,22 @@ impl<E: LlmEngine> Orchestrator<E> {
                     &self.state,
                 );
                 if offered.is_empty() {
-                    None
+                    (None, None, None)
                 } else {
-                    Some(
-                        self.openai_schema_subset_cache
-                            .get_or_compile_subset(&self.gatekeeper, &offered)?,
+                    (
+                        Some(
+                            self.openai_schema_subset_cache
+                                .get_or_compile_subset(&self.gatekeeper, &offered)?,
+                        ),
+                        Some(
+                            self.openai_schema_subset_cache
+                                .get_or_compile_native_tools(&self.gatekeeper, &offered)?,
+                        ),
+                        Some(ToolChoice::Required),
                     )
                 }
             } else {
-                None
+                (None, None, None)
             };
 
             let response_result = tokio::select! {
@@ -508,6 +527,8 @@ impl<E: LlmEngine> Orchestrator<E> {
                         grammar_override,
                         attach_session_grammar,
                         response_json_schema,
+                        native_tools,
+                        tool_choice,
                     };
                     let out = self.engine.generate(&view, "", None, gen_options).await;
                     llm_ms_acc = llm_ms_acc.saturating_add(llm_started.elapsed().as_millis() as u64);
@@ -559,7 +580,9 @@ impl<E: LlmEngine> Orchestrator<E> {
                 }
             };
 
-            if trailing_json_recovery_triggered(&self.config, &response.content) {
+            if response.tool_calls.is_empty()
+                && trailing_json_recovery_triggered(&self.config, &response.content)
+            {
                 let (_, tail) = split_leading_json_object(&response.content);
                 let preview: String = tail.trim().chars().take(240).collect();
                 tracing::warn!(
@@ -593,7 +616,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                 return Ok(());
             }
 
-            let parsed = match parse_llm_response_protocol(&response.content) {
+            let parsed = match llm_response_from_engine(&response) {
                 Err(e) => {
                     tracing::warn!(
                         error = %e,

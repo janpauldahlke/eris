@@ -219,6 +219,7 @@ mod phase5_recovery_tests {
         ) -> crate::executive::error::Result<EngineResponse> {
             Ok(EngineResponse {
                 content: "{}".into(),
+                reasoning: String::new(),
                 tool_calls: Vec::new(),
                 prompt_tokens: 0,
                 generated_tokens: 0,

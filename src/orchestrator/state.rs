@@ -94,6 +94,28 @@ impl LlmResponse {
             }
         })
     }
+
+    /// Native OpenRouter tool turn: `status` is derived as Reflect from non-empty `tool_calls`.
+    #[must_use]
+    pub fn from_native_tool_calls(thought: String, tool_calls: Vec<ToolCall>) -> Self {
+        Self {
+            thought,
+            status: None,
+            message_to_user: None,
+            tool_calls,
+        }
+    }
+
+    /// Native OpenRouter talk turn (tools offered, model chose not to call any).
+    #[must_use]
+    pub fn from_native_talk(thought: String, message_to_user: Option<String>) -> Self {
+        Self {
+            thought,
+            status: None,
+            message_to_user,
+            tool_calls: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

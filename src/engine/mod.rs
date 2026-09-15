@@ -17,7 +17,7 @@ pub use self::token_metrics::{
     publish as publish_llm_token_snapshot,
 };
 pub use self::traits::{
-    EngineResponse, EngineToolCall, LlmEngine, LlmGenerateOptions, Message, Role,
+    EngineResponse, EngineToolCall, LlmEngine, LlmGenerateOptions, Message, Role, ToolChoice,
 };
 
 use self::ollama::OllamaClient;

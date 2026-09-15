@@ -1,8 +1,28 @@
+use crate::engine::structured::OpenAiNativeTool;
 use crate::executive::error::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::mpsc;
+
+/// OpenRouter `tool_choice` (ignored by Ollama / llama.cpp).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolChoice {
+    Auto,
+    Required,
+}
+
+impl Serialize for ToolChoice {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        serializer.serialize_str(match self {
+            ToolChoice::Auto => "auto",
+            ToolChoice::Required => "required",
+        })
+    }
+}
 
 /// Wire-level conversational role for a [`Message`].
 ///
@@ -154,6 +174,8 @@ pub struct EngineResponse {
     pub content: String,
     /// Native tool calls; empty for Ollama / llama.cpp (and for OpenRouter talk turns).
     pub tool_calls: Vec<EngineToolCall>,
+    /// Hosted reasoning trace (`message.reasoning`). Never mixed into `content`. Empty locally.
+    pub reasoning: String,
     pub prompt_tokens: usize,
     pub generated_tokens: usize,
     /// Wall-clock ms for the completed request (streaming or non-streaming), for throughput metrics.
@@ -173,8 +195,15 @@ pub struct LlmGenerateOptions {
     pub attach_session_grammar: bool,
     /// When `Some`, OpenRouter sends `response_format: {type: "json_schema", strict: true, schema}`
     /// built from the same offered-tool set as the GBNF subset. Ollama and llama.cpp ignore this.
-    /// Mutually exclusive with [`Self::grammar_override`] by backend.
+    /// Mutually exclusive with [`Self::grammar_override`] by backend. Also mutually exclusive
+    /// with [`Self::native_tools`] on a given OpenRouter request (tools win until a session
+    /// downgrade to envelope `response_format`).
     pub response_json_schema: Option<Arc<serde_json::Value>>,
+    /// OpenRouter native `tools[]` for this hop (same offered names as the schema subset).
+    /// Ollama and llama.cpp ignore this. Empty/None means do not attach tools.
+    pub native_tools: Option<Arc<Vec<OpenAiNativeTool>>>,
+    /// OpenRouter `tool_choice`. Ignored unless [`Self::native_tools`] is attached.
+    pub tool_choice: Option<ToolChoice>,
 }
 
 impl Default for LlmGenerateOptions {
@@ -184,6 +213,8 @@ impl Default for LlmGenerateOptions {
             grammar_override: None,
             attach_session_grammar: true,
             response_json_schema: None,
+            native_tools: None,
+            tool_choice: None,
         }
     }
 }

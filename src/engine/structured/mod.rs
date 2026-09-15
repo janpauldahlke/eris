@@ -5,7 +5,9 @@
 //! prompt, constraint, and validation cannot drift apart.
 
 pub mod envelope_schema;
+pub mod native_tools;
 pub mod schema_to_openai;
 
 pub use envelope_schema::{EnvelopeToolEntry, build_envelope_json_schema};
+pub use native_tools::{OpenAiNativeFunction, OpenAiNativeTool};
 pub use schema_to_openai::{OpenAiSchema, lower_root_schema, tool_args_schema};

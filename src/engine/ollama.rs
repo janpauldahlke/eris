@@ -178,6 +178,7 @@ impl LlmEngine for OllamaClient {
 
             Ok(EngineResponse {
                 content: full_content,
+                reasoning: String::new(),
                 tool_calls: Vec::new(),
                 prompt_tokens,
                 generated_tokens,
@@ -211,6 +212,7 @@ impl LlmEngine for OllamaClient {
                     );
                     Ok(EngineResponse {
                         content,
+                        reasoning: String::new(),
                         tool_calls: Vec::new(),
                         prompt_tokens,
                         generated_tokens,

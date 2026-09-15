@@ -788,6 +788,7 @@ mod repeat_failure_streak_tests {
         ) -> Result<EngineResponse> {
             Ok(EngineResponse {
                 content: "{}".into(),
+                reasoning: String::new(),
                 tool_calls: Vec::new(),
                 prompt_tokens: 0,
                 generated_tokens: 0,
@@ -1065,6 +1066,7 @@ mod targeted_schema_retry_phase5_tests {
         ) -> Result<EngineResponse> {
             Ok(EngineResponse {
                 content: "{}".into(),
+                reasoning: String::new(),
                 tool_calls: Vec::new(),
                 prompt_tokens: 0,
                 generated_tokens: 0,

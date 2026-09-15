@@ -351,6 +351,7 @@ impl LlmEngine for LlamaCppClient {
 
         Ok(EngineResponse {
             content,
+            reasoning: String::new(),
             tool_calls: Vec::new(),
             prompt_tokens,
             generated_tokens,

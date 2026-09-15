@@ -1,6 +1,6 @@
 # OpenRouter Native Tool-Calling Migration
 
-Status: IN PROGRESS — Phase 0 DONE, Phase 1 DONE (`EngineToolCall` / `EngineResponse.tool_calls` / `Role::Tool` + Message tool metadata; local backends always empty). Phases 2–5 pending.
+Status: IN PROGRESS — Phase 0–2 DONE (native `tools`/`tool_choice` + SSE fragment assembly + envelope projection; HTTP 400 downgrades to `response_format`). Phase 3 (role:tool round-trip) and Phase 5 (docs/health) pending. Phase 4 Solution B landed with Phase 2.
 Scope: OpenRouter backend only. Ollama (JSON-mode) and llama.cpp (GBNF) are untouched.
 Author handoff: this doc is self-contained so a small model can execute one phase at a time.
 
@@ -145,7 +145,15 @@ Recommendation: implement the fields in Phase 1 but keep them unused until Phase
 
 ---
 
-## 8. Phase 2 — OpenRouter native tools (hybrid envelope projection)
+## 8. Phase 2 — OpenRouter native tools (hybrid envelope projection) — ✅ DONE
+
+> Implemented: `LlmGenerateOptions.native_tools` / `tool_choice`; `JsonSchemaSubsetCache` emits
+> the same offered names as native `tools[]` (strict parameters from Phase 0). OpenRouter attaches
+> `tools` and omits envelope `response_format` on those turns. SSE accumulates
+> `delta.tool_calls[]` fragments (Phase 4 Solution B). HTTP 400 with tools attached disables
+> native tools for the session and retries with envelope `response_format`. Orchestrator projects
+> via `llm_response_from_engine` (native calls → Reflect; prose talk → Idle; envelope JSON
+> unchanged for local backends / downgrade). Hosted `reasoning` fills `thought`, never `content`.
 
 Make `OpenRouterClient` send `tools`/`tool_choice` and project the native response back into the envelope.
 
@@ -201,7 +209,9 @@ Replace the "fold tool result into a system->user message" behavior with the nat
 
 ---
 
-## 10. Phase 4 — Streaming decision (contained; not a blocker)
+## 10. Phase 4 — Streaming decision (contained; not a blocker) — ✅ DONE (Solution B, with Phase 2)
+
+The UI channels (idle / chat / thought+reflect) are blocking, so streaming is used only for cost/usage, interruptibility, and idle-timeout — not live display. **Chosen: Solution B.** `consume_sse_stream` accumulates `delta.tool_calls[].function.arguments` fragments keyed by index and finalizes on `[DONE]`. Cost, usage, mid-stream `error`, and interrupt (drop the generate future) stay on the same SSE path.
 
 The UI channels (idle / chat / thought+reflect) are blocking, so streaming is used only for cost/usage, interruptibility, and idle-timeout — not live display. Choose ONE:
 

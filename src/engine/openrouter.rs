@@ -1,23 +1,30 @@
 //! OpenRouter chat backend: the OpenAI-compatible `/chat/completions` API over HTTPS with a
-//! Bearer key from the environment. Adapted from [`crate::engine::llama_cpp::LlamaCppClient`];
-//! envelope enforcement uses `response_format` (JSON Schema from the offered-tool set, see
-//! [`crate::engine::structured`]) instead of GBNF.
+//! Bearer key from the environment. Adapted from [`crate::engine::llama_cpp::LlamaCppClient`].
+//!
+//! Envelope enforcement prefers native `tools` / `tool_choice` (projected back into the FCP
+//! envelope at the orchestrator). The strict `response_format` JSON Schema path remains the
+//! session downgrade when a model rejects `tools` (HTTP 400).
 //!
 //! Requests always stream (SSE): dropping the generate future aborts the HTTP request, which is
 //! the orchestrator's interrupt mechanism — a non-streaming hosted call would keep running (and
-//! billing) server-side until completion.
+//! billing) server-side until completion. Native tool-call arguments are assembled from
+//! `delta.tool_calls[]` fragments (Phase 4 Solution B) so cost and interrupt stay uniform.
 
 use crate::config::{
     AppConfig, DataCollection, OpenRouterConfig, OpenRouterReasoning, ResponseFormatMode,
 };
 use crate::engine::openai_wire::{ChatMsg, to_wire_messages};
+use crate::engine::structured::OpenAiNativeTool;
 use crate::engine::token_metrics::{self, LlmTokenSnapshot};
-use crate::engine::{EngineResponse, LlmEngine, LlmGenerateOptions, Message};
+use crate::engine::{
+    EngineResponse, EngineToolCall, LlmEngine, LlmGenerateOptions, Message, ToolChoice,
+};
 use crate::executive::error::{FcpError, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, watch};
 
@@ -37,6 +44,9 @@ pub struct OpenRouterClient {
     /// downgraded (json_schema → json_object → off) when a model rejects the richer form with
     /// HTTP 400. Atomic because `generate` takes `&self` (no shared `Mutex` per `.cursorrules`).
     effective_format_mode: AtomicU8,
+    /// When false, this session no longer sends `tools[]` and uses envelope `response_format`
+    /// instead (model rejected native tools with HTTP 400).
+    native_tools_enabled: AtomicBool,
 }
 
 fn mode_to_u8(mode: ResponseFormatMode) -> u8 {
@@ -106,6 +116,7 @@ impl OpenRouterClient {
             config,
             token_metrics_tx: None,
             effective_format_mode,
+            native_tools_enabled: AtomicBool::new(true),
         })
     }
 
@@ -198,6 +209,10 @@ struct ChatCompletionRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     response_format: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<&'a [OpenAiNativeTool]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<ToolChoice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     reasoning: Option<serde_json::Value>,
     /// Ordered fallback list (primary first) with `route: "fallback"` for provider outages.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -243,6 +258,27 @@ struct Delta {
     /// Hosted reasoning arrives on a separate field and never contaminates the envelope.
     #[serde(default)]
     reasoning: Option<String>,
+    #[serde(default)]
+    tool_calls: Vec<DeltaToolCall>,
+}
+
+#[derive(Deserialize, Default)]
+struct DeltaToolCall {
+    #[serde(default)]
+    index: Option<u32>,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    function: Option<DeltaFunction>,
+}
+
+#[derive(Deserialize, Default)]
+struct DeltaFunction {
+    #[serde(default)]
+    name: Option<String>,
+    /// OpenAI sends a JSON **string** fragment; some gateways send a full object once.
+    #[serde(default)]
+    arguments: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -274,10 +310,54 @@ struct ApiError {
 struct StreamOutcome {
     content: String,
     reasoning: String,
+    tool_calls: Vec<EngineToolCall>,
     prompt_tokens: usize,
     completion_tokens: usize,
     reasoning_tokens: usize,
     reported_cost_usd: Option<f64>,
+}
+
+#[derive(Default)]
+struct PartialToolCall {
+    id: Option<String>,
+    name: String,
+    arguments: String,
+}
+
+fn apply_tool_call_delta(acc: &mut BTreeMap<u32, PartialToolCall>, delta: &DeltaToolCall) {
+    let idx = delta.index.unwrap_or(0);
+    let entry = acc.entry(idx).or_default();
+    if let Some(id) = delta.id.as_deref().filter(|s| !s.is_empty()) {
+        entry.id = Some(id.to_string());
+    }
+    let Some(function) = delta.function.as_ref() else {
+        return;
+    };
+    if let Some(name) = function.name.as_deref().filter(|s| !s.is_empty()) {
+        entry.name.push_str(name);
+    }
+    if let Some(args) = &function.arguments {
+        match args {
+            serde_json::Value::String(s) => entry.arguments.push_str(s),
+            other => {
+                // Full object in one chunk (non-fragmented gateway).
+                if entry.arguments.is_empty() {
+                    entry.arguments = other.to_string();
+                }
+            }
+        }
+    }
+}
+
+fn finalize_tool_calls(acc: BTreeMap<u32, PartialToolCall>) -> Vec<EngineToolCall> {
+    acc.into_values()
+        .filter(|p| !p.name.is_empty())
+        .map(|p| EngineToolCall {
+            id: p.id,
+            name: p.name,
+            arguments: p.arguments,
+        })
+        .collect()
 }
 
 /// Parse the OpenRouter SSE stream: `data:` frames, `[DONE]` sentinel, comment keep-alives
@@ -292,6 +372,7 @@ async fn consume_sse_stream(
     let mut out = StreamOutcome::default();
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
+    let mut tool_acc: BTreeMap<u32, PartialToolCall> = BTreeMap::new();
 
     while let Some(chunk_result) = stream.next().await {
         let chunk = chunk_result
@@ -310,6 +391,7 @@ async fn consume_sse_stream(
                 continue;
             };
             if data == "[DONE]" {
+                out.tool_calls = finalize_tool_calls(tool_acc);
                 return Ok(out);
             }
             let parsed: StreamChunk = match serde_json::from_str(data) {
@@ -342,10 +424,14 @@ async fn consume_sse_stream(
                         let _ = tx.send(content.clone());
                     }
                 }
+                for tc in &delta.tool_calls {
+                    apply_tool_call_delta(&mut tool_acc, tc);
+                }
             }
         }
     }
 
+    out.tool_calls = finalize_tool_calls(tool_acc);
     Ok(out)
 }
 
@@ -413,8 +499,29 @@ impl LlmEngine for OpenRouterClient {
 
         loop {
             let mode = self.effective_format_mode.load(Ordering::SeqCst);
-            let response_format = self.response_format_for(&options, mode);
+            let tools_slice: Option<&[OpenAiNativeTool]> =
+                if self.native_tools_enabled.load(Ordering::SeqCst) {
+                    options
+                        .native_tools
+                        .as_deref()
+                        .filter(|t| !t.is_empty())
+                        .map(|t| t.as_slice())
+                } else {
+                    None
+                };
+            let tools_attached = tools_slice.is_some();
+            // Native tools and strict envelope `response_format` are mutually exclusive.
+            let response_format = if tools_attached {
+                None
+            } else {
+                self.response_format_for(&options, mode)
+            };
             let structured_attached = response_format.is_some();
+            let tool_choice = if tools_attached {
+                options.tool_choice
+            } else {
+                None
+            };
             let request_body = ChatCompletionRequest {
                 model: &or.model,
                 messages: &messages,
@@ -424,9 +531,10 @@ impl LlmEngine for OpenRouterClient {
                 },
                 usage: UsageInclude { include: true },
                 provider: ProviderPrefs {
-                    // Pin providers that honor response_format; otherwise a router hop can
-                    // silently drop the schema and return unconstrained prose at HTTP 200.
-                    require_parameters: (structured_attached && or.require_parameters)
+                    // Pin providers that honor tools / response_format; otherwise a router hop
+                    // can silently drop the constraint and return unconstrained prose at HTTP 200.
+                    require_parameters: ((tools_attached || structured_attached)
+                        && or.require_parameters)
                         .then_some(true),
                     data_collection: match or.data_collection {
                         DataCollection::Deny => "deny",
@@ -436,6 +544,8 @@ impl LlmEngine for OpenRouterClient {
                 temperature: Some(temperature),
                 max_tokens,
                 response_format,
+                tools: tools_slice,
+                tool_choice,
                 reasoning: reasoning.clone(),
                 models: models.clone(),
                 route,
@@ -451,6 +561,8 @@ impl LlmEngine for OpenRouterClient {
                 attempt,
                 structured_mode = mode,
                 structured_attached,
+                tools_attached,
+                tool_choice = ?tool_choice,
                 reasoning_requested = reasoning.is_some(),
                 "Sending chat request to OpenRouter"
             );
@@ -508,6 +620,21 @@ impl LlmEngine for OpenRouterClient {
                     )));
                 }
                 if status == reqwest::StatusCode::BAD_REQUEST {
+                    // Native tools unsupported: drop `tools[]` for this session and retry with
+                    // the envelope `response_format` path.
+                    if tools_attached
+                        && self
+                            .native_tools_enabled
+                            .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
+                            .is_ok()
+                    {
+                        tracing::warn!(
+                            http_status = %status,
+                            body = %body_excerpt,
+                            "OpenRouter HTTP 400 with tools attached; downgrading session to response_format envelope"
+                        );
+                        continue;
+                    }
                     // Model rejected the richer request shape (strict json_schema, or
                     // reasoning + strict schema): downgrade the ladder and retry in-place.
                     if structured_attached && self.downgrade_format_mode(mode) {
@@ -587,12 +714,14 @@ impl LlmEngine for OpenRouterClient {
                 cost_micro_usd = cost,
                 generation_ms,
                 content_len = outcome.content.len(),
+                native_tool_calls = outcome.tool_calls.len(),
                 "OpenRouter chat response complete"
             );
 
             return Ok(EngineResponse {
                 content: outcome.content,
-                tool_calls: Vec::new(),
+                tool_calls: outcome.tool_calls,
+                reasoning: outcome.reasoning,
                 prompt_tokens: outcome.prompt_tokens,
                 generated_tokens: outcome.completion_tokens,
                 generation_ms,
@@ -605,6 +734,8 @@ impl LlmEngine for OpenRouterClient {
 mod tests {
     use super::*;
     use crate::config::ReasoningEffort;
+    use crate::engine::ToolChoice;
+    use crate::engine::structured::OpenAiNativeTool;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
@@ -640,6 +771,7 @@ mod tests {
             config: Arc::new(AppConfig::default()),
             token_metrics_tx: None,
             effective_format_mode,
+            native_tools_enabled: AtomicBool::new(true),
         }
     }
 
@@ -1081,6 +1213,197 @@ mod tests {
         assert_eq!(body["models"][0], "test/model-1");
         assert_eq!(body["models"][1], "fallback/model-2");
         assert_eq!(body["route"], "fallback");
+    }
+
+    fn sample_native_tools() -> Arc<Vec<OpenAiNativeTool>> {
+        Arc::new(vec![OpenAiNativeTool::function(
+            "memory:query".into(),
+            "Search memories".into(),
+            serde_json::json!({
+                "type": "object",
+                "properties": { "query": { "type": "string" } },
+                "required": ["query"],
+                "additionalProperties": false
+            }),
+        )])
+    }
+
+    fn native_tool_options(choice: ToolChoice) -> LlmGenerateOptions {
+        LlmGenerateOptions {
+            native_tools: Some(sample_native_tools()),
+            tool_choice: Some(choice),
+            response_json_schema: Some(Arc::new(serde_json::json!({"type": "object"}))),
+            ..Default::default()
+        }
+    }
+
+    fn sse_tool_call_fragments() -> String {
+        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"memory:query\",\"arguments\":\"\"}}]}}]}\n\n\
+         data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"query\\\":\"}}]}}]}\n\n\
+         data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"foo\\\"}\"}}]}}]}\n\n\
+         data: {\"choices\":[{\"delta\":{}}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":3,\"cost\":0.01}}\n\n\
+         data: [DONE]\n\n"
+            .to_string()
+    }
+
+    fn sse_reasoning_then_talk() -> String {
+        "data: {\"choices\":[{\"delta\":{\"reasoning\":\"think first\"}}]}\n\n\
+         data: {\"choices\":[{\"delta\":{\"content\":\"hello user\"}}]}\n\n\
+         data: {\"choices\":[{\"delta\":{}}],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":2}}\n\n\
+         data: [DONE]\n\n"
+            .to_string()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn tools_attached_when_offered_subset_nonempty() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(sse_tool_call_fragments()))
+            .mount(&mock_server)
+            .await;
+
+        let client = make_client(&mock_server.uri(), test_or_config());
+        client
+            .generate(
+                &user_stack(),
+                "",
+                None,
+                native_tool_options(ToolChoice::Auto),
+            )
+            .await
+            .expect("generate");
+
+        let body = posted_body(&mock_server).await;
+        assert_eq!(body["tools"][0]["type"], "function");
+        assert_eq!(body["tools"][0]["function"]["name"], "memory:query");
+        assert_eq!(body["tools"][0]["function"]["strict"], true);
+        assert!(
+            body.get("response_format").is_none(),
+            "tools and response_format are mutually exclusive"
+        );
+        assert_eq!(body["provider"]["require_parameters"], true);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn tool_choice_required_when_router_confident() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(sse_body_ok()))
+            .mount(&mock_server)
+            .await;
+
+        let client = make_client(&mock_server.uri(), test_or_config());
+        client
+            .generate(
+                &user_stack(),
+                "",
+                None,
+                native_tool_options(ToolChoice::Required),
+            )
+            .await
+            .expect("generate");
+
+        let body = posted_body(&mock_server).await;
+        assert_eq!(body["tool_choice"], "required");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn streamed_tool_call_fragments_assemble() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(sse_tool_call_fragments()))
+            .mount(&mock_server)
+            .await;
+
+        let client = make_client(&mock_server.uri(), test_or_config());
+        let result = client
+            .generate(
+                &user_stack(),
+                "",
+                None,
+                native_tool_options(ToolChoice::Required),
+            )
+            .await
+            .expect("generate");
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].id.as_deref(), Some("call_1"));
+        assert_eq!(result.tool_calls[0].name, "memory:query");
+        assert_eq!(result.tool_calls[0].arguments, r#"{"query":"foo"}"#);
+        assert!(result.content.is_empty());
+        assert_eq!(result.prompt_tokens, 5);
+        assert_eq!(result.generated_tokens, 3);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn reasoning_stays_out_of_content() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(sse_reasoning_then_talk()))
+            .mount(&mock_server)
+            .await;
+
+        let client = make_client(&mock_server.uri(), test_or_config());
+        let result = client
+            .generate(&user_stack(), "", None, LlmGenerateOptions::default())
+            .await
+            .expect("generate");
+        assert_eq!(result.content, "hello user");
+        assert_eq!(result.reasoning, "think first");
+        assert!(
+            !result.content.contains("think"),
+            "reasoning must not leak into content"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn unsupported_tools_400_downgrades_to_response_format() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(move |req: &Request| {
+                let body: serde_json::Value =
+                    serde_json::from_slice(&req.body).expect("request json");
+                if body.get("tools").is_some() {
+                    ResponseTemplate::new(400)
+                        .set_body_string(r#"{"error":{"message":"tools unsupported"}}"#)
+                } else {
+                    ResponseTemplate::new(200).set_body_string(sse_body_ok())
+                }
+            })
+            .expect(3)
+            .mount(&mock_server)
+            .await;
+
+        let client = make_client(&mock_server.uri(), test_or_config());
+        let opts = native_tool_options(ToolChoice::Required);
+        let result = client
+            .generate(&user_stack(), "", None, opts.clone())
+            .await
+            .expect("generate after tools downgrade");
+        assert_eq!(result.content, "Hello world");
+        assert!(
+            !client.native_tools_enabled.load(Ordering::SeqCst),
+            "session must disable native tools"
+        );
+
+        client
+            .generate(&user_stack(), "", None, opts)
+            .await
+            .expect("second generate stays on envelope");
+        let reqs = mock_server.received_requests().await.expect("reqs");
+        assert_eq!(reqs.len(), 3);
+        let first: serde_json::Value = serde_json::from_slice(&reqs[0].body).expect("json");
+        assert!(first.get("tools").is_some());
+        let second: serde_json::Value = serde_json::from_slice(&reqs[1].body).expect("json");
+        assert!(second.get("tools").is_none());
+        assert_eq!(second["response_format"]["type"], "json_schema");
+        let third: serde_json::Value = serde_json::from_slice(&reqs[2].body).expect("json");
+        assert!(third.get("tools").is_none());
+        assert_eq!(third["response_format"]["type"], "json_schema");
     }
 
     #[test]

@@ -243,6 +243,7 @@ mod tests {
         let response = EngineResponse {
             content: r#"{"thought":"test","status":"Idle","message_to_user":"hi","tool_calls":[]}"#
                 .to_string(),
+            reasoning: String::new(),
             tool_calls: Vec::new(),
             prompt_tokens: 10,
             generated_tokens: 5,
@@ -263,6 +264,7 @@ mod tests {
 
         let response = EngineResponse {
             content: "not valid json".to_string(),
+            reasoning: String::new(),
             tool_calls: Vec::new(),
             prompt_tokens: 10,
             generated_tokens: 5,

@@ -70,6 +70,7 @@ impl LlmEngine for MockEngine {
         }
         Ok(EngineResponse {
             content: self.content.clone(),
+            reasoning: String::new(),
             tool_calls: Vec::new(),
             prompt_tokens: self.prompt_tokens,
             generated_tokens: self.generated_tokens,
@@ -584,6 +585,7 @@ async fn test_async_guillotine_interrupts_generation() {
             tokio::time::sleep(Duration::from_secs(10)).await;
             Ok(EngineResponse {
                 content: "never".to_string(),
+                reasoning: String::new(),
                 tool_calls: Vec::new(),
                 prompt_tokens: 0,
                 generated_tokens: 0,
@@ -705,6 +707,7 @@ async fn test_duplicate_only_batch_halts_without_extra_generation() {
             });
             Ok(EngineResponse {
                 content,
+                reasoning: String::new(),
                 tool_calls: Vec::new(),
                 prompt_tokens: 0,
                 generated_tokens: 0,
@@ -824,6 +827,7 @@ async fn test_model_declared_reflect_does_not_shrink_chat_tool_palette() {
             });
             Ok(EngineResponse {
                 content,
+                reasoning: String::new(),
                 tool_calls: Vec::new(),
                 prompt_tokens: 0,
                 generated_tokens: 0,

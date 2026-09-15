@@ -237,6 +237,11 @@ impl Gatekeeper {
         self.registry.get(name).map(|t| t.parameters_schema())
     }
 
+    /// Human description for a registered tool (OpenAI `tools[].function.description`).
+    pub fn description_for(&self, name: &str) -> Option<String> {
+        self.registry.get(name).map(|t| t.description().to_string())
+    }
+
     /// Trait defaults for each registered tool, merged with `overrides` (config wins).
     pub fn merge_context_view_hints(
         &self,
@@ -359,16 +364,24 @@ fn normalize_tool_args(tool_name: &str, mut args: Value) -> Value {
     };
     if tool_name == "news:today" {
         for key in ["category", "homepage_url"] {
-            if obj.get(key).and_then(|v| v.as_str()).is_some_and(|s| s.trim().is_empty()) {
+            if obj
+                .get(key)
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| s.trim().is_empty())
+            {
                 obj.remove(key);
             }
         }
-        if obj.get("category").and_then(|v| v.as_str()).is_some_and(|s| {
-            matches!(
-                s.trim().to_ascii_lowercase().as_str(),
-                "none" | "null" | "n/a" | "na"
-            )
-        }) {
+        if obj
+            .get("category")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| {
+                matches!(
+                    s.trim().to_ascii_lowercase().as_str(),
+                    "none" | "null" | "n/a" | "na"
+                )
+            })
+        {
             obj.remove("category");
         }
         for alias in ["top_n", "headlines", "limit"] {
@@ -474,7 +487,13 @@ const WEB_FETCH_KEYS: &[&str] = &[
 
 const WEB_SEARCH_KEYS: &[&str] = &["query", "mission_note", "mission_id", "fetch_budget"];
 
-const WEB_FIND_KEYS: &[&str] = &["artifact_id", "query", "top_k", "mission_id", "mission_note"];
+const WEB_FIND_KEYS: &[&str] = &[
+    "artifact_id",
+    "query",
+    "top_k",
+    "mission_id",
+    "mission_note",
+];
 
 const NEWS_TODAY_KEYS: &[&str] = &[
     "category",
@@ -607,7 +626,10 @@ mod tests {
                 json!({"path": "20_Discourse/doc-notes/test.md", "content": "notes"}),
             )
             .await;
-        assert!(res.is_ok(), "vault:write must be allowed in Reflect for doc-summarize skill workflow");
+        assert!(
+            res.is_ok(),
+            "vault:write must be allowed in Reflect for doc-summarize skill workflow"
+        );
     }
 
     #[test]
@@ -622,11 +644,7 @@ mod tests {
     fn dispatch_authorization_state_web_tools_allowed_in_recover() {
         for tool in ["web:fetch", "web:search", "web:find"] {
             assert_eq!(
-                Gatekeeper::dispatch_authorization_state(
-                    &AgentState::Recover,
-                    tool,
-                    false,
-                ),
+                Gatekeeper::dispatch_authorization_state(&AgentState::Recover, tool, false,),
                 AgentState::Recover
             );
         }
@@ -635,11 +653,7 @@ mod tests {
     #[test]
     fn dispatch_authorization_state_elevates_chat_only_tools_in_recover() {
         assert_eq!(
-            Gatekeeper::dispatch_authorization_state(
-                &AgentState::Recover,
-                "mail:write",
-                false,
-            ),
+            Gatekeeper::dispatch_authorization_state(&AgentState::Recover, "mail:write", false,),
             AgentState::Chat
         );
     }
@@ -718,10 +732,7 @@ mod tests {
 
     #[test]
     fn normalize_web_search_aliases_q_to_query() {
-        let args = normalize_tool_args(
-            "web:search",
-            json!({"q": "bundesliga letzter spieltag"}),
-        );
+        let args = normalize_tool_args("web:search", json!({"q": "bundesliga letzter spieltag"}));
         assert_eq!(
             args.get("query").and_then(|v| v.as_str()),
             Some("bundesliga letzter spieltag")
@@ -779,10 +790,7 @@ mod tests {
     fn normalize_web_find_maps_url_uuid_to_artifact_id() {
         let id = "f6534031-61a2-46bd-a7e9-36deaed3bc5c";
         let args = normalize_tool_args("web:find", json!({"url": id, "query": "goals"}));
-        assert_eq!(
-            args.get("artifact_id").and_then(|v| v.as_str()),
-            Some(id)
-        );
+        assert_eq!(args.get("artifact_id").and_then(|v| v.as_str()), Some(id));
         assert!(args.get("url").is_none());
     }
 
@@ -870,10 +878,7 @@ mod tests {
 
     #[test]
     fn normalize_web_search_strips_unknown_limit() {
-        let args = normalize_tool_args(
-            "web:search",
-            json!({"query": "test", "limit": 99}),
-        );
+        let args = normalize_tool_args("web:search", json!({"query": "test", "limit": 99}));
         assert!(args.get("limit").is_none());
     }
 
@@ -904,7 +909,10 @@ mod tests {
     #[test]
     fn normalize_media_catalog_maps_file_path_to_relative_path() {
         let rel = "99_USER_UPLOADED/images/def.jpg";
-        let args = normalize_tool_args("media:catalog", json!({"file_path": rel, "description": "x"}));
+        let args = normalize_tool_args(
+            "media:catalog",
+            json!({"file_path": rel, "description": "x"}),
+        );
         assert_eq!(
             args.get("relative_path").and_then(|v| v.as_str()),
             Some(rel)

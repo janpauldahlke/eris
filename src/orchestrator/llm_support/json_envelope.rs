@@ -408,6 +408,77 @@ pub fn parse_llm_response_protocol(raw: &str) -> Result<LlmResponse, serde_json:
     Ok(parsed)
 }
 
+/// Project an [`crate::engine::EngineResponse`] into the orchestrator envelope.
+///
+/// Native OpenRouter tool calls skip envelope JSON entirely. Talk turns with non-JSON
+/// `content` (hosted tools path) become `message_to_user`. Envelope JSON from local
+/// backends and the OpenRouter `response_format` downgrade still parse as today.
+/// Hosted `reasoning` fills `thought` when the envelope left it empty.
+pub fn llm_response_from_engine(
+    response: &crate::engine::EngineResponse,
+) -> Result<LlmResponse, serde_json::Error> {
+    if !response.tool_calls.is_empty() {
+        let mut parsed = LlmResponse::from_native_tool_calls(
+            response.reasoning.clone(),
+            map_native_tool_calls(&response.tool_calls),
+        );
+        parsed.normalize_tool_calls();
+        return Ok(parsed);
+    }
+    match parse_llm_response_protocol(&response.content) {
+        Ok(mut parsed) => {
+            if parsed.thought.is_empty() && !response.reasoning.is_empty() {
+                parsed.thought = response.reasoning.clone();
+            }
+            Ok(parsed)
+        }
+        Err(e) => {
+            let trimmed = response.content.trim();
+            if trimmed.is_empty() || trimmed.starts_with('{') {
+                return Err(e);
+            }
+            Ok(LlmResponse::from_native_talk(
+                response.reasoning.clone(),
+                Some(response.content.clone()),
+            ))
+        }
+    }
+}
+
+fn map_native_tool_calls(
+    calls: &[crate::engine::EngineToolCall],
+) -> Vec<crate::orchestrator::state::ToolCall> {
+    calls
+        .iter()
+        .map(|c| crate::orchestrator::state::ToolCall {
+            name: c.name.clone(),
+            args: parse_native_arguments(&c.arguments),
+            id: c.id.clone(),
+        })
+        .collect()
+}
+
+fn parse_native_arguments(raw: &str) -> serde_json::Value {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return serde_json::json!({});
+    }
+    match serde_json::from_str::<serde_json::Value>(trimmed) {
+        Ok(serde_json::Value::Object(map)) => serde_json::Value::Object(map),
+        Ok(_) => {
+            tracing::warn!("native tool arguments were JSON but not an object; using empty object");
+            serde_json::json!({})
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "native tool arguments JSON parse failed; using empty object"
+            );
+            serde_json::json!({})
+        }
+    }
+}
+
 /// Full recovery payload for [`crate::orchestrator::state::LoopDirective::RecoverFromFuckup`].
 pub fn llm_json_parse_recovery_message(err: &serde_json::Error, raw: &str) -> String {
     let hint_body = if raw_appears_to_start_without_json_object(raw) {
@@ -972,5 +1043,90 @@ mod tests {
         let schema = schemars::schema_for!(EmptyArgs);
         let out = natural_language_schema_description("t:noop", &schema, "bad");
         assert!(out.contains("No arguments required."));
+    }
+
+    #[test]
+    fn native_tool_calls_map_to_llm_response_reflect() {
+        use crate::engine::{EngineResponse, EngineToolCall};
+        use crate::orchestrator::state::LoopAction;
+        let response = EngineResponse {
+            tool_calls: vec![EngineToolCall {
+                id: Some("call_1".into()),
+                name: "memory:query".into(),
+                arguments: r#"{"query":"foo"}"#.into(),
+            }],
+            reasoning: "looking it up".into(),
+            ..Default::default()
+        };
+        let parsed = llm_response_from_engine(&response).expect("project");
+        assert_eq!(parsed.status(), LoopAction::Reflect);
+        assert_eq!(parsed.thought, "looking it up");
+        assert!(parsed.message_to_user.is_none());
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.tool_calls[0].name, "memory:query");
+        assert_eq!(parsed.tool_calls[0].args["query"], "foo");
+    }
+
+    #[test]
+    fn talk_turn_without_tool_calls_maps_to_idle() {
+        use crate::engine::EngineResponse;
+        use crate::orchestrator::state::LoopAction;
+        let response = EngineResponse {
+            content: "Hello from the model.".into(),
+            reasoning: "brief think".into(),
+            ..Default::default()
+        };
+        let parsed = llm_response_from_engine(&response).expect("project");
+        assert_eq!(parsed.status(), LoopAction::Idle);
+        assert_eq!(
+            parsed.message_to_user.as_deref(),
+            Some("Hello from the model.")
+        );
+        assert_eq!(parsed.thought, "brief think");
+        assert!(parsed.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn arguments_string_parsed_into_args_value() {
+        use crate::engine::{EngineResponse, EngineToolCall};
+        let ok = EngineResponse {
+            tool_calls: vec![EngineToolCall {
+                id: None,
+                name: "vault:read".into(),
+                arguments: r#"{"relative_path":"x.md"}"#.into(),
+            }],
+            ..Default::default()
+        };
+        let parsed = llm_response_from_engine(&ok).expect("project");
+        assert_eq!(parsed.tool_calls[0].args["relative_path"], "x.md");
+
+        let bad = EngineResponse {
+            tool_calls: vec![EngineToolCall {
+                id: None,
+                name: "vault:read".into(),
+                arguments: "not-json".into(),
+            }],
+            ..Default::default()
+        };
+        let parsed = llm_response_from_engine(&bad).expect("project");
+        assert_eq!(parsed.tool_calls[0].args, serde_json::json!({}));
+    }
+
+    #[test]
+    fn reasoning_field_routed_to_thought_not_content() {
+        use crate::engine::EngineResponse;
+        let response = EngineResponse {
+            content: r#"{"thought":"","status":"Idle","message_to_user":"hi","tool_calls":[]}"#
+                .into(),
+            reasoning: "hosted trace".into(),
+            ..Default::default()
+        };
+        let parsed = llm_response_from_engine(&response).expect("project");
+        assert_eq!(parsed.thought, "hosted trace");
+        assert_eq!(parsed.message_to_user.as_deref(), Some("hi"));
+        assert!(
+            !parsed.thought.contains("hi"),
+            "reasoning must not be mixed with content"
+        );
     }
 }
