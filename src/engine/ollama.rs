@@ -1,6 +1,6 @@
 use crate::config::AppConfig;
 use crate::engine::token_metrics::{self, LlmTokenSnapshot};
-use crate::engine::{EngineResponse, LlmEngine, LlmGenerateOptions, Message};
+use crate::engine::{EngineResponse, LlmEngine, LlmGenerateOptions, Message, Role};
 use crate::executive::error::Result;
 use async_trait::async_trait;
 use ollama_rs::Ollama;
@@ -56,11 +56,10 @@ impl LlmEngine for OllamaClient {
         let mut injected = false;
 
         for msg in stack {
-            let role = match msg.role.as_str() {
-                "system" => MessageRole::System,
-                "user" => MessageRole::User,
-                "assistant" => MessageRole::Assistant,
-                _ => MessageRole::User,
+            let role = match msg.role {
+                Role::System => MessageRole::System,
+                Role::User => MessageRole::User,
+                Role::Assistant => MessageRole::Assistant,
             };
 
             let mut content = msg.content.clone();

@@ -23,7 +23,8 @@ user text
   → RoutingSignals                                 src/orchestrator/routing/signals.rs
   → decide() / dialog pairing / demotion / margin  src/orchestrator/routing/{policy,dialog}.rs
   → RoutingOffer / RoutingDecision                 src/orchestrator/routing/decision.rs
-  → slim overlays (cap, web:find, moltbook latch)  src/orchestrator/routing/overlays.rs
+  → slim overlays (cap seats domains, verb complete,  src/orchestrator/routing/overlays.rs
+     web:find / pairing / moltbook latch)
   → slim prompt + GBNF subset                      step.rs + llama_gbnf_subset.rs
 ```
 
@@ -38,7 +39,7 @@ Logs carry `rule_id` and `offer_kind` on pre-LLM routing events — grep those w
 | Prefix affinity for near-tie **cluster unions** (e.g. `agenda`∪`clock`∪`calendar` = `time`) | `routing/clusters.rs` → `affinity_group` |
 | Follow-up after a **successful** tool (“delete that email”, “cancel that meeting”) | `routing/signals.rs` (cues) + `routing/dialog.rs` (ordered rules). Agenda wins over mail/calendar/doc. |
 | Weak lone-hit demotion / margin / unsure fallback knobs | Config: `tool_match_threshold`, `tool_single_hit_floor`, `tool_match_margin`, `tool_unsure_fallback`. Logic: `routing/policy.rs` |
-| Slim map ↔ GBNF pairing (`web:find` with fetch, `doc:read`→`vault:write`, moltbook latch) | `routing/overlays.rs` (single source; `llama_gbnf_subset` re-exports) |
+| Slim map ↔ GBNF pairing + **domain verb completion** (`web:find` with fetch, `doc:read`→`vault:write`, seated `vault:*` / `memory:*` full verb sets, moltbook latch) | `routing/overlays.rs` (single source; `llama_gbnf_subset` re-exports). Cap seats domains; completion fills all state-allowed verbs for those domains (may exceed cap). |
 | Decision type / log labels | `routing/decision.rs` |
 | URL soft-compel / opinion-only / skip-fetch scorecard | `routing/policy.rs` (`should_soft_compel_web_fetch`); log `PRELLM_URL_SOFT_COMPEL` / `PRELLM_URL_SKIP_FETCH` from `step.rs`. Offline offer goldens: `src/benchmark/routing_offer_fixtures.rs` |
 

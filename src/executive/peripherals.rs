@@ -564,6 +564,21 @@ impl PeripheralLifecycle {
             ])
             .stdout(Stdio::null())
             .stderr(Stdio::null());
+            if let Some(ref fa) = lc.flash_attn {
+                cmd.arg("--flash-attn").arg(fa);
+            }
+            if let Some(ref ctk) = lc.cache_type_k {
+                cmd.arg("--cache-type-k").arg(ctk);
+            }
+            if let Some(ref ctv) = lc.cache_type_v {
+                cmd.arg("--cache-type-v").arg(ctv);
+            }
+            if let Some(ref spec) = lc.spec_type {
+                cmd.arg("--spec-type").arg(spec);
+            }
+            if let Some(n) = lc.spec_draft_n_max {
+                cmd.arg("--spec-draft-n-max").arg(n.to_string());
+            }
             // Qwen3+ chat templates: align with [`AppConfig::enable_reasoning_fsm`] / HTTP `chat_template_kwargs`.
             // Requires a recent `llama-server` that accepts `--reasoning` / `--reasoning-budget`.
             if !config.enable_reasoning_fsm {
@@ -573,6 +588,15 @@ impl PeripheralLifecycle {
             if config.multimodal_mmproj_required() {
                 if let Some(ref mmproj) = lc.mmproj_path {
                     cmd.arg("--mmproj").arg(mmproj);
+                }
+                match lc.mmproj_offload {
+                    Some(true) => {
+                        cmd.arg("--mmproj-offload");
+                    }
+                    Some(false) => {
+                        cmd.arg("--no-mmproj-offload");
+                    }
+                    None => {}
                 }
                 let media_path = lc
                     .media_path
@@ -584,10 +608,19 @@ impl PeripheralLifecycle {
                 tracing::info!(
                     server = "llama-chat",
                     mmproj = ?lc.mmproj_path,
+                    mmproj_offload = ?lc.mmproj_offload,
                     media_path = %media_path.display(),
                     vision = config.vision.enabled,
                     audio = config.audio.enabled,
                     "multimodal flags applied"
+                );
+            }
+            if lc.spec_type.is_some() || lc.spec_draft_n_max.is_some() {
+                tracing::info!(
+                    server = "llama-chat",
+                    spec_type = ?lc.spec_type,
+                    spec_draft_n_max = ?lc.spec_draft_n_max,
+                    "speculative decoding flags applied"
                 );
             }
             apply_unix_sidecar_process_group(&mut cmd);

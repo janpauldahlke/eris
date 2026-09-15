@@ -70,14 +70,14 @@ mod tests {
 
     fn sys(content: &str) -> Message {
         Message {
-            role: "system".to_string(),
+            role: crate::engine::Role::System,
             content: content.to_string(),
         }
     }
 
     fn assistant(content: &str) -> Message {
         Message {
-            role: "assistant".to_string(),
+            role: crate::engine::Role::Assistant,
             content: content.to_string(),
         }
     }

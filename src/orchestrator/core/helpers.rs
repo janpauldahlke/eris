@@ -158,14 +158,14 @@ impl<E: LlmEngine> Orchestrator<E> {
                 chat_stack.insert(
                     0,
                     crate::engine::Message {
-                        role: "system".to_string(),
+                        role: crate::engine::Role::System,
                         content: prompt,
                     },
                 );
             }
         } else {
             chat_stack.push(crate::engine::Message {
-                role: "system".to_string(),
+                role: crate::engine::Role::System,
                 content: prompt,
             });
         }

@@ -132,7 +132,7 @@ pub fn apply_omit_resolved_tool_recovery(messages: &[Message]) -> Vec<Message> {
             continue;
         }
         out.push(Message {
-            role: "system".to_string(),
+            role: crate::engine::Role::System,
             content: OMIT_RESOLVED_TOOL_RECOVERY_PLACEHOLDER.to_string(),
         });
         while i < messages.len() && remove_set.contains(&i) {
@@ -149,21 +149,21 @@ mod tests {
 
     fn sys(s: &str) -> Message {
         Message {
-            role: "system".to_string(),
+            role: crate::engine::Role::System,
             content: s.to_string(),
         }
     }
 
     fn asst(s: &str) -> Message {
         Message {
-            role: "assistant".to_string(),
+            role: crate::engine::Role::Assistant,
             content: s.to_string(),
         }
     }
 
     fn user(s: &str) -> Message {
         Message {
-            role: "user".to_string(),
+            role: crate::engine::Role::User,
             content: s.to_string(),
         }
     }

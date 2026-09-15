@@ -819,7 +819,7 @@ mod tests {
         .map(String::from)
         .collect();
         let stack = vec![Message {
-            role: "system".to_string(),
+            role: crate::engine::Role::System,
             content: "Tool 'clock:now' succeeded: SUCCESS: 16:00".to_string(),
         }];
         let router = vec![
@@ -853,7 +853,7 @@ mod tests {
         .map(String::from)
         .collect();
         let stack = vec![Message {
-            role: "system".to_string(),
+            role: crate::engine::Role::System,
             content: "Tool 'clock:now' succeeded: SUCCESS: current time".to_string(),
         }];
         let router = vec![
@@ -883,7 +883,7 @@ mod tests {
             .map(String::from)
             .collect();
         let stack = vec![Message {
-            role: "system".to_string(),
+            role: crate::engine::Role::System,
             content: "Tool 'clock:now' succeeded: SUCCESS".to_string(),
         }];
         let selected = select_recovery_targeted_tools(

@@ -646,10 +646,7 @@ mod tests {
     }
 
     fn user_stack() -> Vec<Message> {
-        vec![Message {
-            role: "user".into(),
-            content: "Hi".into(),
-        }]
+        vec![Message::user("Hi")]
     }
 
     async fn posted_body(mock_server: &MockServer) -> serde_json::Value {

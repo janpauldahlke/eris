@@ -122,7 +122,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                     "[SYSTEM] Blocked repeated failure for `{tool_name}` with the same arguments in this turn after consecutive failures. Change `post_id` or other args, or pick a different action."
                 );
                 self.chat_stack.push(crate::engine::Message {
-                    role: "system".to_string(),
+                    role: crate::engine::Role::System,
                     content: msg.clone(),
                 });
                 if let Some(tx) = &self.presentation_tx {
@@ -150,7 +150,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                     tool_name
                 );
                 self.chat_stack.push(crate::engine::Message {
-                    role: "system".to_string(),
+                    role: crate::engine::Role::System,
                     content: msg.clone(),
                 });
                 if let Some(tx) = &self.presentation_tx {
@@ -170,7 +170,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                         "[SYSTEM] Web tool cap reached ({cap}/turn). Answer from existing artifacts via web:find or ask the user to continue."
                     );
                     self.chat_stack.push(crate::engine::Message {
-                        role: "system".to_string(),
+                        role: crate::engine::Role::System,
                         content: msg.clone(),
                     });
                     if let Some(tx) = &self.presentation_tx {
@@ -283,7 +283,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                         &bounded_result,
                     );
                     self.chat_stack.push(crate::engine::Message {
-                        role: "system".to_string(),
+                        role: crate::engine::Role::System,
                         content: msg.clone(),
                     });
                     if tool_name.starts_with("weather:") {
@@ -313,7 +313,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                                 v.get("description").and_then(|x| x.as_str()),
                             ) {
                                 self.chat_stack.push(crate::engine::Message {
-                                    role: "system".to_string(),
+                                    role: crate::engine::Role::System,
                                     content: vision_see_catalog_nudge(rel, desc),
                                 });
                                 tracing::debug!(
@@ -371,7 +371,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                                     ));
                                 }
                                 self.chat_stack.push(crate::engine::Message {
-                                    role: "system".to_string(),
+                                    role: crate::engine::Role::System,
                                     content: anchor,
                                 });
                             }
@@ -406,7 +406,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                                     );
                                 }
                                 self.chat_stack.push(crate::engine::Message {
-                                    role: "system".to_string(),
+                                    role: crate::engine::Role::System,
                                     content: anchor,
                                 });
                             }
@@ -498,7 +498,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             if let Some(ledger) = self.moltbook_browse_ledger.as_mut() {
                 if let Some(nudge) = ledger.missing_invariant_nudge() {
                     self.chat_stack.push(crate::engine::Message {
-                        role: "system".to_string(),
+                        role: crate::engine::Role::System,
                         content: nudge,
                     });
                     tracing::info!(
@@ -689,7 +689,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             targeted_tools.clear();
             self.force_full_tool_schemas_in_llm_view = false;
             self.chat_stack.push(crate::engine::Message {
-                role: "system".to_string(),
+                role: crate::engine::Role::System,
                 content: POST_TOOL_WEATHER_COMMENT_GUIDANCE.to_string(),
             });
             tracing::info!(
@@ -723,7 +723,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                 POST_TOOL_USER_REPLY_GUIDANCE
             };
             self.chat_stack.push(crate::engine::Message {
-                role: "system".to_string(),
+                role: crate::engine::Role::System,
                 content: guidance.to_string(),
             });
             tracing::debug!(

@@ -64,7 +64,7 @@ impl<E: LlmEngine> Orchestrator<E> {
 
                 self.emit_optional_user_message(&content).await;
                 self.chat_stack.push(crate::engine::Message {
-                    role: "assistant".to_string(),
+                    role: crate::engine::Role::Assistant,
                     content,
                 });
                 self.state = AgentState::Idle;
@@ -102,7 +102,7 @@ impl<E: LlmEngine> Orchestrator<E> {
         let content = serde_json::to_string(&value)?;
         self.emit_optional_user_message(&content).await;
         self.chat_stack.push(crate::engine::Message {
-            role: "assistant".to_string(),
+            role: crate::engine::Role::Assistant,
             content,
         });
         self.state = AgentState::Idle;

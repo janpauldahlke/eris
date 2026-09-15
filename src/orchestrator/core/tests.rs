@@ -434,7 +434,7 @@ async fn test_step_system_fatality_aborts() {
     let mut orchestrator = setup_orchestrator_with_engine(engine);
     orchestrator.state = AgentState::Chat;
     orchestrator.chat_stack.push(Message {
-        role: "user".to_string(),
+        role: crate::engine::Role::User,
         content: "exercise engine error path".to_string(),
     });
 
@@ -451,7 +451,7 @@ async fn test_step_empty_user_line_sy_fnord_no_llm() {
     let mut orchestrator = setup_orchestrator_with_engine(engine);
     orchestrator.state = AgentState::Chat;
     orchestrator.chat_stack.push(Message {
-        role: "user".to_string(),
+        role: crate::engine::Role::User,
         content: "   ".to_string(),
     });
 
@@ -493,16 +493,16 @@ async fn test_execute_condensation_sliding_window_stack_only() {
     orchestrator.num_ctx = 48;
     orchestrator.chat_stack.clear();
     orchestrator.chat_stack.push(Message {
-        role: "system".to_string(),
+        role: crate::engine::Role::System,
         content: "system prompt".to_string(),
     });
     for i in 0..8 {
         orchestrator.chat_stack.push(Message {
-            role: "user".to_string(),
+            role: crate::engine::Role::User,
             content: format!("user-{i}-{}", "x".repeat(40)),
         });
         orchestrator.chat_stack.push(Message {
-            role: "assistant".to_string(),
+            role: crate::engine::Role::Assistant,
             content: format!("assistant-{i}-{}", "y".repeat(40)),
         });
     }
@@ -641,7 +641,7 @@ async fn test_async_guillotine_interrupts_generation() {
 
     orchestrator.state = AgentState::Chat;
     orchestrator.chat_stack.push(Message {
-        role: "user".to_string(),
+        role: crate::engine::Role::User,
         content: "hello".to_string(),
     });
 
@@ -777,7 +777,7 @@ async fn test_duplicate_only_batch_halts_without_extra_generation() {
     );
     orchestrator.state = AgentState::Chat;
     orchestrator.chat_stack.push(Message {
-        role: "user".to_string(),
+        role: crate::engine::Role::User,
         content: "remember my name".to_string(),
     });
 
@@ -919,7 +919,7 @@ async fn test_model_declared_reflect_does_not_shrink_chat_tool_palette() {
     );
     orchestrator.state = AgentState::Chat;
     orchestrator.chat_stack.push(Message {
-        role: "user".to_string(),
+        role: crate::engine::Role::User,
         content: "what are today's news?".to_string(),
     });
 
@@ -957,16 +957,16 @@ fn test_extract_agenda_confirm_task_id() {
 fn test_agenda_confirm_task_id_before_current_turn_skips_latest_user() {
     let stack = vec![
         Message {
-            role: "user".to_string(),
+            role: crate::engine::Role::User,
             content: "[AGENDA_CONFIRM task_id=too-old alarm_id=a late_sec=0]".to_string(),
         },
         Message {
-            role: "user".to_string(),
+            role: crate::engine::Role::User,
             content: "prefix [AGENDA_CONFIRM task_id=expected-id alarm_id=b late_sec=1] tail"
                 .to_string(),
         },
         Message {
-            role: "user".to_string(),
+            role: crate::engine::Role::User,
             content: "done".to_string(),
         },
     ];

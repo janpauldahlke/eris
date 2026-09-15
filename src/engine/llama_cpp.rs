@@ -188,6 +188,7 @@ impl LlmEngine for LlamaCppClient {
         stream_tx: Option<mpsc::UnboundedSender<String>>,
         options: LlmGenerateOptions,
     ) -> Result<EngineResponse> {
+        // Shared OpenAI-wire projection (normalize + coalesce) — same path as OpenRouter.
         let messages = to_wire_messages(stack);
 
         let use_stream = stream_tx.is_some();
@@ -359,6 +360,7 @@ impl LlmEngine for LlamaCppClient {
 mod tests {
     use super::*;
     use crate::config::{LlamaCppConfig, LlmBackend};
+    use crate::engine::Role;
     use std::path::PathBuf;
     use tracing_test::traced_test;
     use wiremock::matchers::{method, path};
@@ -408,7 +410,7 @@ mod tests {
 
         let client = make_client_from_mock(&mock_server.uri());
         let stack = vec![Message {
-            role: "user".into(),
+            role: Role::User,
             content: "Hi".into(),
         }];
         let result = client.generate(&stack, "", None, LlmGenerateOptions::default()).await.expect("generate");
@@ -445,7 +447,7 @@ mod tests {
             grammar: None,
         };
         let stack = vec![Message {
-            role: "user".into(),
+            role: Role::User,
             content: "Hi".into(),
         }];
         client.generate(&stack, "", None, LlmGenerateOptions::default()).await.expect("generate");
@@ -469,7 +471,7 @@ mod tests {
         let client = make_client_from_mock(&mock_server.uri());
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
         let stack = vec![Message {
-            role: "user".into(),
+            role: Role::User,
             content: "Hi".into(),
         }];
         let result = client
@@ -503,7 +505,7 @@ mod tests {
         let client = make_client_from_mock(&mock_server.uri());
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
         let stack = vec![Message {
-            role: "user".into(),
+            role: Role::User,
             content: "test".into(),
         }];
         client
@@ -540,7 +542,7 @@ mod tests {
             grammar: None,
         };
         let stack = vec![Message {
-            role: "user".into(),
+            role: Role::User,
             content: "Hi".into(),
         }];
         let err = client.generate(&stack, "", None, LlmGenerateOptions::default()).await.unwrap_err();
@@ -558,7 +560,7 @@ mod tests {
 
         let client = make_client_from_mock(&mock_server.uri());
         let stack = vec![Message {
-            role: "user".into(),
+            role: Role::User,
             content: "Hi".into(),
         }];
         let err = client.generate(&stack, "", None, LlmGenerateOptions::default()).await.unwrap_err();
@@ -582,7 +584,7 @@ mod tests {
             grammar: None,
         };
         let stack = vec![Message {
-            role: "user".into(),
+            role: Role::User,
             content: "Hi".into(),
         }];
         let err = client.generate(&stack, "", None, LlmGenerateOptions::default()).await.unwrap_err();
@@ -604,7 +606,7 @@ mod tests {
 
         let client = make_client_from_mock(&mock_server.uri());
         let stack = vec![Message {
-            role: "user".into(),
+            role: Role::User,
             content: "Hi".into(),
         }];
         let result = client.generate(&stack, "", None, LlmGenerateOptions::default()).await.expect("generate");
@@ -627,7 +629,7 @@ mod tests {
         let client = make_client_from_mock(&mock_server.uri());
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
         let stack = vec![Message {
-            role: "user".into(),
+            role: Role::User,
             content: "test".into(),
         }];
         let result = client
@@ -658,7 +660,7 @@ mod tests {
         let client = make_client_from_mock(&mock_server.uri());
         let (tx, _rx) = mpsc::unbounded_channel::<String>();
         let stack = vec![Message {
-            role: "user".into(),
+            role: Role::User,
             content: "test".into(),
         }];
         let result = client
@@ -699,7 +701,7 @@ mod tests {
         };
         let tiny: Arc<str> = Arc::from("tiny-root-gbnf");
         let stack = vec![Message {
-            role: "user".into(),
+            role: Role::User,
             content: "Hi".into(),
         }];
         client
@@ -759,7 +761,7 @@ mod tests {
             grammar: Some(Arc::new("large".repeat(500))),
         };
         let stack = vec![Message {
-            role: "user".into(),
+            role: Role::User,
             content: "Hi".into(),
         }];
         client

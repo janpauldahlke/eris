@@ -3,10 +3,96 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+/// Wire-level conversational role for a [`Message`].
+///
+/// This is intentionally limited to the three roles every chat template accepts.
+/// Semantic distinctions (tool result vs. system directive vs. main prompt) are
+/// classified at the backend **projection** boundary, not stored here — see
+/// `crate::engine::projection`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    System,
+    User,
+    Assistant,
+}
+
+impl Role {
+    /// Canonical lowercase wire string (`"system"` / `"user"` / `"assistant"`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Role::System => "system",
+            Role::User => "user",
+            Role::Assistant => "assistant",
+        }
+    }
+
+    /// Parse a wire string. Unknown roles fall back to [`Role::User`], preserving
+    /// the historical `_ => MessageRole::User` behavior at the backends.
+    pub fn from_wire(s: &str) -> Role {
+        match s {
+            "system" => Role::System,
+            "assistant" => Role::Assistant,
+            _ => Role::User,
+        }
+    }
+}
+
+impl std::fmt::Display for Role {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Ergonomic comparison against wire strings so existing `msg.role == "system"`
+/// call sites keep working after the `String` → [`Role`] migration.
+impl PartialEq<&str> for Role {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl PartialEq<str> for Role {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<Role> for &str {
+    fn eq(&self, other: &Role) -> bool {
+        *self == other.as_str()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Message {
-    pub role: String, // "system", "user", "assistant"
+    pub role: Role,
     pub content: String,
+}
+
+impl Message {
+    /// Construct a `system`-role message.
+    pub fn system(content: impl Into<String>) -> Self {
+        Self {
+            role: Role::System,
+            content: content.into(),
+        }
+    }
+
+    /// Construct a `user`-role message.
+    pub fn user(content: impl Into<String>) -> Self {
+        Self {
+            role: Role::User,
+            content: content.into(),
+        }
+    }
+
+    /// Construct an `assistant`-role message.
+    pub fn assistant(content: impl Into<String>) -> Self {
+        Self {
+            role: Role::Assistant,
+            content: content.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

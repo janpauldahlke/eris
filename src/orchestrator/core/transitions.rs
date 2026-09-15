@@ -101,7 +101,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                     tracing::warn!(recovery_count = self.recovery_count, "Recover transition");
                 }
                 self.chat_stack.push(crate::engine::Message {
-                    role: "system".to_string(),
+                    role: crate::engine::Role::System,
                     content: message.clone(),
                 });
                 if let Some(tx) = &self.presentation_tx {

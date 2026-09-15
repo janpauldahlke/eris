@@ -153,7 +153,7 @@ impl BenchmarkHarness {
         for step in &scenario.steps {
             let user_idx = orchestrator.chat_stack.len();
             orchestrator.chat_stack.push(Message {
-                role: "user".to_string(),
+                role: crate::engine::Role::User,
                 content: step.user_prompt.clone(),
             });
             orchestrator.state = AgentState::Chat;

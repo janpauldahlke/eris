@@ -229,4 +229,28 @@ mod tests {
         assert!(out.contains(&"web:fetch".to_string()));
         assert!(out.contains(&"web:find".to_string()));
     }
+
+    #[test]
+    fn slim_offered_pairs_media_catalog_with_vision_see() {
+        // Remember-image flow is vision:see → media:catalog. The catalog step is a
+        // persist tool that embeds just below reads and gets truncated by the offer
+        // cap, so it must ride along whenever vision:see is offered.
+        let gk = Gatekeeper::new();
+        let pre = vec!["vision:see".to_string()];
+        let out = slim_offered_tool_names(&pre, 10, false, &gk, &AgentState::Chat);
+        assert!(out.contains(&"vision:see".to_string()));
+        assert!(
+            out.contains(&"media:catalog".to_string()),
+            "media:catalog must be auto-offered alongside vision:see"
+        );
+    }
+
+    #[test]
+    fn slim_offered_no_media_catalog_without_vision_see() {
+        // Guard: the pairing must not fire when vision:see is absent.
+        let gk = Gatekeeper::new();
+        let pre = vec!["system:health".to_string()];
+        let out = slim_offered_tool_names(&pre, 10, false, &gk, &AgentState::Chat);
+        assert!(!out.contains(&"media:catalog".to_string()));
+    }
 }

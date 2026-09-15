@@ -1053,7 +1053,7 @@ pub async fn start_chat_session(
                             }
                             let content = format!("{}{}", SYSTEM_ALARM_PREFIX, trimmed);
                             orchestrator.chat_stack.push(crate::engine::Message {
-                                role: "user".to_string(),
+                                role: crate::engine::Role::User,
                                 content,
                             });
                             orchestrator.state = crate::orchestrator::state::AgentState::Chat;
@@ -1125,7 +1125,7 @@ pub async fn start_chat_session(
                                 )
                             };
                             orchestrator.chat_stack.push(crate::engine::Message {
-                                role: "user".to_string(),
+                                role: crate::engine::Role::User,
                                 content,
                             });
                             orchestrator.state = crate::orchestrator::state::AgentState::Chat;
@@ -1199,7 +1199,7 @@ pub async fn start_chat_session(
                                 seconds_late
                             );
                             orchestrator.chat_stack.push(crate::engine::Message {
-                                role: "user".to_string(),
+                                role: crate::engine::Role::User,
                                 content,
                             });
                             orchestrator.state = crate::orchestrator::state::AgentState::Chat;
@@ -1433,7 +1433,7 @@ pub async fn start_chat_session(
                     std::sync::atomic::Ordering::Relaxed,
                 );
                 orchestrator.chat_stack.push(crate::engine::Message {
-                    role: "user".to_string(),
+                    role: crate::engine::Role::User,
                     content: for_model,
                 });
                 orchestrator.state = crate::orchestrator::state::AgentState::Chat;

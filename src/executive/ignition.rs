@@ -1,6 +1,6 @@
 use crate::config::{
-    default_llamacpp_ready_timeout, AppConfig, EmbedBackend, LlamaCppConfig, LlmBackend,
-    OpenRouterConfig, OpenRouterReasoning, ReasoningEffort,
+    AppConfig, EmbedBackend, LlamaCppConfig, LlmBackend, OpenRouterConfig, OpenRouterReasoning,
+    ReasoningEffort,
 };
 use crate::executive::error::{FcpError, Result};
 use inquire::{Select, Text};
@@ -311,15 +311,7 @@ pub async fn run_ignition_sequence(
                     chat_model_path,
                     embed_model_path,
                     n_gpu_layers,
-                    embed_n_gpu_layers: None,
-                    ready_timeout_secs: default_llamacpp_ready_timeout(),
-                    detach_servers_on_chat_exit: false,
-                    shutdown_grace_secs: 30,
-                    shutdown_stagger_secs: 3,
-                    shutdown_allow_sigkill: true,
-                    n_predict_max: 2048,
-                    mmproj_path: None,
-                    media_path: None,
+                    ..Default::default()
                 };
 
                 Ok(IgnitionAnswers {
@@ -487,15 +479,7 @@ pub async fn run_ignition_sequence(
                         chat_model_path: PathBuf::new(),
                         embed_model_path,
                         n_gpu_layers: 0,
-                        embed_n_gpu_layers: None,
-                        ready_timeout_secs: default_llamacpp_ready_timeout(),
-                        detach_servers_on_chat_exit: false,
-                        shutdown_grace_secs: 30,
-                        shutdown_stagger_secs: 3,
-                        shutdown_allow_sigkill: true,
-                        n_predict_max: 2048,
-                        mmproj_path: None,
-                        media_path: None,
+                        ..Default::default()
                     };
                     (EmbedBackend::LlamaCpp, None, Some(llama_cpp_config))
                 } else {

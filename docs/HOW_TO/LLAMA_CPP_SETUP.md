@@ -133,6 +133,9 @@ Context length for the managed `llama-server` comes from the top-level `num_ctx`
 | `n_gpu_layers` | int | 0 | Layers offloaded to GPU. `99` = all. `0` = CPU only. |
 | `ready_timeout_secs` | int | 30 | Max seconds to wait for server readiness |
 | `mmproj_path` | path | — | Multimodal projector GGUF; required when `[vision] enabled = true` |
+| `mmproj_offload` | bool | omit | `true` → `--mmproj-offload` (GPU); `false` → `--no-mmproj-offload` (system RAM). Omit = server default (GPU). |
+| `spec_type` | string | omit | `llama-server --spec-type` (e.g. `draft-mtp` for Qwen3.8 MTP). Omit = `none`. |
+| `spec_draft_n_max` | int | omit | `llama-server --spec-draft-n-max` (draft tokens per step; server default ~3). |
 | `media_path` | path | vault root | `--media-path` for `file://` image paths in `vision:see` |
 
 ---

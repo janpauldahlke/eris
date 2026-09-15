@@ -53,7 +53,7 @@ pub async fn probe_ollama_chat_latency(client: &OllamaClient) -> Result<SpeedMet
 /// Uses [`EngineResponse::generation_ms`] and usage for throughput; prompt vs gen wall split is approximate.
 pub async fn probe_llamacpp_chat_latency(client: &LlamaCppClient) -> Result<SpeedMetrics> {
     let stack = vec![Message {
-        role: "user".to_string(),
+        role: crate::engine::Role::User,
         content: "Reply with exactly one word: pong.".to_string(),
     }];
     let wall_start = std::time::Instant::now();

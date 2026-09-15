@@ -786,7 +786,7 @@ mod tests {
                     let trimmed = label.trim().to_string();
                     let content = format!("{}{}", SYSTEM_ALARM_PREFIX, trimmed);
                     orchestrator.chat_stack.push(Message {
-                        role: "user".to_string(),
+                        role: crate::engine::Role::User,
                         content,
                     });
                     orchestrator.state = AgentState::Chat;
@@ -798,7 +798,7 @@ mod tests {
             }
             while let Some(msg) = pending.pop_front() {
                 orchestrator.chat_stack.push(Message {
-                    role: "user".to_string(),
+                    role: crate::engine::Role::User,
                     content: msg,
                 });
                 orchestrator.state = AgentState::Chat;
