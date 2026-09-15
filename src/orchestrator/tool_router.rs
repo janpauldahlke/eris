@@ -44,12 +44,20 @@ pub struct ToolRouter {
 
 impl ToolRouter {
     /// Short greetings and tiny utterances: conversational only (evaluated in orchestrator **before** embedding).
+    ///
+    /// This is an ascii/whitespace skip, not a language detector. Non-ascii input
+    /// is never treated as "short" here (unspaced scripts look like one token).
+    /// Lexical helpers in this file (short guard, keyword list, web/news phrases)
+    /// should move to a `router_ruleset` later; this type should stay cosine + threshold.
     pub fn short_input_guard_conversational_only(text: &str) -> bool {
         Self::is_short_input_without_explicit_tool_intent(text)
     }
 
     fn is_short_input_without_explicit_tool_intent(text: &str) -> bool {
         let trimmed = text.trim();
+        if !trimmed.is_ascii() {
+            return false;
+        }
         let token_count = trimmed.split_whitespace().count();
         let is_short = token_count <= 3 || trimmed.chars().count() <= 15;
         if !is_short {
@@ -444,6 +452,10 @@ mod tests {
         ));
         assert!(!ToolRouter::short_input_guard_conversational_only(
             "/health"
+        ));
+        // unspaced scripts are one whitespace token; ascii short-guard must not apply
+        assert!(!ToolRouter::short_input_guard_conversational_only(
+            "今日の天気は?"
         ));
     }
 
