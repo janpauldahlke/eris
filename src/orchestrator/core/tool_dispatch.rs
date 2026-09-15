@@ -45,6 +45,19 @@ fn stable_prioritize_clock_now_before_db(tools: Vec<ToolCall>) -> Vec<ToolCall> 
     out
 }
 
+/// Append a tool outcome: native OpenRouter hops use `role:"tool"` + `tool_call_id`;
+/// local backends and envelope-downgrade hops keep the folded `system` line.
+fn push_tool_batch_result(
+    chat_stack: &mut Vec<crate::engine::Message>,
+    provider_call_id: Option<&str>,
+    content: String,
+) {
+    match provider_call_id.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(id) => chat_stack.push(crate::engine::Message::tool(content, id)),
+        None => chat_stack.push(crate::engine::Message::system(content)),
+    }
+}
+
 impl<E: LlmEngine> Orchestrator<E> {
     #[allow(clippy::too_many_arguments)]
     /// Executes one tool batch and returns a decision for the coordinator.
@@ -90,8 +103,10 @@ impl<E: LlmEngine> Orchestrator<E> {
         let mut suppressed_repeat_failure_streak = 0usize;
         let mut weather_deck_parts: Vec<(String, String)> = Vec::new();
         let mut non_weather_success = false;
+        let mut deferred_system_notes: Vec<String> = Vec::new();
 
         for tool_call in tools {
+            let provider_call_id = tool_call.provider_call_id.clone();
             let tool_name = tool_call.name;
             let args = tool_call.args;
             let intent_id = Self::tool_fingerprint(&tool_name, &args);
@@ -120,8 +135,11 @@ impl<E: LlmEngine> Orchestrator<E> {
                 let msg = format!(
                     "[SYSTEM] Blocked repeated failure for `{tool_name}` with the same arguments in this turn after consecutive failures. Change `post_id` or other args, or pick a different action."
                 );
-                self.chat_stack
-                    .push(crate::engine::Message::system(msg.clone()));
+                push_tool_batch_result(
+                    &mut self.chat_stack,
+                    provider_call_id.as_deref(),
+                    msg.clone(),
+                );
                 if let Some(tx) = &self.presentation_tx {
                     let telemetry =
                         format!("[tool] {tool_name} · repeat-failure streak suppressed");
@@ -146,8 +164,11 @@ impl<E: LlmEngine> Orchestrator<E> {
                     "[SYSTEM] Duplicate tool call suppressed for '{}'. Continue without repeating it.",
                     tool_name
                 );
-                self.chat_stack
-                    .push(crate::engine::Message::system(msg.clone()));
+                push_tool_batch_result(
+                    &mut self.chat_stack,
+                    provider_call_id.as_deref(),
+                    msg.clone(),
+                );
                 if let Some(tx) = &self.presentation_tx {
                     let telemetry = format!("[tool] {} · duplicate suppressed", tool_name);
                     let _ = tx.send(SessionEvent::SystemError(telemetry)).await;
@@ -164,8 +185,11 @@ impl<E: LlmEngine> Orchestrator<E> {
                     let msg = format!(
                         "[SYSTEM] Web tool cap reached ({cap}/turn). Answer from existing artifacts via web:find or ask the user to continue."
                     );
-                    self.chat_stack
-                        .push(crate::engine::Message::system(msg.clone()));
+                    push_tool_batch_result(
+                        &mut self.chat_stack,
+                        provider_call_id.as_deref(),
+                        msg.clone(),
+                    );
                     if let Some(tx) = &self.presentation_tx {
                         let _ = tx
                             .send(SessionEvent::SystemError(format!(
@@ -275,8 +299,11 @@ impl<E: LlmEngine> Orchestrator<E> {
                         &tool_name,
                         &bounded_result,
                     );
-                    self.chat_stack
-                        .push(crate::engine::Message::system(msg.clone()));
+                    push_tool_batch_result(
+                        &mut self.chat_stack,
+                        provider_call_id.as_deref(),
+                        msg.clone(),
+                    );
                     if tool_name.starts_with("weather:") {
                         if let Some(report) =
                             crate::tools::weather::report::report_from_tool_envelope(&result)
@@ -302,9 +329,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                             if let (Some(rel), Some(desc)) =
                                 (rel, v.get("description").and_then(|x| x.as_str()))
                             {
-                                self.chat_stack.push(crate::engine::Message::system(
-                                    vision_see_catalog_nudge(rel, desc),
-                                ));
+                                deferred_system_notes.push(vision_see_catalog_nudge(rel, desc));
                                 tracing::debug!(
                                     target: "fcp.context_view",
                                     event = "vision_see_catalog_nudge_injected",
@@ -353,7 +378,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                                         " Pass this URL to web:fetch when deepening: {url}"
                                     ));
                                 }
-                                self.chat_stack.push(crate::engine::Message::system(anchor));
+                                deferred_system_notes.push(anchor);
                             }
                         }
                     }
@@ -381,7 +406,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                                         " Use web:find with artifact_id and query to read the vault body before refetching this host.",
                                     );
                                 }
-                                self.chat_stack.push(crate::engine::Message::system(anchor));
+                                deferred_system_notes.push(anchor);
                             }
                         }
                     }
@@ -413,6 +438,11 @@ impl<E: LlmEngine> Orchestrator<E> {
                     if let Some(ticket) = execution_ledger.get_mut(&intent_id) {
                         ticket.last_error = Some(err.to_string());
                     }
+                    push_tool_batch_result(
+                        &mut self.chat_stack,
+                        provider_call_id.as_deref(),
+                        format!("Tool '{tool_name}' failed: {err}"),
+                    );
                     let failure_action =
                         classify_tool_failure(&err, schema_recovery_attempted.contains(&tool_name));
                     match failure_action {
@@ -458,6 +488,10 @@ impl<E: LlmEngine> Orchestrator<E> {
                     }
                 }
             }
+        }
+
+        for note in deferred_system_notes {
+            self.chat_stack.push(crate::engine::Message::system(note));
         }
 
         let batch_had_tool_activity = executed_success_count > 0
@@ -707,6 +741,7 @@ mod clock_before_db_tests {
             name: name.to_string(),
             args: json!({}),
             id: None,
+            provider_call_id: None,
         }
     }
 
@@ -944,6 +979,7 @@ mod repeat_failure_streak_tests {
                     name: "web:fetch".into(),
                     args: json!({"url": "https://example.com/"}),
                     id: None,
+                    provider_call_id: None,
                 }],
                 true,
                 &mut ledger,
@@ -982,6 +1018,7 @@ mod repeat_failure_streak_tests {
             name: "fcp_streak_probe".into(),
             args: json!({}),
             id: None,
+            provider_call_id: None,
         };
         let tools = vec![tc(), tc(), tc()];
         let decision = orch
@@ -1128,6 +1165,7 @@ mod targeted_schema_retry_phase5_tests {
             name: "fcp_schema_fault_nl_probe".into(),
             args: json!({}),
             id: None,
+            provider_call_id: None,
         }];
         let decision = orch
             .execute_tool_batch(
@@ -1169,6 +1207,7 @@ mod targeted_schema_retry_phase5_tests {
             name: "fcp_schema_fault_nl_probe".into(),
             args: json!({}),
             id: None,
+            provider_call_id: None,
         }];
         let decision = orch
             .execute_tool_batch(
@@ -1194,5 +1233,258 @@ mod targeted_schema_retry_phase5_tests {
             }
             other => panic!("expected RetryWithTargetedSchema, got {:?}", other),
         }
+    }
+}
+
+#[cfg(test)]
+mod native_tool_round_trip_tests {
+    use super::*;
+    use crate::config::AppConfig;
+    use crate::engine::{EngineResponse, LlmEngine, LlmGenerateOptions, Message, Role};
+    use crate::executive::error::Result;
+    use crate::memory::ephemeral::EphemeralMemory;
+    use crate::orchestrator::context::ContextViewSettings;
+    use crate::orchestrator::r#loop::tool_batch::ToolBatchDecision;
+    use crate::orchestrator::state::{AgentState, ToolCall};
+    use crate::tools::Gatekeeper;
+    use crate::tools::traits::Tool;
+    use async_trait::async_trait;
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+    use serde_json::json;
+    use std::collections::{HashMap, HashSet};
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use tokio::sync::mpsc;
+
+    struct StubEngine;
+
+    #[async_trait]
+    impl LlmEngine for StubEngine {
+        async fn generate(
+            &self,
+            _stack: &[Message],
+            _available_tools_json: &str,
+            _stream_tx: Option<mpsc::UnboundedSender<String>>,
+            _options: LlmGenerateOptions,
+        ) -> Result<EngineResponse> {
+            Ok(EngineResponse::default())
+        }
+    }
+
+    #[derive(JsonSchema, Deserialize)]
+    struct EmptyArgs {}
+
+    struct OkProbeTool;
+
+    #[async_trait]
+    impl Tool for OkProbeTool {
+        fn name(&self) -> &'static str {
+            "fcp_ok_probe"
+        }
+
+        fn description(&self) -> &'static str {
+            "test-only succeeding tool"
+        }
+
+        fn parameters_schema(&self) -> schemars::schema::RootSchema {
+            schemars::schema_for!(EmptyArgs)
+        }
+
+        async fn execute(&self, _args: serde_json::Value) -> Result<String> {
+            Ok("payload".into())
+        }
+    }
+
+    struct FailProbeTool;
+
+    #[async_trait]
+    impl Tool for FailProbeTool {
+        fn name(&self) -> &'static str {
+            "fcp_fail_probe"
+        }
+
+        fn description(&self) -> &'static str {
+            "test-only failing tool"
+        }
+
+        fn parameters_schema(&self) -> schemars::schema::RootSchema {
+            schemars::schema_for!(EmptyArgs)
+        }
+
+        async fn execute(&self, _args: serde_json::Value) -> Result<String> {
+            Err(crate::executive::error::FcpError::ToolFault {
+                tool_name: self.name().into(),
+                reason: "intentional".into(),
+            })
+        }
+    }
+
+    struct Fixture {
+        orch: Orchestrator<StubEngine>,
+        _tmp: tempfile::TempDir,
+    }
+
+    fn orchestrator_with(tools: Vec<Arc<dyn Tool>>) -> Fixture {
+        let mut gatekeeper = Gatekeeper::new();
+        for t in tools {
+            gatekeeper.register(t);
+        }
+        let ephemeral = Arc::new(EphemeralMemory::new("ws".into()));
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (tx, rx) = tokio::sync::watch::channel(());
+        Box::leak(Box::new(tx));
+        let (id_tx, id_rx) = tokio::sync::watch::channel(Arc::from("id"));
+        Box::leak(Box::new(id_tx));
+        let orch = Orchestrator::new(
+            StubEngine,
+            gatekeeper,
+            ephemeral,
+            tmp.path(),
+            "ws",
+            3,
+            5,
+            0.8,
+            4096,
+            3,
+            6000,
+            false,
+            0,
+            rx,
+            None,
+            None,
+            None,
+            ContextViewSettings::default(),
+            Arc::new(AppConfig::default()),
+            id_rx,
+            Arc::new(AtomicBool::new(false)),
+            None,
+            None,
+            None,
+            None,
+        );
+        Fixture { orch, _tmp: tmp }
+    }
+
+    async fn run_batch(
+        orch: &mut Orchestrator<StubEngine>,
+        tools: Vec<ToolCall>,
+    ) -> ToolBatchDecision {
+        orch.state = AgentState::Chat;
+        let mut ledger = HashMap::new();
+        let mut schema = HashSet::new();
+        let mut targeted = HashSet::new();
+        let mut web = false;
+        let mut tool_ms = 0u64;
+        orch.execute_tool_batch(
+            tools,
+            true,
+            &mut ledger,
+            &mut schema,
+            &mut targeted,
+            &mut web,
+            &mut tool_ms,
+            1u64,
+            false,
+        )
+        .await
+        .expect("batch")
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn folded_success_stays_system_without_provider_id() {
+        let mut fx = orchestrator_with(vec![Arc::new(OkProbeTool)]);
+        let _ = run_batch(
+            &mut fx.orch,
+            vec![ToolCall {
+                name: "fcp_ok_probe".into(),
+                args: json!({}),
+                id: None,
+                provider_call_id: None,
+            }],
+        )
+        .await;
+        let results: Vec<&Message> = fx
+            .orch
+            .chat_stack
+            .iter()
+            .filter(|m| m.content.contains("fcp_ok_probe"))
+            .collect();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].role, Role::System);
+        assert!(results[0].tool_call_id.is_none());
+        assert!(
+            fx.orch
+                .chat_stack
+                .iter()
+                .any(|m| m.role == Role::System && m.content.contains("message_to_user")),
+            "post-tool guidance remains a system row after folded results"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn native_success_emits_tool_role_with_matching_id() {
+        let mut fx = orchestrator_with(vec![Arc::new(OkProbeTool)]);
+        let _ = run_batch(
+            &mut fx.orch,
+            vec![ToolCall {
+                name: "fcp_ok_probe".into(),
+                args: json!({}),
+                id: None,
+                provider_call_id: Some("call_9".into()),
+            }],
+        )
+        .await;
+        let tools: Vec<&Message> = fx
+            .orch
+            .chat_stack
+            .iter()
+            .filter(|m| m.role == Role::Tool)
+            .collect();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].tool_call_id.as_deref(), Some("call_9"));
+        assert!(tools[0].content.contains("fcp_ok_probe"));
+        assert!(tools[0].content.contains("succeeded"));
+        let guidance_idx = fx
+            .orch
+            .chat_stack
+            .iter()
+            .position(|m| m.role == Role::System && m.content.contains("message_to_user"))
+            .expect("post-tool guidance");
+        let tool_idx = fx
+            .orch
+            .chat_stack
+            .iter()
+            .position(|m| m.role == Role::Tool)
+            .expect("tool frame");
+        assert!(
+            tool_idx < guidance_idx,
+            "guidance must follow the native tool frame"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn native_failure_still_emits_tool_role() {
+        let mut fx = orchestrator_with(vec![Arc::new(FailProbeTool)]);
+        let decision = run_batch(
+            &mut fx.orch,
+            vec![ToolCall {
+                name: "fcp_fail_probe".into(),
+                args: json!({}),
+                id: None,
+                provider_call_id: Some("call_err".into()),
+            }],
+        )
+        .await;
+        assert!(matches!(decision, ToolBatchDecision::Recover { .. }));
+        let tools: Vec<&Message> = fx
+            .orch
+            .chat_stack
+            .iter()
+            .filter(|m| m.role == Role::Tool)
+            .collect();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].tool_call_id.as_deref(), Some("call_err"));
+        assert!(tools[0].content.contains("failed"));
     }
 }

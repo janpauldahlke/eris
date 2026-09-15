@@ -266,7 +266,10 @@ mod tests {
         });
 
         let _ = tool.execute(args).await?;
-        assert!(!cache.is_dirty(), "expected non-synthesis write to leave taglist clean");
+        assert!(
+            !cache.is_dirty(),
+            "expected non-synthesis write to leave taglist clean"
+        );
         Ok(())
     }
 }

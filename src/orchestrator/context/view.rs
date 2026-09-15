@@ -13,7 +13,7 @@ use crate::orchestrator::llm_support::json_envelope::{
 use crate::tools::ToolContextViewHint;
 
 use super::resolved_tool_recovery::apply_omit_resolved_tool_recovery;
-use super::stack_lines::try_parse_tool_success_line;
+use super::stack_lines::message_is_tool_success;
 
 /// Start delimiter for the JSON tool-definition array inside the assembled system prompt ([`crate::orchestrator::context::ContextAssembler::build_tool_prompt`]).
 pub const FCP_TOOL_DEFS_BEGIN: &str = "<<<FCP_TOOL_DEFS_JSON>>>";
@@ -245,6 +245,7 @@ pub fn build_llm_view(messages: &[Message], settings: &ContextViewSettings) -> V
 
     for m in source {
         if m.role == "assistant"
+            && m.tool_calls.is_empty()
             && settings.assistant_non_json_placeholder
             && parse_llm_response_protocol(&m.content).is_err()
         {
@@ -298,9 +299,7 @@ pub fn build_llm_view(messages: &[Message], settings: &ContextViewSettings) -> V
             continue;
         }
 
-        if m.role == "system"
-            && let Some(ts) = try_parse_tool_success_line(&m.content)
-        {
+        if let Some(ts) = message_is_tool_success(m) {
             let tool_name = ts.tool_name;
             let body = ts.body;
             let hint = hints
@@ -475,6 +474,52 @@ mod tests {
             v[0].content,
             format!("[FCP: non-protocol assistant output omitted; {n} chars]")
         );
+    }
+
+    #[test]
+    fn native_assistant_tool_calls_skip_non_json_placeholder() {
+        let m = vec![Message::assistant_with_tool_calls(
+            "",
+            vec![crate::engine::EngineToolCall {
+                id: Some("call_1".into()),
+                name: "memory:query".into(),
+                arguments: r#"{"query":"x"}"#.into(),
+            }],
+        )];
+        let settings = ContextViewSettings {
+            enabled: true,
+            default_snippet_chars: 400,
+            assistant_compact: true,
+            full_tool_schemas_in_llm_view: false,
+            omit_resolved_tool_recovery: false,
+            assistant_non_json_placeholder: true,
+            hints: Arc::new(HashMap::new()),
+        };
+        let v = build_llm_view(&m, &settings);
+        assert_eq!(v[0].content, "");
+        assert_eq!(v[0].tool_calls.len(), 1);
+    }
+
+    #[test]
+    fn tool_role_success_line_is_snippeted_like_system() {
+        let body = "a".repeat(500);
+        let m = vec![Message::tool(
+            format!("Tool 't:1' succeeded: {body}"),
+            "call_1",
+        )];
+        let settings = ContextViewSettings {
+            enabled: true,
+            default_snippet_chars: 100,
+            assistant_compact: false,
+            full_tool_schemas_in_llm_view: false,
+            omit_resolved_tool_recovery: false,
+            assistant_non_json_placeholder: false,
+            hints: hint_map(&[("t:1", ToolContextViewHint::Default)]),
+        };
+        let v = build_llm_view(&m, &settings);
+        assert_eq!(v[0].role, "tool");
+        assert!(v[0].content.contains("[tool] t:1 ok"));
+        assert!(v[0].content.contains("… [truncated]"));
     }
 
     #[test]

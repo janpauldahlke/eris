@@ -27,16 +27,17 @@ impl Serialize for ToolChoice {
 /// Wire-level conversational role for a [`Message`].
 ///
 /// `System` / `User` / `Assistant` are accepted by every chat template.
-/// [`Role::Tool`] is the OpenAI-native tool-result role; only the OpenRouter
-/// wire mapper emits it (Phase 3). Local backends map it to `user` if it ever
+/// [`Role::Tool`] is the OpenAI-native tool-result role; OpenRouter emits it on the
+/// chat stack after a native tool hop. Local backends map it to `user` if it ever
 /// appears on their stack.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
     System,
     User,
     Assistant,
-    /// Native tool-result frame (`role: "tool"` + `tool_call_id`). Unused on
-    /// the chat stack until the OpenRouter round-trip lands.
+    /// Native tool-result frame (`role: "tool"` + `tool_call_id`). OpenRouter
+    /// puts these on the chat stack after a native tool hop; local backends map
+    /// the role to `user` if one ever appears.
     Tool,
 }
 
@@ -105,9 +106,9 @@ pub struct EngineToolCall {
 pub struct Message {
     pub role: Role,
     pub content: String,
-    /// Provider `tool_call_id` on [`Role::Tool`] result frames. Unused until Phase 3.
+    /// Provider `tool_call_id` on [`Role::Tool`] result frames.
     pub tool_call_id: Option<String>,
-    /// Native tool calls on an assistant turn. Unused until Phase 3.
+    /// Native tool calls on an assistant turn (OpenRouter round-trip).
     pub tool_calls: Vec<EngineToolCall>,
 }
 
@@ -138,8 +139,7 @@ impl Message {
         Self::new(Role::Assistant, content)
     }
 
-    /// Construct a native `role: "tool"` result frame. Unused on the chat stack
-    /// until Phase 3; the OpenRouter wire mapper already emits it.
+    /// Construct a native `role: "tool"` result frame.
     pub fn tool(content: impl Into<String>, tool_call_id: impl Into<String>) -> Self {
         Self {
             role: Role::Tool,
@@ -149,7 +149,7 @@ impl Message {
         }
     }
 
-    /// Assistant turn that requested native tool calls. Unused until Phase 3.
+    /// Assistant turn that requested native tool calls.
     pub fn assistant_with_tool_calls(
         content: impl Into<String>,
         tool_calls: Vec<EngineToolCall>,

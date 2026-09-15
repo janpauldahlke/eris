@@ -7,9 +7,9 @@ mod handlers;
 mod router;
 mod server;
 mod settings_merge;
+mod sse;
 mod tools_config_merge;
 mod tools_config_schema;
-mod sse;
 mod vision_handlers;
 
 pub use server::{WebAppState, run_web_chat, run_web_chat_with_broadcast};

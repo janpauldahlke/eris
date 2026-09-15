@@ -172,10 +172,17 @@ fn clamp_deep_fetch_top_n(ctx: &WebToolContext, requested: u8) -> u8 {
         .max_fetches_per_chat_session
         .saturating_sub(ledger.fetches_this_session())
         .saturating_sub(1);
-    requested.min(3).min(turn_room as u8).min(session_room as u8)
+    requested
+        .min(3)
+        .min(turn_room as u8)
+        .min(session_room as u8)
 }
 
-fn curated_headlines(links: &[WebOutboundLink], homepage: &Url, max: usize) -> Vec<WebOutboundLink> {
+fn curated_headlines(
+    links: &[WebOutboundLink],
+    homepage: &Url,
+    max: usize,
+) -> Vec<WebOutboundLink> {
     let homepage_str = homepage.as_str();
     let filtered = filter_headline_candidates(links.to_vec(), homepage_str);
     let mut out = Vec::new();
@@ -271,8 +278,7 @@ impl Tool for NewsTodayTool {
             })
             .collect();
 
-        let deep_candidates =
-            select_deep_fetch_links(&links, &homepage_str, deep_n as usize);
+        let deep_candidates = select_deep_fetch_links(&links, &homepage_str, deep_n as usize);
         let mut deep_articles = Vec::new();
         let mut seen = HashSet::new();
         seen.insert(homepage_str.clone());
@@ -290,11 +296,9 @@ impl Tool for NewsTodayTool {
                     .and_then(|a| a.as_str())
                     .unwrap_or("")
                     .to_string();
-                let preview = v
-                    .get("preview_head")
-                    .and_then(|p| p.as_str())
-                    .unwrap_or("");
-                let chunk_count = v.get("chunk_count").and_then(|c| c.as_u64()).unwrap_or(0) as usize;
+                let preview = v.get("preview_head").and_then(|p| p.as_str()).unwrap_or("");
+                let chunk_count =
+                    v.get("chunk_count").and_then(|c| c.as_u64()).unwrap_or(0) as usize;
                 deep_articles.push(DeepArticleRow {
                     url: link.url.clone(),
                     artifact_id,

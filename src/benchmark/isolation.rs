@@ -97,7 +97,11 @@ impl SideEffectFilter {
     /// Check if a tool is allowed in the current filter mode.
     pub fn is_allowed(&self, tool_name: &str) -> bool {
         // First check blocked list
-        if self.blocked_prefixes.iter().any(|p| tool_name.starts_with(p)) {
+        if self
+            .blocked_prefixes
+            .iter()
+            .any(|p| tool_name.starts_with(p))
+        {
             tracing::warn!(
                 tool = tool_name,
                 "SideEffectFilter: blocked mutating external tool"
@@ -182,9 +186,10 @@ impl BenchmarkIsolation {
     /// Create new isolated benchmark environment.
     pub fn new(original_vault: &Path) -> Result<Self> {
         let temp_vault = tempfile::tempdir().map_err(|e| {
-            FcpError::Io(std::io::Error::other(
-                format!("Failed to create temp vault: {}", e),
-            ))
+            FcpError::Io(std::io::Error::other(format!(
+                "Failed to create temp vault: {}",
+                e
+            )))
         })?;
 
         let qdrant_collection = format!("benchmark_{}", Uuid::new_v4());

@@ -1,10 +1,10 @@
 //! Pluggable page fetch backend (`browser39` subprocess or mock).
 
 use crate::executive::error::{FcpError, Result};
-use tracing::{debug, info, warn};
 use crate::tools::web::artifact::WebOutboundLink;
 use async_trait::async_trait;
 use serde::Deserialize;
+use tracing::{debug, info, warn};
 
 #[derive(Debug, Clone)]
 pub struct FetchedPage {
@@ -285,13 +285,7 @@ fn browser39_fetch_blocking(
         "url": url,
         "options": options,
     });
-    let lines = browser39_run_batch_blocking(
-        binary,
-        config_path,
-        session_dir,
-        no_persist,
-        &[cmd],
-    )?;
+    let lines = browser39_run_batch_blocking(binary, config_path, session_dir, no_persist, &[cmd])?;
     parse_first_batch_fetch_line(&lines, url)
 }
 

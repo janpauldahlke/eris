@@ -37,9 +37,8 @@ impl RoutingSignals {
         recent_successful_tools: &[String],
     ) -> Self {
         let lower = user_text.to_ascii_lowercase();
-        let has_url = lower.contains("http://")
-            || lower.contains("https://")
-            || lower.contains("www.");
+        let has_url =
+            lower.contains("http://") || lower.contains("https://") || lower.contains("www.");
         let recent_had_agenda = recent_successful_tools
             .iter()
             .any(|n| n.starts_with("agenda:"));
@@ -172,9 +171,8 @@ fn has_calendar_noun(lower: &str) -> bool {
 }
 
 fn has_calendar_delete_continuation(lower: &str) -> bool {
-    let destructive = lower.contains("cancel")
-        || lower.contains("delete")
-        || lower.contains("remove");
+    let destructive =
+        lower.contains("cancel") || lower.contains("delete") || lower.contains("remove");
     destructive && has_calendar_noun(lower)
 }
 
@@ -200,9 +198,8 @@ fn has_calendar_get_continuation(lower: &str) -> bool {
 #[must_use]
 pub fn has_doc_delete_continuation(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
-    let destructive = lower.contains("delete")
-        || lower.contains("remove")
-        || lower.contains("unindex");
+    let destructive =
+        lower.contains("delete") || lower.contains("remove") || lower.contains("unindex");
     let doc_noun = lower.contains("document")
         || lower.contains("pdf")
         || lower.contains("ingested")

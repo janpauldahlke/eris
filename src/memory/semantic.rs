@@ -326,7 +326,8 @@ impl SemanticBrain {
             return Ok(());
         }
         let point_id =
-            uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, vault_relative_key.as_bytes()).to_string();
+            uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, vault_relative_key.as_bytes())
+                .to_string();
         self.client
             .delete_points(
                 DeletePointsBuilder::new(collection)
@@ -453,13 +454,9 @@ impl SemanticBrain {
 
         let subdirs = vault_ingest_subdirs_for_config(&self.config);
         if !self.config.vision.enabled && !self.config.document_rag.enabled {
-            tracing::debug!(
-                "v2 ingest: skipping 40_MEDIA (vision and document_rag disabled)"
-            );
+            tracing::debug!("v2 ingest: skipping 40_MEDIA (vision and document_rag disabled)");
         } else if !self.config.vision.enabled {
-            tracing::debug!(
-                "v2 ingest: 40_MEDIA limited to document cards (vision disabled)"
-            );
+            tracing::debug!("v2 ingest: 40_MEDIA limited to document cards (vision disabled)");
         }
 
         for subdir in subdirs {
@@ -497,9 +494,17 @@ impl SemanticBrain {
                     stack.push(path);
                     continue;
                 }
-                if self.index_tree_md_file(vault_root, &path).await.unwrap_or(false) {
+                if self
+                    .index_tree_md_file(vault_root, &path)
+                    .await
+                    .unwrap_or(false)
+                {
                     count += 1;
-                } else if self.index_tree_json_file(vault_root, &path).await.unwrap_or(false) {
+                } else if self
+                    .index_tree_json_file(vault_root, &path)
+                    .await
+                    .unwrap_or(false)
+                {
                     count += 1;
                 }
             }
@@ -520,7 +525,9 @@ impl SemanticBrain {
             _ => return Ok(false),
         };
 
-        let raw = tokio::fs::read_to_string(path).await.map_err(FcpError::Io)?;
+        let raw = tokio::fs::read_to_string(path)
+            .await
+            .map_err(FcpError::Io)?;
         let card = crate::media::parse_media_json(&raw)?;
         if !crate::media::media_card_eligible_for_ingest(&self.config, &card) {
             return Ok(false);
@@ -562,7 +569,9 @@ impl SemanticBrain {
             _ => return Ok(false),
         };
 
-        let raw = tokio::fs::read_to_string(path).await.map_err(FcpError::Io)?;
+        let raw = tokio::fs::read_to_string(path)
+            .await
+            .map_err(FcpError::Io)?;
         let parsed = parse_vault_md(&raw);
         if parsed.content.trim().is_empty() {
             return Ok(false);
@@ -591,7 +600,11 @@ impl SemanticBrain {
         Ok(true)
     }
 
-    async fn index_synthesis_node(&self, vault_root: &std::path::Path, node_id: &str) -> Result<bool> {
+    async fn index_synthesis_node(
+        &self,
+        vault_root: &std::path::Path,
+        node_id: &str,
+    ) -> Result<bool> {
         let node_path = vault_root.join("30_Synthesis").join(node_id);
         if !node_path.is_dir() {
             return Ok(false);
@@ -618,7 +631,9 @@ impl SemanticBrain {
             return Ok(false);
         };
 
-        let raw = tokio::fs::read_to_string(&head_path).await.map_err(FcpError::Io)?;
+        let raw = tokio::fs::read_to_string(&head_path)
+            .await
+            .map_err(FcpError::Io)?;
         let parsed = parse_vault_md(&raw);
         if parsed.content.trim().is_empty() {
             return Ok(false);

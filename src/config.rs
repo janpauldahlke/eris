@@ -1886,7 +1886,8 @@ impl Default for DocumentRagConfig {
 impl DocumentRagConfig {
     /// Effective paragraph chunk size: `chunk_target_chars` capped by embed token budget.
     pub fn resolved_chunk_target_chars(&self) -> usize {
-        let token_budget = self.embed_max_tokens.max(64) as f32 * self.embed_chars_per_token.clamp(0.5, 8.0);
+        let token_budget =
+            self.embed_max_tokens.max(64) as f32 * self.embed_chars_per_token.clamp(0.5, 8.0);
         let from_tokens = token_budget.floor() as usize;
         self.chunk_target_chars.max(256).min(from_tokens.max(256))
     }
@@ -2101,11 +2102,7 @@ impl AppConfig {
             .clamp(0.55_f32, 1.0_f32);
         let derived = ((n as f32) * ratio).floor() as usize;
         let t = self.condensation_target;
-        if t >= 4096 {
-            derived.min(t)
-        } else {
-            derived
-        }
+        if t >= 4096 { derived.min(t) } else { derived }
     }
 
     pub fn load(cli: crate::executive::cli::Cli) -> crate::executive::error::Result<Self> {
@@ -2265,9 +2262,7 @@ impl AppConfig {
 
     /// Validate the `[openrouter]` section when backend is OpenRouter: section present,
     /// non-empty model, and the API key env var set. The key **value** is never logged or returned.
-    pub fn validate_openrouter_config(
-        &self,
-    ) -> crate::executive::error::Result<&OpenRouterConfig> {
+    pub fn validate_openrouter_config(&self) -> crate::executive::error::Result<&OpenRouterConfig> {
         if self.llm_backend != LlmBackend::OpenRouter {
             return Err(crate::executive::error::FcpError::Config(
                 "validate_openrouter_config called but backend is not OpenRouter".into(),
@@ -2283,7 +2278,10 @@ impl AppConfig {
                 "[openrouter] model must be set (e.g. \"google/gemini-2.5-flash\")".into(),
             ));
         }
-        if std::env::var(&or.api_key_env).map(|v| v.trim().is_empty()).unwrap_or(true) {
+        if std::env::var(&or.api_key_env)
+            .map(|v| v.trim().is_empty())
+            .unwrap_or(true)
+        {
             return Err(crate::executive::error::FcpError::Config(format!(
                 "OpenRouter API key env var `{}` is not set. Run: export {}=<your key>",
                 or.api_key_env, or.api_key_env
@@ -3084,7 +3082,10 @@ mod tests {
         assert!(or.require_parameters);
         assert_eq!(or.data_collection, DataCollection::Deny);
         assert!(or.consent_acknowledged);
-        assert_eq!(or.reasoning, OpenRouterReasoning::Effort(ReasoningEffort::Low));
+        assert_eq!(
+            or.reasoning,
+            OpenRouterReasoning::Effort(ReasoningEffort::Low)
+        );
         assert_eq!(or.fallback_models, vec!["openai/gpt-4o-mini".to_string()]);
     }
 
@@ -3110,7 +3111,10 @@ mod tests {
             ..Default::default()
         });
         let err = config.validate_openrouter_config().unwrap_err().to_string();
-        assert!(err.contains("FCP_TEST_OPENROUTER_KEY_THAT_IS_UNSET"), "{err}");
+        assert!(
+            err.contains("FCP_TEST_OPENROUTER_KEY_THAT_IS_UNSET"),
+            "{err}"
+        );
         assert!(err.contains("export"), "{err}");
     }
 

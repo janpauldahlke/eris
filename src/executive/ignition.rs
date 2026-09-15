@@ -11,8 +11,7 @@ use tokio::fs;
 /// Map an inquire error to the ignition error taxonomy (Ctrl-C → Cancellation).
 fn prompt_err(e: inquire::InquireError) -> FcpError {
     match e {
-        inquire::InquireError::OperationCanceled
-        | inquire::InquireError::OperationInterrupted => {
+        inquire::InquireError::OperationCanceled | inquire::InquireError::OperationInterrupted => {
             FcpError::Cancellation("Ignition cancelled by user".into())
         }
         _ => FcpError::Config(format!("Prompt error: {}", e)),
@@ -618,4 +617,3 @@ pub async fn run_ignition_sequence(
 
     Ok(config)
 }
-

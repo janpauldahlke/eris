@@ -32,6 +32,7 @@ mod tests {
             name: "memory:stage".to_string(),
             args: serde_json::json!({}),
             id: None,
+            provider_call_id: None,
         }];
         let transition = decide_transition_from_directive(LoopDirective::ExecuteTools(tools));
         assert!(matches!(transition, StateTransition::ExecuteTools(_)));

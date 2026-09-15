@@ -29,6 +29,11 @@ pub struct ToolCall {
     /// Top-level task id (e.g. agenda) folded into `args` during normalization.
     #[serde(default)]
     pub id: Option<String>,
+    /// OpenRouter `tool_call_id` for the `role:"tool"` round-trip. Never deserialized
+    /// from envelope JSON (that `id` is the agenda field above). Survives
+    /// [`LlmResponse::normalize_tool_calls`].
+    #[serde(default, skip_deserializing)]
+    pub provider_call_id: Option<String>,
 }
 
 fn default_empty_object() -> serde_json::Value {
@@ -253,5 +258,25 @@ mod tests {
         assert_eq!(args.get("task_id").and_then(|v| v.as_str()), Some("4049"));
         assert!(args.get("result_summary").is_some());
         assert_eq!(response.tool_calls[0].id, None);
+        assert_eq!(response.tool_calls[0].provider_call_id, None);
+    }
+
+    #[test]
+    fn normalize_preserves_provider_call_id() {
+        let mut response = LlmResponse::from_native_tool_calls(
+            String::new(),
+            vec![ToolCall {
+                name: "memory:query".into(),
+                args: json!({"query": "x"}),
+                id: None,
+                provider_call_id: Some("call_1".into()),
+            }],
+        );
+        response.normalize_tool_calls();
+        assert_eq!(response.tool_calls[0].id, None);
+        assert_eq!(
+            response.tool_calls[0].provider_call_id.as_deref(),
+            Some("call_1")
+        );
     }
 }

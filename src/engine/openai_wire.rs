@@ -4,8 +4,8 @@
 //! backends normalize through one copy — the shapes cannot drift apart.
 //!
 //! Native `role: "tool"` frames and assistant `tool_calls` serialize here (skipping when
-//! empty so llama.cpp payloads stay byte-identical). The orchestrator does not yet put
-//! these on the chat stack; that lands in Phase 3.
+//! empty so llama.cpp payloads stay byte-identical). The orchestrator puts these on the
+//! chat stack for OpenRouter native tool hops; local backends keep folded `system` results.
 
 use serde::Serialize;
 
@@ -410,6 +410,44 @@ mod tests {
         fn empty_tool_metadata_omitted_from_json() {
             let json = serde_json::to_value(ChatMsg::new("user", "hi")).expect("serialize");
             assert_eq!(json, serde_json::json!({"role": "user", "content": "hi"}));
+        }
+
+        #[test]
+        fn post_tool_guidance_after_native_tools_stays_off_tool_frames() {
+            use crate::engine::EngineToolCall;
+            let stack = vec![
+                Message::system("S"),
+                Message::user("u"),
+                Message::assistant_with_tool_calls(
+                    "",
+                    vec![
+                        EngineToolCall {
+                            id: Some("call_a".into()),
+                            name: "memory:query".into(),
+                            arguments: r#"{"query":"x"}"#.into(),
+                        },
+                        EngineToolCall {
+                            id: Some("call_b".into()),
+                            name: "clock:now".into(),
+                            arguments: "{}".into(),
+                        },
+                    ],
+                ),
+                Message::tool("first", "call_a"),
+                Message::tool("second", "call_b"),
+                Message::system("POST_TOOL_GUIDANCE"),
+            ];
+            let out = project(&stack);
+            let tools: Vec<&ChatMsg> = out.iter().filter(|m| m.role == "tool").collect();
+            assert_eq!(tools.len(), 2);
+            assert_eq!(tools[0].tool_call_id.as_deref(), Some("call_a"));
+            assert_eq!(tools[1].tool_call_id.as_deref(), Some("call_b"));
+            let guidance = out
+                .iter()
+                .find(|m| m.content.contains("POST_TOOL_GUIDANCE"))
+                .expect("guidance");
+            assert_eq!(guidance.role, "user");
+            assert_ne!(guidance.role, "tool");
         }
     }
 }

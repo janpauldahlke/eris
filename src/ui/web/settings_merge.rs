@@ -162,7 +162,14 @@ fn field_usize(
     }
 }
 
-fn field_u64(key: &str, value: u64, label: &str, description: &str, impact: &str, editable: bool) -> SettingsFieldSchema {
+fn field_u64(
+    key: &str,
+    value: u64,
+    label: &str,
+    description: &str,
+    impact: &str,
+    editable: bool,
+) -> SettingsFieldSchema {
     SettingsFieldSchema {
         key: key.to_string(),
         value: JsonValue::from(value),
@@ -176,7 +183,14 @@ fn field_u64(key: &str, value: u64, label: &str, description: &str, impact: &str
     }
 }
 
-fn field_u8(key: &str, value: u8, label: &str, description: &str, impact: &str, editable: bool) -> SettingsFieldSchema {
+fn field_u8(
+    key: &str,
+    value: u8,
+    label: &str,
+    description: &str,
+    impact: &str,
+    editable: bool,
+) -> SettingsFieldSchema {
     SettingsFieldSchema {
         key: key.to_string(),
         value: JsonValue::from(value),
@@ -190,7 +204,14 @@ fn field_u8(key: &str, value: u8, label: &str, description: &str, impact: &str, 
     }
 }
 
-fn field_bool(key: &str, value: bool, label: &str, description: &str, impact: &str, editable: bool) -> SettingsFieldSchema {
+fn field_bool(
+    key: &str,
+    value: bool,
+    label: &str,
+    description: &str,
+    impact: &str,
+    editable: bool,
+) -> SettingsFieldSchema {
     SettingsFieldSchema {
         key: key.to_string(),
         value: JsonValue::from(value),
@@ -204,7 +225,14 @@ fn field_bool(key: &str, value: bool, label: &str, description: &str, impact: &s
     }
 }
 
-fn field_f64(key: &str, value: f64, label: &str, description: &str, impact: &str, editable: bool) -> SettingsFieldSchema {
+fn field_f64(
+    key: &str,
+    value: f64,
+    label: &str,
+    description: &str,
+    impact: &str,
+    editable: bool,
+) -> SettingsFieldSchema {
     SettingsFieldSchema {
         key: key.to_string(),
         value: serde_json::Number::from_f64(value)
@@ -220,7 +248,13 @@ fn field_f64(key: &str, value: f64, label: &str, description: &str, impact: &str
     }
 }
 
-fn field_string_readonly(key: &str, value: String, label: &str, description: &str, impact: &str) -> SettingsFieldSchema {
+fn field_string_readonly(
+    key: &str,
+    value: String,
+    label: &str,
+    description: &str,
+    impact: &str,
+) -> SettingsFieldSchema {
     SettingsFieldSchema {
         key: key.to_string(),
         value: JsonValue::String(value),
@@ -255,9 +289,11 @@ pub async fn merge_settings_into_toml(
     payload: &SettingsUpdatePayload,
 ) -> Result<()> {
     let path = vault_layout::config_toml(vault_root);
-    let raw = tokio::fs::read_to_string(&path).await.map_err(FcpError::Io)?;
-    let mut doc: toml::Table = toml::from_str(&raw)
-        .map_err(|e| FcpError::Config(format!("parse config.toml: {e}")))?;
+    let raw = tokio::fs::read_to_string(&path)
+        .await
+        .map_err(FcpError::Io)?;
+    let mut doc: toml::Table =
+        toml::from_str(&raw).map_err(|e| FcpError::Config(format!("parse config.toml: {e}")))?;
 
     let num_ctx_max = config.web_ui.settings.num_ctx_max.max(4096);
 
@@ -266,9 +302,7 @@ pub async fn merge_settings_into_toml(
             "num_ctx" => {
                 let n = json_usize(val)?;
                 if n < 1024 {
-                    return Err(FcpError::Config(
-                        "num_ctx must be at least 1024".into(),
-                    ));
+                    return Err(FcpError::Config("num_ctx must be at least 1024".into()));
                 }
                 if n > num_ctx_max {
                     return Err(FcpError::Config(format!(
@@ -292,9 +326,7 @@ pub async fn merge_settings_into_toml(
             "max_tool_rounds" => {
                 let n = json_u64(val)?;
                 if n == 0 || n > 50 {
-                    return Err(FcpError::Config(
-                        "max_tool_rounds must be 1..50".into(),
-                    ));
+                    return Err(FcpError::Config("max_tool_rounds must be 1..50".into()));
                 }
                 doc.insert("max_tool_rounds".into(), toml::Value::Integer(n as i64));
             }
@@ -335,10 +367,7 @@ pub async fn merge_settings_into_toml(
                         "memory_prefetch_min_score must be 0..1".into(),
                     ));
                 }
-                doc.insert(
-                    "memory_prefetch_min_score".into(),
-                    toml::Value::Float(f),
-                );
+                doc.insert("memory_prefetch_min_score".into(), toml::Value::Float(f));
             }
             other => {
                 tracing::warn!(
@@ -412,10 +441,7 @@ mod tests {
         config.workspace = "t".into();
 
         let payload = SettingsUpdatePayload {
-            values: BTreeMap::from([(
-                "num_ctx".to_string(),
-                JsonValue::from(32768_usize),
-            )]),
+            values: BTreeMap::from([("num_ctx".to_string(), JsonValue::from(32768_usize))]),
         };
         let err = merge_settings_into_toml(dir.path(), &config, &payload)
             .await

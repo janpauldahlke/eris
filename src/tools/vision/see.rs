@@ -54,11 +54,8 @@ impl Tool for VisionSeeTool {
         }
         let parsed: VisionSeeArgs = serde_json::from_value(args).map_err(FcpError::ParseFault)?;
         let upload_dir = self.config.vision.upload_dir.as_str();
-        let _abs = validate_vision_relative_path(
-            &self.workspace_root,
-            upload_dir,
-            &parsed.relative_path,
-        )?;
+        let _abs =
+            validate_vision_relative_path(&self.workspace_root, upload_dir, &parsed.relative_path)?;
         let meta = fs::metadata(&_abs).await.map_err(FcpError::Io)?;
         let prompt = parsed
             .prompt

@@ -57,7 +57,8 @@ impl Tool for MediaCatalogTool {
     }
 
     async fn execute(&self, args: Value) -> Result<String> {
-        let parsed: MediaCatalogArgs = serde_json::from_value(args).map_err(FcpError::ParseFault)?;
+        let parsed: MediaCatalogArgs =
+            serde_json::from_value(args).map_err(FcpError::ParseFault)?;
         let rel = parsed.relative_path.replace('\\', "/");
         let media_type = if let Some(ref mt) = parsed.media_type {
             parse_media_type_str(mt)?
@@ -144,7 +145,13 @@ fn derive_title_from_description(description: &str) -> Option<String> {
     if first.chars().count() <= MAX {
         Some(first.to_string())
     } else {
-        Some(format!("{}...", first.chars().take(MAX.saturating_sub(3)).collect::<String>()))
+        Some(format!(
+            "{}...",
+            first
+                .chars()
+                .take(MAX.saturating_sub(3))
+                .collect::<String>()
+        ))
     }
 }
 
@@ -210,9 +217,7 @@ mod tests {
         let root = dir.path();
         let rel = "99_USER_UPLOADED/images/catalog-test.jpg";
         write_test_jpeg(root, rel).await;
-        let hash = sha256_hex_file(&root.join(rel))
-            .await
-            .expect("hash");
+        let hash = sha256_hex_file(&root.join(rel)).await.expect("hash");
 
         let tool = MediaCatalogTool {
             config: vision_enabled_config(),
@@ -230,13 +235,19 @@ mod tests {
 
         let v: Value = serde_json::from_str(&out).expect("json");
         assert_eq!(v.get("title").and_then(|x| x.as_str()), Some("Fish truck"));
-        assert_eq!(v.get("content_hash").and_then(|x| x.as_str()), Some(hash.as_str()));
+        assert_eq!(
+            v.get("content_hash").and_then(|x| x.as_str()),
+            Some(hash.as_str())
+        );
         let card_path = root.join("40_MEDIA").join(&hash).join("media.json");
         assert!(card_path.is_file());
         let on_disk: MediaCard =
             serde_json::from_str(&tokio::fs::read_to_string(&card_path).await.expect("read"))
                 .expect("card json");
-        assert_eq!(on_disk.type_fields.get("width").and_then(|x| x.as_u64()), Some(4));
+        assert_eq!(
+            on_disk.type_fields.get("width").and_then(|x| x.as_u64()),
+            Some(4)
+        );
     }
 
     #[test]

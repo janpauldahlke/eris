@@ -46,7 +46,9 @@ pub fn apply_offer_overlays(
         }
     }
 
-    let needs_web_find = offered.iter().any(|n| n == "web:fetch" || n == "web:search");
+    let needs_web_find = offered
+        .iter()
+        .any(|n| n == "web:fetch" || n == "web:search");
     if needs_web_find {
         let find_allowed = gatekeeper
             .allowed_tool_names_with_prefix(state, "web:")
@@ -147,7 +149,7 @@ mod tests {
     use super::*;
     use crate::tools::traits::Tool;
     use async_trait::async_trait;
-    use schemars::{schema_for, JsonSchema};
+    use schemars::{JsonSchema, schema_for};
     use serde::Deserialize;
     use std::sync::Arc;
 
@@ -243,7 +245,10 @@ mod tests {
         let pre = vec!["vault:search".into(), "memory:query".into()];
         let out = apply_offer_overlays(&pre, 8, false, &gk, &AgentState::Chat);
 
-        let search_i = out.iter().position(|n| n == "vault:search").expect("search");
+        let search_i = out
+            .iter()
+            .position(|n| n == "vault:search")
+            .expect("search");
         let write_i = out.iter().position(|n| n == "vault:write").expect("write");
         let query_i = out.iter().position(|n| n == "memory:query").expect("query");
         assert!(

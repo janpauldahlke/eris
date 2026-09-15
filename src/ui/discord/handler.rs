@@ -267,8 +267,7 @@ impl EventHandler for DiscordHandler {
             return;
         }
 
-        let Some(ingress) =
-            build_discord_ingress(&self.workspace_root, &self.config, &msg).await
+        let Some(ingress) = build_discord_ingress(&self.workspace_root, &self.config, &msg).await
         else {
             return;
         };

@@ -16,9 +16,7 @@ async fn openrouter_key_probe(base_url: &str, api_key: &str) -> Result<()> {
         .bearer_auth(api_key.trim())
         .send()
         .await
-        .map_err(|e| {
-            FcpError::NetworkFault(format!("OpenRouter unreachable at {url}: {e}"))
-        })?;
+        .map_err(|e| FcpError::NetworkFault(format!("OpenRouter unreachable at {url}: {e}")))?;
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED {
         return Err(FcpError::Config(

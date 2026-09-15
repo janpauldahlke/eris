@@ -23,9 +23,7 @@ pub fn absolutize_outbound_links(
             let resolved = if Url::parse(&link.url).is_ok() {
                 link.url.clone()
             } else {
-                base.join(link.url.trim())
-                    .ok()
-                    .map(|u| u.to_string())?
+                base.join(link.url.trim()).ok().map(|u| u.to_string())?
             };
             if !resolved.starts_with("http://") && !resolved.starts_with("https://") {
                 return None;
@@ -37,10 +35,7 @@ pub fn absolutize_outbound_links(
 }
 
 /// Keep browser39 order; optionally prefer same-host links first (MVP host filter only).
-pub fn filter_same_host_links(
-    links: Vec<WebOutboundLink>,
-    page_url: &str,
-) -> Vec<WebOutboundLink> {
+pub fn filter_same_host_links(links: Vec<WebOutboundLink>, page_url: &str) -> Vec<WebOutboundLink> {
     let page_host = Url::parse(page_url)
         .ok()
         .and_then(|u| u.host_str().map(normalize_host));
@@ -209,7 +204,8 @@ fn is_low_value_headline_link(link: &WebOutboundLink, homepage: &Url) -> bool {
         let seg = segments[0].to_lowercase();
         if matches!(
             seg.as_str(),
-            "sport" | "business"
+            "sport"
+                | "business"
                 | "technology"
                 | "health"
                 | "culture"
@@ -251,7 +247,10 @@ fn is_low_value_headline_link(link: &WebOutboundLink, homepage: &Url) -> bool {
             return true;
         }
     }
-    if matches!(path, "/schlagzeilen/" | "/spiegel/" | "/fuermich/" | "/debatten/" | "/games/") {
+    if matches!(
+        path,
+        "/schlagzeilen/" | "/spiegel/" | "/fuermich/" | "/debatten/" | "/games/"
+    ) {
         return true;
     }
     false
@@ -376,9 +375,7 @@ mod tests {
             .map(|l| l.url)
             .collect();
         assert!(!filtered.contains(&"https://www.bbc.com/".to_string()));
-        assert!(filtered
-            .iter()
-            .any(|u| u.contains("/news/articles/")));
+        assert!(filtered.iter().any(|u| u.contains("/news/articles/")));
     }
 
     #[test]
@@ -410,7 +407,8 @@ mod tests {
             })
             .collect();
         assert_eq!(
-            rank_internal_links_with_cap(links, Some("news:today homepage"), HEADLINE_LINK_CAP).len(),
+            rank_internal_links_with_cap(links, Some("news:today homepage"), HEADLINE_LINK_CAP)
+                .len(),
             HEADLINE_LINK_CAP
         );
     }

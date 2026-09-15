@@ -1,9 +1,7 @@
 //! Stress-style scenarios (struct-based `Step` model).
 
-use crate::benchmark::suite::{
-    CleanupAction, CleanupStep, Scenario, Step, SuccessCriteria,
-};
 use crate::benchmark::IsolationMode;
+use crate::benchmark::suite::{CleanupAction, CleanupStep, Scenario, Step, SuccessCriteria};
 
 pub fn json_with_noise() -> Scenario {
     Scenario {
@@ -32,8 +30,9 @@ pub fn deeply_nested_json() -> Scenario {
         description: "Stage structured nested content".to_string(),
         steps: vec![Step {
             description: "Stage nested payload".to_string(),
-            user_prompt: "Stage this as memory content: {\"meta\":{\"v\":\"1\"},\"body\":\"benchmark\"}"
-                .to_string(),
+            user_prompt:
+                "Stage this as memory content: {\"meta\":{\"v\":\"1\"},\"body\":\"benchmark\"}"
+                    .to_string(),
             expected_tool_calls: vec!["memory:stage".to_string()],
             arg_validator: None,
             content_validator: None,

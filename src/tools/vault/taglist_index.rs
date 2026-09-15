@@ -233,10 +233,7 @@ fn build_blocking(synthesis_root: &Path) -> Result<TaglistSnapshot> {
         let rel = format!("{SYNTHESIS_DIR}/{node_id}/{file_name}");
 
         for tag in tags {
-            grouped
-                .entry(tag)
-                .or_default()
-                .push(rel.clone());
+            grouped.entry(tag).or_default().push(rel.clone());
         }
     }
 
@@ -264,7 +261,10 @@ fn highest_revision_in(node_dir: &Path) -> Option<PathBuf> {
     for entry in read_dir.flatten() {
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
-        let Some(stripped) = name_str.strip_prefix('r').and_then(|s| s.strip_suffix(".md")) else {
+        let Some(stripped) = name_str
+            .strip_prefix('r')
+            .and_then(|s| s.strip_suffix(".md"))
+        else {
             continue;
         };
         let n = match stripped.parse::<u32>() {
@@ -329,7 +329,9 @@ pub fn parse_frontmatter_tags(raw: &str) -> Vec<String> {
 }
 
 fn extract_frontmatter(raw: &str) -> Option<&str> {
-    let rest = raw.strip_prefix("---\n").or_else(|| raw.strip_prefix("---\r\n"))?;
+    let rest = raw
+        .strip_prefix("---\n")
+        .or_else(|| raw.strip_prefix("---\r\n"))?;
     let end = rest.find("\n---")?;
     Some(&rest[..end])
 }
@@ -399,9 +401,12 @@ pub async fn load_persisted(workspace_root: &Path) -> Result<Option<TaglistSnaps
 pub async fn persist(workspace_root: &Path, snapshot: &TaglistSnapshot) -> Result<()> {
     let path = crate::vault_layout::taglist_json(workspace_root);
     if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent).await.map_err(FcpError::Io)?;
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(FcpError::Io)?;
     }
-    let body = serde_json::to_string_pretty(snapshot).map_err(|e| FcpError::Config(e.to_string()))?;
+    let body =
+        serde_json::to_string_pretty(snapshot).map_err(|e| FcpError::Config(e.to_string()))?;
     tokio::fs::write(&path, body).await.map_err(FcpError::Io)?;
     Ok(())
 }
@@ -440,7 +445,10 @@ mod tests {
     #[test]
     fn parse_frontmatter_tags_bullet_style() {
         let raw = "---\ntitle: foo\ntags:\n  - Sandbox\n  - Agent\n---\nbody";
-        assert_eq!(parse_frontmatter_tags(raw), vec!["agent".to_string(), "sandbox".to_string()]);
+        assert_eq!(
+            parse_frontmatter_tags(raw),
+            vec!["agent".to_string(), "sandbox".to_string()]
+        );
     }
 
     #[test]
@@ -448,7 +456,14 @@ mod tests {
         let raw = "---\ntitle: foo\ntags: [Sandbox, \"agent loop\", topology]\n---\nbody";
         let mut got = parse_frontmatter_tags(raw);
         got.sort();
-        assert_eq!(got, vec!["agent loop".to_string(), "sandbox".to_string(), "topology".to_string()]);
+        assert_eq!(
+            got,
+            vec![
+                "agent loop".to_string(),
+                "sandbox".to_string(),
+                "topology".to_string()
+            ]
+        );
     }
 
     #[test]
@@ -505,17 +520,44 @@ mod tests {
 
         let agent = by_tag.get("agent").expect("agent tag");
         assert_eq!(agent.count, 2);
-        assert!(agent.paths.iter().any(|p| p == "30_Synthesis/node-a/r0002.md"));
-        assert!(agent.paths.iter().any(|p| p == "30_Synthesis/node-b/r0001.md"));
-        assert!(!agent.paths.iter().any(|p| p == "30_Synthesis/node-a/r0001.md"));
+        assert!(
+            agent
+                .paths
+                .iter()
+                .any(|p| p == "30_Synthesis/node-a/r0002.md")
+        );
+        assert!(
+            agent
+                .paths
+                .iter()
+                .any(|p| p == "30_Synthesis/node-b/r0001.md")
+        );
+        assert!(
+            !agent
+                .paths
+                .iter()
+                .any(|p| p == "30_Synthesis/node-a/r0001.md")
+        );
 
         let sandbox = by_tag.get("sandbox").expect("sandbox tag");
         assert_eq!(sandbox.count, 1);
-        assert_eq!(sandbox.paths, vec!["30_Synthesis/node-a/r0002.md".to_string()]);
+        assert_eq!(
+            sandbox.paths,
+            vec!["30_Synthesis/node-a/r0002.md".to_string()]
+        );
 
-        assert!(by_tag.get("obsolete").is_none(), "older revision must be ignored");
-        assert!(by_tag.get("shouldnotcount").is_none(), "dot dirs must be skipped");
-        assert!(by_tag.get("ignored").is_none(), "non-synthesis roots must be skipped");
+        assert!(
+            by_tag.get("obsolete").is_none(),
+            "older revision must be ignored"
+        );
+        assert!(
+            by_tag.get("shouldnotcount").is_none(),
+            "dot dirs must be skipped"
+        );
+        assert!(
+            by_tag.get("ignored").is_none(),
+            "non-synthesis roots must be skipped"
+        );
 
         assert!(snap.tags.windows(2).all(|w| w[0].count >= w[1].count));
     }
@@ -533,7 +575,10 @@ mod tests {
             }],
         };
         persist(dir.path(), &snap).await.expect("persist");
-        let back = load_persisted(dir.path()).await.expect("load").expect("some");
+        let back = load_persisted(dir.path())
+            .await
+            .expect("load")
+            .expect("some");
         assert_eq!(back.note_count, 1);
         assert_eq!(back.tags[0].tag, "x");
     }

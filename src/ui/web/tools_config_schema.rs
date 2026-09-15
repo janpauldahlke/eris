@@ -7,12 +7,12 @@ use serde::Serialize;
 use serde_json::Value as JsonValue;
 
 use crate::config::AppConfig;
+use crate::tools::ToolDescriptorRegistry;
 use crate::tools::registration::{
     google_credentials_complete, should_register_db_rest, should_register_google,
     should_register_moltbook, should_register_news_today, should_register_vision,
     should_register_weather, should_register_wiki,
 };
-use crate::tools::ToolDescriptorRegistry;
 
 use super::settings_merge::SettingsFieldSchema;
 
@@ -230,22 +230,14 @@ pub fn build_tools_schema(
         .iter()
         .map(|def| {
             let tool_names: Vec<String> = def.tool_names.iter().map(|s| (*s).to_string()).collect();
-            let (status, status_reason) = compute_status(
-                def,
-                config,
-                workspace_root,
-                &registered,
-                &tool_names,
-            );
-            let agent_hint = def
-                .tool_names
-                .first()
-                .and_then(|name| {
-                    descriptor_registry
-                        .as_ref()
-                        .and_then(|r| r.get(name))
-                        .map(|d| d.short_description.clone())
-                });
+            let (status, status_reason) =
+                compute_status(def, config, workspace_root, &registered, &tool_names);
+            let agent_hint = def.tool_names.first().and_then(|name| {
+                descriptor_registry
+                    .as_ref()
+                    .and_then(|r| r.get(name))
+                    .map(|d| d.short_description.clone())
+            });
             let fields = fields_for_family(def.id, config, workspace_root);
             ToolFamilyResponse {
                 id: def.id.to_string(),
@@ -305,10 +297,7 @@ fn compute_status(
         if !any_registered {
             return (
                 ToolFamilyStatus::Unavailable,
-                Some(
-                    "Moltbook enabled but API credentials missing (api_key_file or env)."
-                        .into(),
-                ),
+                Some("Moltbook enabled but API credentials missing (api_key_file or env).".into()),
             );
         }
     }
@@ -336,9 +325,7 @@ fn compute_status(
             }
             return (
                 ToolFamilyStatus::Unavailable,
-                Some(
-                    "discord.enabled but bot_token or channel target not configured.".into(),
-                ),
+                Some("discord.enabled but bot_token or channel target not configured.".into()),
             );
         }
         return (ToolFamilyStatus::Off, None);
@@ -612,11 +599,7 @@ fn fields_for_family(
                 ),
                 field_string(
                     "google.impersonate_user",
-                    config
-                        .google
-                        .impersonate_user
-                        .clone()
-                        .unwrap_or_default(),
+                    config.google.impersonate_user.clone().unwrap_or_default(),
                     "Impersonate user",
                     "Workspace user email for domain-wide delegation.",
                     "Must match a user authorized in Google Admin Console.",
@@ -721,7 +704,12 @@ fn fields_for_family(
             ),
             field_string_readonly(
                 "discord.bot_token",
-                if config.discord.bot_token.as_ref().is_some_and(|t| !t.is_empty()) {
+                if config
+                    .discord
+                    .bot_token
+                    .as_ref()
+                    .is_some_and(|t| !t.is_empty())
+                {
                     "(configured — edit in config.toml)".into()
                 } else {
                     "(not set)".into()
@@ -735,7 +723,14 @@ fn fields_for_family(
     }
 }
 
-fn field_bool(key: &str, value: bool, label: &str, description: &str, impact: &str, editable: bool) -> SettingsFieldSchema {
+fn field_bool(
+    key: &str,
+    value: bool,
+    label: &str,
+    description: &str,
+    impact: &str,
+    editable: bool,
+) -> SettingsFieldSchema {
     SettingsFieldSchema {
         key: key.to_string(),
         value: JsonValue::from(value),
@@ -749,7 +744,14 @@ fn field_bool(key: &str, value: bool, label: &str, description: &str, impact: &s
     }
 }
 
-fn field_u64(key: &str, value: u64, label: &str, description: &str, impact: &str, editable: bool) -> SettingsFieldSchema {
+fn field_u64(
+    key: &str,
+    value: u64,
+    label: &str,
+    description: &str,
+    impact: &str,
+    editable: bool,
+) -> SettingsFieldSchema {
     SettingsFieldSchema {
         key: key.to_string(),
         value: JsonValue::from(value),
@@ -763,7 +765,14 @@ fn field_u64(key: &str, value: u64, label: &str, description: &str, impact: &str
     }
 }
 
-fn field_u8(key: &str, value: u8, label: &str, description: &str, impact: &str, editable: bool) -> SettingsFieldSchema {
+fn field_u8(
+    key: &str,
+    value: u8,
+    label: &str,
+    description: &str,
+    impact: &str,
+    editable: bool,
+) -> SettingsFieldSchema {
     SettingsFieldSchema {
         key: key.to_string(),
         value: JsonValue::from(value),
@@ -800,7 +809,14 @@ fn field_usize(
     }
 }
 
-fn field_f64(key: &str, value: f64, label: &str, description: &str, impact: &str, editable: bool) -> SettingsFieldSchema {
+fn field_f64(
+    key: &str,
+    value: f64,
+    label: &str,
+    description: &str,
+    impact: &str,
+    editable: bool,
+) -> SettingsFieldSchema {
     SettingsFieldSchema {
         key: key.to_string(),
         value: serde_json::Number::from_f64(value)
@@ -816,7 +832,14 @@ fn field_f64(key: &str, value: f64, label: &str, description: &str, impact: &str
     }
 }
 
-fn field_string(key: &str, value: String, label: &str, description: &str, impact: &str, editable: bool) -> SettingsFieldSchema {
+fn field_string(
+    key: &str,
+    value: String,
+    label: &str,
+    description: &str,
+    impact: &str,
+    editable: bool,
+) -> SettingsFieldSchema {
     SettingsFieldSchema {
         key: key.to_string(),
         value: JsonValue::String(value),
@@ -884,7 +907,13 @@ fn field_string_opt_u64(
     )
 }
 
-fn field_string_readonly(key: &str, value: String, label: &str, description: &str, impact: &str) -> SettingsFieldSchema {
+fn field_string_readonly(
+    key: &str,
+    value: String,
+    label: &str,
+    description: &str,
+    impact: &str,
+) -> SettingsFieldSchema {
     SettingsFieldSchema {
         key: key.to_string(),
         value: JsonValue::String(value),

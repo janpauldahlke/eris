@@ -38,6 +38,16 @@ pub fn try_parse_tool_success_line(content: &str) -> Option<ToolSuccessLine<'_>>
     Some(ToolSuccessLine { tool_name, body })
 }
 
+/// True when this stack row is a tool success result: folded `system` line (local
+/// backends) or native OpenRouter `role:"tool"` frame with the same content shape.
+pub fn message_is_tool_success(m: &crate::engine::Message) -> Option<ToolSuccessLine<'_>> {
+    if m.role == "system" || m.role == "tool" {
+        try_parse_tool_success_line(&m.content)
+    } else {
+        None
+    }
+}
+
 /// Parse a system line into [`ParsedSystemLine`].
 pub fn parse_system_line(content: &str) -> ParsedSystemLine<'_> {
     match try_parse_tool_success_line(content) {
@@ -83,5 +93,21 @@ mod tests {
             ParsedSystemLine::Other => panic!("expected ToolSuccess"),
         }
         assert_eq!(parse_system_line("plain"), ParsedSystemLine::Other);
+    }
+
+    #[test]
+    fn message_is_tool_success_accepts_system_and_tool_roles() {
+        let line = format_tool_success_line("memory:query", "ok");
+        let sys = crate::engine::Message::system(line.clone());
+        let tool = crate::engine::Message::tool(line, "call_1");
+        assert_eq!(
+            message_is_tool_success(&sys).map(|t| t.tool_name),
+            Some("memory:query")
+        );
+        assert_eq!(
+            message_is_tool_success(&tool).map(|t| t.tool_name),
+            Some("memory:query")
+        );
+        assert!(message_is_tool_success(&crate::engine::Message::user("hi")).is_none());
     }
 }

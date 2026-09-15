@@ -72,19 +72,38 @@ impl ToolRouter {
     /// "show tasks", etc.  These must bypass the short-input guard.
     fn has_tool_intent_keyword(lower: &str) -> bool {
         const KEYWORDS: &[&str] = &[
-            "document", "documents", "doc ", "docs",
-            "email", "mail", "inbox",
-            "calendar", "schedule", "meeting",
-            "weather", "forecast",
-            "alarm", "timer", "remind",
-            "agenda", "task", "tasks", "todo",
-            "ingest", "upload",
-            "memory", "vault",
-            "health", "status",
-            "skill", "skills",
+            "document",
+            "documents",
+            "doc ",
+            "docs",
+            "email",
+            "mail",
+            "inbox",
+            "calendar",
+            "schedule",
+            "meeting",
+            "weather",
+            "forecast",
+            "alarm",
+            "timer",
+            "remind",
+            "agenda",
+            "task",
+            "tasks",
+            "todo",
+            "ingest",
+            "upload",
+            "memory",
+            "vault",
+            "health",
+            "status",
+            "skill",
+            "skills",
             "moltbook",
-            "wikipedia", "wiki",
-            "news", "headlines",
+            "wikipedia",
+            "wiki",
+            "news",
+            "headlines",
         ];
         KEYWORDS.iter().any(|kw| lower.contains(kw))
     }
@@ -293,8 +312,7 @@ impl ToolRouter {
             );
             hits.push(("web:search".to_string(), 1.0));
         }
-        if Self::has_news_lexical_intent(thought) && !hits.iter().any(|(t, _)| t == "news:today")
-        {
+        if Self::has_news_lexical_intent(thought) && !hits.iter().any(|(t, _)| t == "news:today") {
             tracing::info!(
                 event = "LEXICAL_TOOL_GUARD",
                 forced_tool = "news:today",
@@ -312,7 +330,9 @@ impl ToolRouter {
             );
             hits.push(("web:fetch".to_string(), 1.0));
         }
-        if hits.iter().any(|(t, _)| t == "web:fetch" || t == "web:search")
+        if hits
+            .iter()
+            .any(|(t, _)| t == "web:fetch" || t == "web:search")
             && !hits.iter().any(|(t, _)| t == "web:find")
         {
             hits.push(("web:find".to_string(), 0.99));
@@ -449,9 +469,7 @@ mod tests {
     #[test]
     fn test_moltbook_lexical_intent() {
         assert!(has_moltbook_lexical_intent("check Moltbook for replies"));
-        assert!(has_moltbook_lexical_intent(
-            "read the rust submolt feed"
-        ));
+        assert!(has_moltbook_lexical_intent("read the rust submolt feed"));
         assert!(!has_moltbook_lexical_intent(
             "what do you remember from last time"
         ));

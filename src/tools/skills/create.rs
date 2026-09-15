@@ -92,14 +92,17 @@ mod tests {
         let tool = SkillsCreateTool {
             workspace_root: dir.path().to_path_buf(),
         };
-        let out = tool.execute(json!({
-            "id": "sample-skill",
-            "title": "Sample",
-            "priority": "mandatory",
-            "triggers": ["skills:list"],
-            "body": "Use this.",
-            "overwrite": false
-        })).await.expect("create");
+        let out = tool
+            .execute(json!({
+                "id": "sample-skill",
+                "title": "Sample",
+                "priority": "mandatory",
+                "triggers": ["skills:list"],
+                "body": "Use this.",
+                "overwrite": false
+            }))
+            .await
+            .expect("create");
         assert!(out.contains("\"status\": \"ok\""));
         assert!(out.contains("sample-skill"));
     }

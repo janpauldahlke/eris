@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::engine::grammar::{
-    compile_fcp_envelope_grammar_dynamic, schema_to_gbnf_rule, ToolGrammarEntry,
+    ToolGrammarEntry, compile_fcp_envelope_grammar_dynamic, schema_to_gbnf_rule,
 };
 use crate::executive::error::{FcpError, Result};
 use crate::orchestrator::state::AgentState;
@@ -40,9 +40,10 @@ impl GbnfSubsetCache {
             sorted.join("\x1e")
         };
 
-        let mut guard = self.inner.lock().map_err(|_| {
-            FcpError::EngineFault("GBNF subset cache mutex poisoned".to_string())
-        })?;
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|_| FcpError::EngineFault("GBNF subset cache mutex poisoned".to_string()))?;
 
         if let Some(hit) = guard.get(&key) {
             return Ok(Arc::clone(hit));
@@ -96,7 +97,7 @@ mod tests {
     use super::*;
     use crate::tools::traits::Tool;
     use async_trait::async_trait;
-    use schemars::{schema_for, JsonSchema};
+    use schemars::{JsonSchema, schema_for};
     use serde::Deserialize;
 
     #[derive(JsonSchema, Deserialize)]
@@ -118,7 +119,10 @@ mod tests {
             schema_for!(EmptyArgs)
         }
 
-        async fn execute(&self, _args: serde_json::Value) -> crate::executive::error::Result<String> {
+        async fn execute(
+            &self,
+            _args: serde_json::Value,
+        ) -> crate::executive::error::Result<String> {
             Ok("{}".to_string())
         }
     }
@@ -139,7 +143,10 @@ mod tests {
             schema_for!(EmptyArgs)
         }
 
-        async fn execute(&self, _args: serde_json::Value) -> crate::executive::error::Result<String> {
+        async fn execute(
+            &self,
+            _args: serde_json::Value,
+        ) -> crate::executive::error::Result<String> {
             Ok("{}".to_string())
         }
     }
@@ -196,9 +203,9 @@ mod tests {
 
     #[test]
     fn slim_offered_pairs_web_find_with_fetch() {
-        use crate::tools::web::{WebFetchTool, WebFindTool, WebSearchTool};
-        use crate::tools::web::context::{WebFetcherKind, WebToolContext};
         use crate::tools::web::WebSessionLedger;
+        use crate::tools::web::context::{WebFetcherKind, WebToolContext};
+        use crate::tools::web::{WebFetchTool, WebFindTool, WebSearchTool};
         use std::sync::Arc;
         use tokio::sync::Mutex;
 

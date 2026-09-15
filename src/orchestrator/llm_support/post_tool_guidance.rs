@@ -155,9 +155,11 @@ mod tests {
             "Recover message must embed POST_TOOL_FAILURE_TRUST_GUIDANCE so Idle cannot regress to false success claims"
         );
         assert!(msg.contains("network timeout"));
-        assert!(msg.contains(
-            crate::orchestrator::context::resolved_tool_recovery::PROTOCOL_FAULT_PREFIX
-        ));
+        assert!(
+            msg.contains(
+                crate::orchestrator::context::resolved_tool_recovery::PROTOCOL_FAULT_PREFIX
+            )
+        );
     }
 
     #[test]
@@ -169,10 +171,7 @@ mod tests {
 
     #[test]
     fn vision_see_catalog_nudge_includes_path_and_description() {
-        let msg = vision_see_catalog_nudge(
-            "99_USER_UPLOADED/images/abc.jpg",
-            "A red truck.",
-        );
+        let msg = vision_see_catalog_nudge("99_USER_UPLOADED/images/abc.jpg", "A red truck.");
         assert!(msg.contains("media:catalog"));
         assert!(msg.contains("99_USER_UPLOADED/images/abc.jpg"));
         assert!(msg.contains("A red truck."));
@@ -205,9 +204,12 @@ mod tests {
     #[test]
     fn ensure_web_find_paired_when_fetch_targeted() {
         use std::collections::HashSet;
-        let allowed: HashSet<String> =
-            ["web:fetch", "web:find"].iter().map(|s| (*s).to_string()).collect();
-        let mut targeted: HashSet<String> = ["web:fetch"].iter().map(|s| (*s).to_string()).collect();
+        let allowed: HashSet<String> = ["web:fetch", "web:find"]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        let mut targeted: HashSet<String> =
+            ["web:fetch"].iter().map(|s| (*s).to_string()).collect();
         super::ensure_web_find_paired_with_fetch_tools(&mut targeted, &allowed);
         assert!(targeted.contains("web:find"));
     }

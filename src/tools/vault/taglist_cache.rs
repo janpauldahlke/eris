@@ -2,8 +2,8 @@
 //! `.fcp/tools/taglist.json` is the source of truth; this struct just signals "synthesis changed,
 //! rebuild on next read".
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Debug, Default)]
 pub struct TaglistCache {

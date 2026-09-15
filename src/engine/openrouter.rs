@@ -1406,6 +1406,58 @@ mod tests {
         assert_eq!(third["response_format"]["type"], "json_schema");
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn native_round_trip_stack_serializes_tool_frames() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(sse_body_ok()))
+            .mount(&mock_server)
+            .await;
+
+        let stack = vec![
+            Message::system("S"),
+            Message::user("u"),
+            Message::assistant_with_tool_calls(
+                "",
+                vec![EngineToolCall {
+                    id: Some("call_1".into()),
+                    name: "memory:query".into(),
+                    arguments: r#"{"query":"x"}"#.into(),
+                }],
+            ),
+            Message::tool("Tool 'memory:query' succeeded: {}", "call_1"),
+        ];
+        let client = make_client(&mock_server.uri(), test_or_config());
+        client
+            .generate(&stack, "", None, LlmGenerateOptions::default())
+            .await
+            .expect("generate");
+
+        let body = posted_body(&mock_server).await;
+        let messages = body["messages"].as_array().expect("messages");
+        let assistant = messages
+            .iter()
+            .find(|m| m["role"] == "assistant")
+            .expect("assistant");
+        assert_eq!(assistant["tool_calls"][0]["id"], "call_1");
+        assert_eq!(
+            assistant["tool_calls"][0]["function"]["name"],
+            "memory:query"
+        );
+        let tool = messages
+            .iter()
+            .find(|m| m["role"] == "tool")
+            .expect("tool frame");
+        assert_eq!(tool["tool_call_id"], "call_1");
+        assert!(
+            tool["content"]
+                .as_str()
+                .expect("content")
+                .contains("memory:query")
+        );
+    }
+
     #[test]
     fn constructor_enforces_consent_gate() {
         let mut config = AppConfig::default();

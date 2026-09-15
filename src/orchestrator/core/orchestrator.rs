@@ -15,8 +15,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::llama_gbnf_subset::GbnfSubsetCache;
-use super::openai_schema_subset::JsonSchemaSubsetCache;
 use super::moltbook_browse_ledger::MoltbookBrowseLedger;
+use super::openai_schema_subset::JsonSchemaSubsetCache;
 use crate::tools::web::WebSessionLedger;
 
 /// Marker string in `thought` / `message_to_user` when the last user line was empty (debuggable in logs and TUI).
@@ -104,7 +104,8 @@ pub struct Orchestrator<E: LlmEngine> {
     /// Shown in TUI Status while tools are pending; cleared when a final deck message is emitted or at `step` entry.
     pub activity_line: Option<String>,
     /// Latest engine token snapshot for web [`AgentStateUpdate`] (optional; TUI reads the same watch directly).
-    pub token_metrics_rx: Option<tokio::sync::watch::Receiver<crate::engine::token_metrics::LlmTokenSnapshot>>,
+    pub token_metrics_rx:
+        Option<tokio::sync::watch::Receiver<crate::engine::token_metrics::LlmTokenSnapshot>>,
     /// Last `message_to_user` body sent to the TUI deck this `step()`; avoids duplicate bubbles when Task → Reflect replays the same line.
     pub(crate) last_deck_message_body: Option<String>,
     /// After [`Self::max_tool_rounds`] successful tool runs in this `step()`, the next loop iteration runs one final conversational generation (no tools / no JIT), then idles.
@@ -195,7 +196,9 @@ impl<E: LlmEngine> Orchestrator<E> {
         config: Arc<AppConfig>,
         identity: tokio::sync::watch::Receiver<Arc<str>>,
         promotion_suppressed_during_step: Arc<AtomicBool>,
-        token_metrics_rx: Option<tokio::sync::watch::Receiver<crate::engine::token_metrics::LlmTokenSnapshot>>,
+        token_metrics_rx: Option<
+            tokio::sync::watch::Receiver<crate::engine::token_metrics::LlmTokenSnapshot>,
+        >,
         web_ledger: Option<Arc<tokio::sync::Mutex<WebSessionLedger>>>,
         semantic: Option<Arc<SemanticBrain>>,
         document_store: Option<Arc<crate::memory::document_store::DocumentStore>>,

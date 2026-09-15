@@ -128,7 +128,9 @@ impl DocumentIngestQueue {
                     }
                 }
 
-                if job.notify_on_complete && let Some(tx) = presentation_tx.as_ref() {
+                if job.notify_on_complete
+                    && let Some(tx) = presentation_tx.as_ref()
+                {
                     let msg = match &result {
                         Ok(receipt) if receipt.skipped_unchanged => format!(
                             "[doc] Unchanged — skipped re-ingest: {} (doc_id {}).",
@@ -138,10 +140,7 @@ impl DocumentIngestQueue {
                             "[doc] Ingested {} ({} chunks, doc_id {}). Use doc:query to search it.",
                             receipt.source_name, receipt.total_chunks, receipt.doc_id
                         ),
-                        Err(e) => format!(
-                            "[doc] Ingest failed for {}: {e}",
-                            job.relative_path
-                        ),
+                        Err(e) => format!("[doc] Ingest failed for {}: {e}", job.relative_path),
                     };
                     if tx.send(SessionEvent::UiNotice(msg)).await.is_err() {
                         tracing::debug!(

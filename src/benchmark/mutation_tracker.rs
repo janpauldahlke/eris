@@ -117,7 +117,7 @@ impl MutationTracker {
     /// Record a vault file write.
     pub fn record_vault_write(&mut self, path: PathBuf, original_content: Option<String>) {
         let had_original = original_content.is_some();
-        
+
         self.vault_writes.push(VaultWriteRecord {
             path: path.clone(),
             original_content,
@@ -228,7 +228,7 @@ impl MutationTracker {
     /// Delete a temporary file.
     async fn delete_temp_file(&self, path: &PathBuf) -> Result<()> {
         tracing::debug!(path = %path.display(), "Deleting temp file");
-        
+
         match tokio::fs::remove_file(path).await {
             Ok(_) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()), // Already deleted
@@ -280,7 +280,7 @@ impl MutationTracker {
         self.ephemeral_entries.clear();
         self.temp_files.clear();
         self.vault_writes.clear();
-        
+
         tracing::warn!("MutationTracker: all records cleared");
     }
 }
@@ -349,9 +349,9 @@ mod tests {
     #[test]
     fn tracker_records_staged_memory() {
         let mut tracker = MutationTracker::new();
-        
+
         tracker.record_staged_memory("test_key", "test content");
-        
+
         assert_eq!(tracker.staged_memories.len(), 1);
         assert_eq!(tracker.staged_memories[0].canonical_key, "test_key");
     }
@@ -360,9 +360,9 @@ mod tests {
     fn tracker_records_ephemeral_entry() {
         let mut tracker = MutationTracker::new();
         let id = uuid::Uuid::new_v4();
-        
+
         tracker.record_ephemeral_entry(id, "Session");
-        
+
         assert_eq!(tracker.ephemeral_entries.len(), 1);
         assert_eq!(tracker.ephemeral_entries[0].id, id);
     }
@@ -371,9 +371,9 @@ mod tests {
     fn tracker_records_temp_file() {
         let mut tracker = MutationTracker::new();
         let path = PathBuf::from("/tmp/test_file.txt");
-        
+
         tracker.record_temp_file(path.clone());
-        
+
         assert_eq!(tracker.temp_files.len(), 1);
         assert_eq!(tracker.temp_files[0], path);
     }
@@ -381,12 +381,12 @@ mod tests {
     #[test]
     fn tracker_generates_summary() {
         let mut tracker = MutationTracker::new();
-        
+
         tracker.record_staged_memory("key1", "content1");
         tracker.record_staged_memory("key2", "content2");
         tracker.record_ephemeral_entry(uuid::Uuid::new_v4(), "Session");
         tracker.record_temp_file(PathBuf::from("/tmp/test.txt"));
-        
+
         let summary = tracker.summary();
         assert_eq!(summary.staged_count, 2);
         assert_eq!(summary.ephemeral_count, 1);
@@ -397,19 +397,19 @@ mod tests {
     async fn cleanup_deletes_temp_file() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let file_path = temp_dir.path().join("test.txt");
-        
+
         // Create a temp file
         tokio::fs::write(&file_path, "test content")
             .await
             .expect("write");
-        
+
         assert!(file_path.exists());
-        
+
         let mut tracker = MutationTracker::new();
         tracker.record_temp_file(file_path.clone());
-        
+
         let report = tracker.cleanup_all().await.expect("cleanup");
-        
+
         assert_eq!(report.files_deleted, 1);
         assert!(!file_path.exists());
     }
@@ -418,28 +418,26 @@ mod tests {
     async fn cleanup_restores_vault_file() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let file_path = temp_dir.path().join("vault_file.md");
-        
+
         // Create original file
         let original_content = "original";
         tokio::fs::write(&file_path, original_content)
             .await
             .expect("write");
-        
+
         // Modify file
         tokio::fs::write(&file_path, "modified")
             .await
             .expect("write");
-        
+
         let mut tracker = MutationTracker::new();
         tracker.record_vault_write(file_path.clone(), Some(original_content.to_string()));
-        
+
         let report = tracker.cleanup_all().await.expect("cleanup");
-        
+
         assert_eq!(report.vault_files_restored, 1);
-        
-        let restored = tokio::fs::read_to_string(&file_path)
-            .await
-            .expect("read");
+
+        let restored = tokio::fs::read_to_string(&file_path).await.expect("read");
         assert_eq!(restored, original_content);
     }
 
@@ -447,19 +445,19 @@ mod tests {
     async fn cleanup_deletes_new_vault_file() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let file_path = temp_dir.path().join("new_file.md");
-        
+
         // Create file (didn't exist before)
         tokio::fs::write(&file_path, "content")
             .await
             .expect("write");
-        
+
         assert!(file_path.exists());
-        
+
         let mut tracker = MutationTracker::new();
         tracker.record_vault_write(file_path.clone(), None); // No original content
-        
+
         let report = tracker.cleanup_all().await.expect("cleanup");
-        
+
         assert_eq!(report.vault_files_restored, 1);
         assert!(!file_path.exists());
     }

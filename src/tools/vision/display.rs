@@ -48,25 +48,17 @@ impl Tool for VisionDisplayTool {
                 reason: "vision is disabled in config".into(),
             });
         }
-        let parsed: VisionDisplayArgs = serde_json::from_value(args).map_err(FcpError::ParseFault)?;
+        let parsed: VisionDisplayArgs =
+            serde_json::from_value(args).map_err(FcpError::ParseFault)?;
         let rel = parsed.relative_path.replace('\\', "/");
-        validate_vision_relative_path(
-            &self.workspace_root,
-            &self.config.vision.upload_dir,
-            &rel,
-        )?;
-        let filename = rel
-            .rsplit('/')
-            .next()
-            .ok_or_else(|| FcpError::ToolFault {
-                tool_name: self.name().into(),
-                reason: "invalid relative_path".into(),
-            })?;
-        let (width, height) = read_jpeg_dimensions(
-            self.workspace_root.join(&rel),
-        )
-        .await
-        .unwrap_or((0, 0));
+        validate_vision_relative_path(&self.workspace_root, &self.config.vision.upload_dir, &rel)?;
+        let filename = rel.rsplit('/').next().ok_or_else(|| FcpError::ToolFault {
+            tool_name: self.name().into(),
+            reason: "invalid relative_path".into(),
+        })?;
+        let (width, height) = read_jpeg_dimensions(self.workspace_root.join(&rel))
+            .await
+            .unwrap_or((0, 0));
 
         Ok(json!({
             "relative_path": rel,

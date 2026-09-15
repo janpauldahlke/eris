@@ -418,7 +418,11 @@ mod tests {
         metrics.record_recovery(true);
 
         let rate = metrics.recovery_success_rate();
-        assert!((rate - 66.66666666666667).abs() < 0.0001, "Expected ~66.67%, got {}", rate);
+        assert!(
+            (rate - 66.66666666666667).abs() < 0.0001,
+            "Expected ~66.67%, got {}",
+            rate
+        );
     }
 
     #[test]

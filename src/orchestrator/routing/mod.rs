@@ -18,10 +18,10 @@ pub use clusters::{
 pub use decision::{RoutingDecision, RoutingOffer, UnsureFallback};
 pub use overlays::apply_offer_overlays;
 pub use policy::{
-    apply_routing_policy, decide, should_soft_compel_web_fetch, user_text_has_url,
-    RoutingPolicyKnobs, URL_SOFT_COMPEL_HINT,
+    RoutingPolicyKnobs, URL_SOFT_COMPEL_HINT, apply_routing_policy, decide,
+    should_soft_compel_web_fetch, user_text_has_url,
 };
 pub use signals::{
-    has_agenda_continuation_intent, has_doc_delete_continuation, has_doc_ingest_cues,
-    RoutingSignals,
+    RoutingSignals, has_agenda_continuation_intent, has_doc_delete_continuation,
+    has_doc_ingest_cues,
 };

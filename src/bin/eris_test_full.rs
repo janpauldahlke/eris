@@ -94,7 +94,11 @@ fn log_path() -> PathBuf {
 }
 
 fn append_log(line: &str) {
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(log_path()) {
+    if let Ok(mut f) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path())
+    {
         let _ = writeln!(f, "{line}");
     }
 }
@@ -191,7 +195,12 @@ fn open_log_stdio() -> Result<Stdio, String> {
         .append(true)
         .open(log_path())
         .map(Stdio::from)
-        .map_err(|e| format!("failed to open {} for batch output: {e}", log_path().display()))
+        .map_err(|e| {
+            format!(
+                "failed to open {} for batch output: {e}",
+                log_path().display()
+            )
+        })
 }
 
 fn warm_test_binary(quiet: bool) -> Result<(), String> {
@@ -242,8 +251,8 @@ fn is_test_executable(path: &Path) -> bool {
 
 fn find_test_executable() -> Result<PathBuf, String> {
     let deps = PathBuf::from("target/debug/deps");
-    let entries = std::fs::read_dir(&deps)
-        .map_err(|e| format!("failed to read {}: {e}", deps.display()))?;
+    let entries =
+        std::fs::read_dir(&deps).map_err(|e| format!("failed to read {}: {e}", deps.display()))?;
 
     let mut newest: Option<(PathBuf, std::time::SystemTime)> = None;
     for entry in entries {
@@ -311,7 +320,9 @@ fn main() -> ExitCode {
         io::stderr(),
         "eris test-full ({mode}): {total} batches — log: {LOG_FILE} — progress: {PROGRESS_FILE}\n"
     );
-    append_log(&format!("=== eris test-full run ({total} batches, {mode}) ==="));
+    append_log(&format!(
+        "=== eris test-full run ({total} batches, {mode}) ==="
+    ));
     if start > 1 {
         let msg = format!("=== resuming from batch {start} ===");
         let _ = writeln!(io::stderr(), "{msg}");
@@ -372,7 +383,10 @@ fn main() -> ExitCode {
         let _ = writeln!(io::stderr(), "see tail -40 {LOG_FILE}");
         ExitCode::from(1)
     } else {
-        let _ = writeln!(io::stderr(), "=== eris test-full: all {total} batches passed ===");
+        let _ = writeln!(
+            io::stderr(),
+            "=== eris test-full: all {total} batches passed ==="
+        );
         append_log("=== all batches passed ===");
         ExitCode::SUCCESS
     }

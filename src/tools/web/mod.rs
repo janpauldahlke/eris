@@ -1,6 +1,6 @@
 pub mod allowlist;
-pub mod bootstrap;
 pub mod artifact;
+pub mod bootstrap;
 pub mod budget;
 pub mod cache;
 pub mod consent;
@@ -16,5 +16,5 @@ pub mod search;
 pub use context::{WebFetcherKind, WebToolContext};
 pub use fetch::WebFetchTool;
 pub use find::WebFindTool;
-pub use search::WebSearchTool;
 pub use ledger::WebSessionLedger;
+pub use search::WebSearchTool;

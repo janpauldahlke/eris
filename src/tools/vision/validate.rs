@@ -9,7 +9,10 @@ pub fn validate_vision_relative_path(
     relative_path: &str,
 ) -> Result<PathBuf> {
     let upload_norm = upload_dir.replace('\\', "/").trim_matches('/').to_string();
-    let rel_norm = relative_path.replace('\\', "/").trim_start_matches('/').to_string();
+    let rel_norm = relative_path
+        .replace('\\', "/")
+        .trim_start_matches('/')
+        .to_string();
     if rel_norm.contains("..") {
         return Err(FcpError::ToolFault {
             tool_name: "vision:see".into(),
@@ -28,12 +31,10 @@ pub fn validate_vision_relative_path(
     let canonical_root = workspace_root
         .canonicalize()
         .unwrap_or_else(|_| workspace_root.to_path_buf());
-    let canonical_target = target
-        .canonicalize()
-        .map_err(|e| FcpError::ToolFault {
-            tool_name: "vision:see".into(),
-            reason: format!("image not found: {e}"),
-        })?;
+    let canonical_target = target.canonicalize().map_err(|e| FcpError::ToolFault {
+        tool_name: "vision:see".into(),
+        reason: format!("image not found: {e}"),
+    })?;
     if !canonical_target.starts_with(&canonical_root) {
         return Err(FcpError::ToolFault {
             tool_name: "vision:see".into(),
@@ -58,7 +59,12 @@ pub fn validate_vision_relative_path(
 /// Filename allowlist for preview route (`{uuid}.jpg`).
 pub fn preview_filename_allowed(name: &str) -> bool {
     let path = Path::new(name);
-    if path.components().any(|c| matches!(c, Component::ParentDir | Component::RootDir | Component::Prefix(_))) {
+    if path.components().any(|c| {
+        matches!(
+            c,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
         return false;
     }
     let file_name = match path.file_name().and_then(|s| s.to_str()) {
@@ -70,11 +76,7 @@ pub fn preview_filename_allowed(name: &str) -> bool {
         return false;
     }
     let stem = &lower[..lower.len().saturating_sub(4)];
-    !stem.is_empty()
-        && stem
-            .chars()
-            .all(|c| c.is_ascii_hexdigit() || c == '-')
-        && stem.len() >= 32
+    !stem.is_empty() && stem.chars().all(|c| c.is_ascii_hexdigit() || c == '-') && stem.len() >= 32
 }
 
 #[cfg(test)]
@@ -102,12 +104,9 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let root = dir.path();
         std::fs::create_dir_all(root.join("99_USER_UPLOADED/images")).expect("mkdir");
-        let err = validate_vision_relative_path(
-            root,
-            "99_USER_UPLOADED/images",
-            "../../etc/passwd",
-        )
-        .unwrap_err();
+        let err =
+            validate_vision_relative_path(root, "99_USER_UPLOADED/images", "../../etc/passwd")
+                .unwrap_err();
         assert!(err.to_string().contains("traversal") || err.to_string().contains("upload"));
     }
 }

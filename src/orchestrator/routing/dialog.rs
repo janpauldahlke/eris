@@ -79,10 +79,7 @@ fn rule_mail(signals: &RoutingSignals, registered: &[String]) -> Option<RoutingD
     };
 
     let offered = prefer_front(
-        expand_names_to_domain_clusters(
-            preferred.iter().map(|s| (*s).to_string()),
-            registered,
-        ),
+        expand_names_to_domain_clusters(preferred.iter().map(|s| (*s).to_string()), registered),
         preferred,
         registered,
     );
@@ -116,10 +113,7 @@ fn rule_calendar(signals: &RoutingSignals, registered: &[String]) -> Option<Rout
     };
 
     let offered = prefer_front(
-        expand_names_to_domain_clusters(
-            preferred.iter().map(|s| (*s).to_string()),
-            registered,
-        ),
+        expand_names_to_domain_clusters(preferred.iter().map(|s| (*s).to_string()), registered),
         preferred,
         registered,
     );
@@ -149,10 +143,7 @@ fn rule_doc(signals: &RoutingSignals, registered: &[String]) -> Option<RoutingDe
 
     let preferred = ["doc:delete", "doc:list", "doc:query"];
     let offered = prefer_front(
-        expand_names_to_domain_clusters(
-            preferred.iter().map(|s| (*s).to_string()),
-            registered,
-        ),
+        expand_names_to_domain_clusters(preferred.iter().map(|s| (*s).to_string()), registered),
         &preferred,
         registered,
     );
@@ -218,11 +209,7 @@ mod tests {
         ]
     }
 
-    fn signals(
-        text: &str,
-        recent: &[&str],
-        hits: Vec<(String, f32)>,
-    ) -> RoutingSignals {
+    fn signals(text: &str, recent: &[&str], hits: Vec<(String, f32)>) -> RoutingSignals {
         RoutingSignals::from_turn(
             text,
             hits,
@@ -253,7 +240,9 @@ mod tests {
         assert_eq!(d.rule_id, "CALENDAR_DIALOG_PAIRING");
         assert_eq!(d.matched_tool_names()[0], "calendar:delete");
         match &d.offer {
-            RoutingOffer::DomainCluster { domains, .. } => assert_eq!(domains.as_slice(), ["calendar"]),
+            RoutingOffer::DomainCluster { domains, .. } => {
+                assert_eq!(domains.as_slice(), ["calendar"])
+            }
             other => panic!("{other:?}"),
         }
     }

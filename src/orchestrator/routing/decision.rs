@@ -143,8 +143,14 @@ mod tests {
 
     #[test]
     fn unsure_fallback_parse() {
-        assert_eq!(UnsureFallback::parse("domain_cluster"), UnsureFallback::DomainCluster);
-        assert_eq!(UnsureFallback::parse("full_roster"), UnsureFallback::FullRoster);
+        assert_eq!(
+            UnsureFallback::parse("domain_cluster"),
+            UnsureFallback::DomainCluster
+        );
+        assert_eq!(
+            UnsureFallback::parse("full_roster"),
+            UnsureFallback::FullRoster
+        );
         assert_eq!(UnsureFallback::parse("nope"), UnsureFallback::FullRoster);
     }
 }

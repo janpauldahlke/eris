@@ -386,12 +386,11 @@ pub fn infer_tools_from_user_message(user: &str) -> Vec<String> {
     out
 }
 
-/// Last successful tool from the chat stack (system tool-success lines).
+/// Last successful tool from the chat stack (system or native `role:"tool"` success lines).
 pub fn last_tool_name_from_chat_stack(stack: &[crate::engine::Message]) -> Option<String> {
-    use crate::orchestrator::context::try_parse_tool_success_line;
+    use crate::orchestrator::context::message_is_tool_success;
     for msg in stack.iter().rev() {
-        if msg.role == "system"
-            && let Some(ts) = try_parse_tool_success_line(&msg.content)
+        if let Some(ts) = message_is_tool_success(msg)
             && ts.tool_name.contains(':')
         {
             return Some(ts.tool_name.to_string());
@@ -445,15 +444,35 @@ pub fn llm_response_from_engine(
     }
 }
 
+/// Stable OpenAI `tool_call_id` for a native call. Empty/missing provider ids become `call_{index}`.
+pub fn native_tool_call_id(call: &crate::engine::EngineToolCall, index: usize) -> String {
+    call.id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("call_{index}"))
+}
+
+/// Fill empty `EngineToolCall.id` values so the assistant wire frame and `role:"tool"`
+/// results share the same ids. Idempotent when ids are already present.
+pub fn stabilize_engine_tool_call_ids(calls: &mut [crate::engine::EngineToolCall]) {
+    for (i, c) in calls.iter_mut().enumerate() {
+        c.id = Some(native_tool_call_id(c, i));
+    }
+}
+
 fn map_native_tool_calls(
     calls: &[crate::engine::EngineToolCall],
 ) -> Vec<crate::orchestrator::state::ToolCall> {
     calls
         .iter()
-        .map(|c| crate::orchestrator::state::ToolCall {
+        .enumerate()
+        .map(|(i, c)| crate::orchestrator::state::ToolCall {
             name: c.name.clone(),
             args: parse_native_arguments(&c.arguments),
-            id: c.id.clone(),
+            id: None,
+            provider_call_id: Some(native_tool_call_id(c, i)),
         })
         .collect()
 }
@@ -1065,6 +1084,11 @@ mod tests {
         assert_eq!(parsed.tool_calls.len(), 1);
         assert_eq!(parsed.tool_calls[0].name, "memory:query");
         assert_eq!(parsed.tool_calls[0].args["query"], "foo");
+        assert_eq!(parsed.tool_calls[0].id, None);
+        assert_eq!(
+            parsed.tool_calls[0].provider_call_id.as_deref(),
+            Some("call_1")
+        );
     }
 
     #[test]
@@ -1099,6 +1123,11 @@ mod tests {
         };
         let parsed = llm_response_from_engine(&ok).expect("project");
         assert_eq!(parsed.tool_calls[0].args["relative_path"], "x.md");
+        assert_eq!(
+            parsed.tool_calls[0].provider_call_id.as_deref(),
+            Some("call_0"),
+            "missing provider id is synthesized"
+        );
 
         let bad = EngineResponse {
             tool_calls: vec![EngineToolCall {
@@ -1128,5 +1157,49 @@ mod tests {
             !parsed.thought.contains("hi"),
             "reasoning must not be mixed with content"
         );
+    }
+
+    #[test]
+    fn last_tool_name_reads_native_tool_role() {
+        use crate::engine::Message;
+        let line = crate::orchestrator::context::format_tool_success_line("memory:query", "ok");
+        let stack = vec![
+            Message::system("prompt"),
+            Message::assistant_with_tool_calls("", vec![]),
+            Message::tool(line, "call_1"),
+        ];
+        assert_eq!(
+            last_tool_name_from_chat_stack(&stack).as_deref(),
+            Some("memory:query")
+        );
+    }
+
+    #[test]
+    fn stabilize_engine_tool_call_ids_fills_and_is_idempotent() {
+        use crate::engine::EngineToolCall;
+        let mut calls = vec![
+            EngineToolCall {
+                id: None,
+                name: "a".into(),
+                arguments: "{}".into(),
+            },
+            EngineToolCall {
+                id: Some("  ".into()),
+                name: "b".into(),
+                arguments: "{}".into(),
+            },
+            EngineToolCall {
+                id: Some("kept".into()),
+                name: "c".into(),
+                arguments: "{}".into(),
+            },
+        ];
+        stabilize_engine_tool_call_ids(&mut calls);
+        assert_eq!(calls[0].id.as_deref(), Some("call_0"));
+        assert_eq!(calls[1].id.as_deref(), Some("call_1"));
+        assert_eq!(calls[2].id.as_deref(), Some("kept"));
+        stabilize_engine_tool_call_ids(&mut calls);
+        assert_eq!(calls[0].id.as_deref(), Some("call_0"));
+        assert_eq!(calls[2].id.as_deref(), Some("kept"));
     }
 }

@@ -22,7 +22,9 @@ pub async fn list_vault_skills(workspace_root: &Path) -> Result<Vec<SkillDoc>> {
         if path.extension().and_then(|e| e.to_str()) != Some("md") {
             continue;
         }
-        let raw = tokio::fs::read_to_string(&path).await.map_err(FcpError::Io)?;
+        let raw = tokio::fs::read_to_string(&path)
+            .await
+            .map_err(FcpError::Io)?;
         let parsed = parse_skill_markdown(&raw)?;
         out.push(parsed);
     }
@@ -30,7 +32,10 @@ pub async fn list_vault_skills(workspace_root: &Path) -> Result<Vec<SkillDoc>> {
     Ok(out)
 }
 
-pub async fn load_vault_skill_by_id(workspace_root: &Path, skill_id: &str) -> Result<Option<SkillDoc>> {
+pub async fn load_vault_skill_by_id(
+    workspace_root: &Path,
+    skill_id: &str,
+) -> Result<Option<SkillDoc>> {
     let skills = list_vault_skills(workspace_root).await?;
     Ok(skills.into_iter().find(|s| s.id == skill_id))
 }
@@ -58,10 +63,14 @@ pub async fn create_or_update_vault_skill(
 ) -> Result<SkillWriteReceipt> {
     validate_skill_id(&input.id)?;
     if input.title.trim().is_empty() {
-        return Err(FcpError::SchemaViolation("title cannot be empty".to_string()));
+        return Err(FcpError::SchemaViolation(
+            "title cannot be empty".to_string(),
+        ));
     }
     if input.body.trim().is_empty() {
-        return Err(FcpError::SchemaViolation("body cannot be empty".to_string()));
+        return Err(FcpError::SchemaViolation(
+            "body cannot be empty".to_string(),
+        ));
     }
     if input.triggers.is_empty() {
         return Err(FcpError::SchemaViolation(
@@ -87,7 +96,10 @@ pub async fn create_or_update_vault_skill(
     if existed && !input.overwrite {
         return Err(FcpError::ToolFault {
             tool_name: "skills:create".to_string(),
-            reason: format!("Skill already exists: {} (set overwrite=true to replace)", input.id),
+            reason: format!(
+                "Skill already exists: {} (set overwrite=true to replace)",
+                input.id
+            ),
         });
     }
 
@@ -106,7 +118,9 @@ pub async fn create_or_update_vault_skill(
 
     tokio::fs::write(&target, raw).await.map_err(FcpError::Io)?;
     // Read+parse back for round-trip validation.
-    let read_back = tokio::fs::read_to_string(&target).await.map_err(FcpError::Io)?;
+    let read_back = tokio::fs::read_to_string(&target)
+        .await
+        .map_err(FcpError::Io)?;
     let parsed_back = parse_skill_markdown(&read_back)?;
     Ok(SkillWriteReceipt {
         relative_path,

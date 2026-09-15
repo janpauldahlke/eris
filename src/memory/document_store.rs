@@ -278,21 +278,15 @@ impl DocumentStore {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(str::to_string)
-            .or_else(|| {
-                abs.file_name()
-                    .and_then(|n| n.to_str())
-                    .map(str::to_string)
-            })
+            .or_else(|| abs.file_name().and_then(|n| n.to_str()).map(str::to_string))
             .unwrap_or_else(|| source_path.clone());
         let total_chunks = u32::try_from(chunks.len()).map_err(|_| FcpError::ToolFault {
             tool_name: "doc:ingest".into(),
             reason: "chunk count overflow".into(),
         })?;
         let ingested_at_ms = unix_ms_now();
-        let preview_head = truncate_char_boundary(
-            chunks.first().map(String::as_str).unwrap_or(""),
-            400,
-        );
+        let preview_head =
+            truncate_char_boundary(chunks.first().map(String::as_str).unwrap_or(""), 400);
 
         tracing::info!(
             event = "fcp.document_ingest.phase",
@@ -334,16 +328,10 @@ impl DocumentStore {
         let mut type_fields = BTreeMap::new();
         type_fields.insert("doc_id".into(), json!(doc_id));
         type_fields.insert("total_chunks".into(), json!(total_chunks));
-        let extension = abs
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or_default();
+        let extension = abs.extension().and_then(|e| e.to_str()).unwrap_or_default();
         type_fields.insert("format".into(), json!(extension));
         type_fields.insert("char_count".into(), json!(text.chars().count()));
-        type_fields.insert(
-            "ingested_at".into(),
-            json!(chrono::Utc::now().to_rfc3339()),
-        );
+        type_fields.insert("ingested_at".into(), json!(chrono::Utc::now().to_rfc3339()));
 
         upsert_catalog(
             vault_root,
@@ -421,12 +409,9 @@ impl DocumentStore {
         let embedding = self.embed.embed(text).await?;
         let limit = u64::from(top_k.max(1));
 
-        let mut builder = SearchPointsBuilder::new(
-            &self.config.qdrant_docs_collection,
-            embedding,
-            limit,
-        )
-        .with_payload(true);
+        let mut builder =
+            SearchPointsBuilder::new(&self.config.qdrant_docs_collection, embedding, limit)
+                .with_payload(true);
 
         if let Some(doc_id) = doc_id_filter.map(str::trim).filter(|s| !s.is_empty()) {
             builder = builder.filter(Filter::must([Condition::matches(
@@ -546,8 +531,8 @@ impl DocumentStore {
                 fs::remove_file(&catalog_path).await.map_err(FcpError::Io)?;
             }
             let vault_key = catalog_relative_path(&content_hash);
-            let point_id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, vault_key.as_bytes())
-                .to_string();
+            let point_id =
+                uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, vault_key.as_bytes()).to_string();
             if !self.config.qdrant_collection_v2.is_empty() {
                 let _ = self
                     .client
@@ -597,10 +582,7 @@ impl DocumentStore {
             .collect())
     }
 
-    async fn existing_ingest_for_path(
-        &self,
-        source_path: &str,
-    ) -> Result<Option<ExistingIngest>> {
+    async fn existing_ingest_for_path(&self, source_path: &str) -> Result<Option<ExistingIngest>> {
         let filter = Filter::must([Condition::matches(
             SOURCE_PATH_PAYLOAD,
             source_path.to_string(),
@@ -648,10 +630,7 @@ impl DocumentStore {
     }
 
     async fn chunks_for_doc_id(&self, doc_id: &str) -> Result<Vec<DocumentChunk>> {
-        let filter = Filter::must([Condition::matches(
-            DOC_ID_PAYLOAD,
-            doc_id.to_string(),
-        )]);
+        let filter = Filter::must([Condition::matches(DOC_ID_PAYLOAD, doc_id.to_string())]);
         let response = self
             .client
             .scroll(
@@ -673,10 +652,7 @@ impl DocumentStore {
     /// Boot-time reconciliation: scan `40_MEDIA` for document cards whose `doc_id`
     /// no longer maps to any chunks in Qdrant.  Returns the file_paths that need
     /// re-ingest so the caller can queue them.
-    pub async fn reconcile_stale_doc_ids(
-        &self,
-        vault_root: &Path,
-    ) -> Vec<String> {
+    pub async fn reconcile_stale_doc_ids(&self, vault_root: &Path) -> Vec<String> {
         let media_dir = vault_root.join("40_MEDIA");
         let mut stale_paths: Vec<String> = Vec::new();
 
@@ -699,7 +675,10 @@ impl DocumentStore {
                 Err(_) => continue,
             };
 
-            let media_type = card.get("media_type").and_then(|v| v.as_str()).unwrap_or("");
+            let media_type = card
+                .get("media_type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             if media_type != "document" {
                 continue;
             }
@@ -796,9 +775,7 @@ fn qdrant_payload_u32(
     let val = payload.get(key)?;
     match &val.kind {
         Some(qdrant_client::qdrant::value::Kind::IntegerValue(n)) => u32::try_from(*n).ok(),
-        Some(qdrant_client::qdrant::value::Kind::DoubleValue(n)) => {
-            u32::try_from(*n as i64).ok()
-        }
+        Some(qdrant_client::qdrant::value::Kind::DoubleValue(n)) => u32::try_from(*n as i64).ok(),
         _ => None,
     }
 }
@@ -810,9 +787,7 @@ fn qdrant_payload_u64(
     let val = payload.get(key)?;
     match &val.kind {
         Some(qdrant_client::qdrant::value::Kind::IntegerValue(n)) => u64::try_from(*n).ok(),
-        Some(qdrant_client::qdrant::value::Kind::DoubleValue(n)) => {
-            u64::try_from(*n as i64).ok()
-        }
+        Some(qdrant_client::qdrant::value::Kind::DoubleValue(n)) => u64::try_from(*n as i64).ok(),
         _ => None,
     }
 }
@@ -864,9 +839,7 @@ async fn embed_with_bisect_retry(
     let right = &text[split_at..];
 
     let left_vec = embed.embed(left).await.map_err(|e| {
-        FcpError::EmbeddingFault(format!(
-            "chunk {chunk_index} bisect-left embed failed: {e}"
-        ))
+        FcpError::EmbeddingFault(format!("chunk {chunk_index} bisect-left embed failed: {e}"))
     })?;
     let right_vec = embed.embed(right).await.map_err(|e| {
         FcpError::EmbeddingFault(format!(
@@ -889,11 +862,7 @@ fn find_char_boundary_near(text: &str, target: usize) -> usize {
 }
 
 fn mean_normalize(a: &[f32], b: &[f32]) -> Vec<f32> {
-    let mut out: Vec<f32> = a
-        .iter()
-        .zip(b.iter())
-        .map(|(x, y)| (x + y) * 0.5)
-        .collect();
+    let mut out: Vec<f32> = a.iter().zip(b.iter()).map(|(x, y)| (x + y) * 0.5).collect();
     let norm: f32 = out.iter().map(|x| x * x).sum::<f32>().sqrt();
     if norm > 0.0 {
         for x in &mut out {
@@ -944,9 +913,9 @@ pub fn format_list_documents_markdown(summaries: &[DocumentSummary]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
     use crate::config::{AppConfig, DocumentRagConfig};
     use crate::engine::EmbeddingProvider;
+    use async_trait::async_trait;
 
     struct DeterministicEmbed {
         dims: usize,
@@ -1039,7 +1008,8 @@ mod tests {
         tokio::fs::create_dir_all(abs.parent().expect("parent"))
             .await
             .expect("mkdir");
-        let body = "# Report\n\nThe quarterly revenue grew by twelve percent.\n\nCosts remained flat.";
+        let body =
+            "# Report\n\nThe quarterly revenue grew by twelve percent.\n\nCosts remained flat.";
         tokio::fs::write(&abs, body).await.expect("write");
 
         let receipt = store

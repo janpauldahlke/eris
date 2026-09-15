@@ -1,5 +1,5 @@
-use crate::benchmark::suite::{CleanupAction, CleanupStep, Scenario, Step, SuccessCriteria};
 use crate::benchmark::IsolationMode;
+use crate::benchmark::suite::{CleanupAction, CleanupStep, Scenario, Step, SuccessCriteria};
 
 pub fn json_protocol_compliance() -> Scenario {
     Scenario {
@@ -7,12 +7,18 @@ pub fn json_protocol_compliance() -> Scenario {
         description: "Verify the model can produce valid JSON tool calls".to_string(),
         steps: vec![Step {
             description: "Request system health check in JSON".to_string(),
-            user_prompt: "Check the system health and report the status. Use the system:health tool.".to_string(),
+            user_prompt:
+                "Check the system health and report the status. Use the system:health tool."
+                    .to_string(),
             expected_tool_calls: vec!["system:health".to_string()],
-            arg_validator: None, content_validator: None, max_rounds: 3,
+            arg_validator: None,
+            content_validator: None,
+            max_rounds: 3,
         }],
         success_criteria: SuccessCriteria::AllToolsCalled,
-        cleanup: vec![], timeout_seconds: 30, isolation_mode: IsolationMode::Strict,
+        cleanup: vec![],
+        timeout_seconds: 30,
+        isolation_mode: IsolationMode::Strict,
     }
 }
 
@@ -54,9 +60,14 @@ pub fn system_health_check() -> Scenario {
             description: "Check system status".to_string(),
             user_prompt: "Check the system status using the system health tool.".to_string(),
             expected_tool_calls: vec!["system:health".to_string()],
-            arg_validator: None, content_validator: None, max_rounds: 3,
+            arg_validator: None,
+            content_validator: None,
+            max_rounds: 3,
         }],
-        success_criteria: SuccessCriteria::AllToolsCalled, cleanup: vec![], timeout_seconds: 30, isolation_mode: IsolationMode::Strict,
+        success_criteria: SuccessCriteria::AllToolsCalled,
+        cleanup: vec![],
+        timeout_seconds: 30,
+        isolation_mode: IsolationMode::Strict,
     }
 }
 
@@ -68,8 +79,13 @@ pub fn clock_query() -> Scenario {
             description: "Get current time".to_string(),
             user_prompt: "What is the current time? Use the clock tool.".to_string(),
             expected_tool_calls: vec!["clock:now".to_string()],
-            arg_validator: None, content_validator: None, max_rounds: 3,
+            arg_validator: None,
+            content_validator: None,
+            max_rounds: 3,
         }],
-        success_criteria: SuccessCriteria::AllToolsCalled, cleanup: vec![], timeout_seconds: 30, isolation_mode: IsolationMode::Strict,
+        success_criteria: SuccessCriteria::AllToolsCalled,
+        cleanup: vec![],
+        timeout_seconds: 30,
+        isolation_mode: IsolationMode::Strict,
     }
 }

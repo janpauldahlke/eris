@@ -176,7 +176,11 @@ impl ContextAssembler {
             out.push_str("\n\n");
             out.push_str(prefetch);
         }
-        if let Some(doc_block) = self.turn_document_prefetch_block.as_ref().filter(|b| !b.is_empty()) {
+        if let Some(doc_block) = self
+            .turn_document_prefetch_block
+            .as_ref()
+            .filter(|b| !b.is_empty())
+        {
             out.push_str("\n\n");
             out.push_str(doc_block);
         }
@@ -437,15 +441,12 @@ impl ContextAssembler {
 }
 
 fn tools_need_session_reference_time(tools: &[serde_json::Value]) -> bool {
-    tools
-        .iter()
-        .filter_map(tool_name_from_entry)
-        .any(|n| {
-            n == "db:find_connections"
-                || n == "weather:current"
-                || n == "weather:forecast"
-                || n.starts_with("calendar:")
-        })
+    tools.iter().filter_map(tool_name_from_entry).any(|n| {
+        n == "db:find_connections"
+            || n == "weather:current"
+            || n == "weather:forecast"
+            || n.starts_with("calendar:")
+    })
 }
 
 fn append_session_reference_time_if_needed(

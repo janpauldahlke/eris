@@ -2,7 +2,8 @@ use crate::engine::{LlmEngine, LlmGenerateOptions, ToolChoice};
 use crate::executive::error::{FcpError, Result};
 use crate::orchestrator::context::{build_llm_view, estimate_stack_tokens};
 use crate::orchestrator::llm_support::json_envelope::{
-    llm_response_from_engine, split_leading_json_object, trailing_content_after_valid_llm_json,
+    llm_response_from_engine, split_leading_json_object, stabilize_engine_tool_call_ids,
+    trailing_content_after_valid_llm_json,
 };
 use crate::orchestrator::r#loop::directive_policy::decide_transition_from_directive;
 use crate::orchestrator::r#loop::tool_batch::ToolBatchDecision;
@@ -561,12 +562,13 @@ impl<E: LlmEngine> Orchestrator<E> {
                 }
             };
 
-            let response = match response_result {
+            let mut response = match response_result {
                 Ok(res) => {
                     tracing::info!(
                         prompt_tokens = res.prompt_tokens,
                         generated_tokens = res.generated_tokens,
                         content_len = res.content.len(),
+                        native_tool_calls = res.tool_calls.len(),
                         "LLM response received"
                     );
                     tracing::debug!(raw_content = %res.content, "LLM raw output");
@@ -579,6 +581,8 @@ impl<E: LlmEngine> Orchestrator<E> {
                     return Err(e);
                 }
             };
+
+            stabilize_engine_tool_call_ids(&mut response.tool_calls);
 
             if response.tool_calls.is_empty()
                 && trailing_json_recovery_triggered(&self.config, &response.content)
@@ -648,8 +652,16 @@ impl<E: LlmEngine> Orchestrator<E> {
             let deck_content = self.stitch_pending_weather_report_into_content(&response.content);
             self.emit_optional_user_message(&deck_content).await;
 
-            self.chat_stack
-                .push(crate::engine::Message::assistant(deck_content));
+            if response.tool_calls.is_empty() {
+                self.chat_stack
+                    .push(crate::engine::Message::assistant(deck_content));
+            } else {
+                self.chat_stack
+                    .push(crate::engine::Message::assistant_with_tool_calls(
+                        deck_content,
+                        response.tool_calls.clone(),
+                    ));
+            }
 
             let total_tokens = response.generated_tokens + response.prompt_tokens;
             let active_threshold_ratio = if web_tool_activity {

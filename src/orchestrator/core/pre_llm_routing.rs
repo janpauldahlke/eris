@@ -1,6 +1,6 @@
 use crate::engine::LlmEngine;
 use crate::orchestrator::routing::{
-    apply_routing_policy, RoutingDecision, RoutingPolicyKnobs, UnsureFallback,
+    RoutingDecision, RoutingPolicyKnobs, UnsureFallback, apply_routing_policy,
 };
 use crate::orchestrator::tool_router::ToolRouter;
 use crate::presentation::SYSTEM_ALARM_PREFIX;
@@ -127,7 +127,9 @@ impl<E: LlmEngine> Orchestrator<E> {
                     .or_else(|| matches.first().map(|(n, s)| format!("{n}({s:.3})")));
                 let router_match_count = names.len();
                 let issue = match decision.rule_id {
-                    "SINGLE_STRONG_HIT" | "RANKED_SUBSET" | "LEXICAL_FORCED_ONLY"
+                    "SINGLE_STRONG_HIT"
+                    | "RANKED_SUBSET"
+                    | "LEXICAL_FORCED_ONLY"
                     | "MIXED_EMBED_AND_LEXICAL" => routing_codes::ISSUE_PRELLM_SEMANTIC_HIT,
                     _ => routing_codes::ISSUE_PRELLM_POLICY_REWRITE,
                 };

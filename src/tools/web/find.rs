@@ -76,7 +76,10 @@ fn tokenize(query: &str) -> Vec<String> {
 
 fn score_chunk(chunk: &str, tokens: &[String]) -> f32 {
     let c = chunk.to_lowercase();
-    tokens.iter().map(|t| usize::from(c.contains(t))).sum::<usize>() as f32
+    tokens
+        .iter()
+        .map(|t| usize::from(c.contains(t)))
+        .sum::<usize>() as f32
 }
 
 fn score_link(link: &WebOutboundLink, tokens: &[String]) -> f32 {
@@ -152,10 +155,7 @@ fn suggest_stop_heuristic(
 ) -> (bool, Option<String>) {
     let Some(note) = mission_note.filter(|n| !n.trim().is_empty()) else {
         if matches.first().is_some_and(|m| m.score >= 2.0) {
-            return (
-                true,
-                Some("Strong lexical match in fetched page.".into()),
-            );
+            return (true, Some("Strong lexical match in fetched page.".into()));
         }
         return (false, None);
     };
@@ -228,11 +228,7 @@ impl Tool for WebFindTool {
             let chunk = store.read_chunk(&mission_id, &args.artifact_id, idx)?;
             let score = score_chunk(&chunk, &tokens) * chunk_heading_weight(&chunk);
             if score > 0.0 {
-                scored.push((
-                    idx,
-                    score,
-                    trim_chars(&chunk, self.max_snippet_chars),
-                ));
+                scored.push((idx, score, trim_chars(&chunk, self.max_snippet_chars)));
             }
         }
         scored.sort_by(|a, b| {
@@ -249,10 +245,7 @@ impl Tool for WebFindTool {
                     link_scored.push((score, link));
                 }
             }
-            link_scored.sort_by(|a, b| {
-                b.0.partial_cmp(&a.0)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
+            link_scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
         }
 
         let mut matches: Vec<FindMatch> = scored
@@ -343,11 +336,11 @@ impl Tool for WebFindTool {
 mod tests {
     use super::*;
     use crate::config::WebConfig;
-    use crate::tools::web::context::WebFetcherKind;
-    use crate::tools::web::fetcher::MockWebFetcher;
-    use crate::tools::web::fetch_inner::run_vault_web_fetch;
-    use crate::tools::web::fetch_inner::WebFetchArgs;
     use crate::tools::web::WebSessionLedger;
+    use crate::tools::web::context::WebFetcherKind;
+    use crate::tools::web::fetch_inner::WebFetchArgs;
+    use crate::tools::web::fetch_inner::run_vault_web_fetch;
+    use crate::tools::web::fetcher::MockWebFetcher;
     use std::sync::Arc;
     use tokio::sync::Mutex;
 

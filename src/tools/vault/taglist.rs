@@ -89,7 +89,12 @@ fn render_output(snapshot: &TaglistSnapshot, args: &VaultTaglistArgs) -> String 
         snapshot.tags.len()
     );
 
-    if let Some(target) = args.tag.as_ref().map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()) {
+    if let Some(target) = args
+        .tag
+        .as_ref()
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+    {
         return match snapshot.tags.iter().find(|e| e.tag == target) {
             Some(entry) => format!(
                 "{header}\nTag: {} (count={})\nPaths:\n{}",
@@ -102,9 +107,7 @@ fn render_output(snapshot: &TaglistSnapshot, args: &VaultTaglistArgs) -> String 
                     .collect::<Vec<_>>()
                     .join("\n")
             ),
-            None => format!(
-                "{header}\nTag: {target} not found in 30_Synthesis frontmatter."
-            ),
+            None => format!("{header}\nTag: {target} not found in 30_Synthesis frontmatter."),
         };
     }
 
@@ -198,7 +201,10 @@ mod tests {
         std::fs::remove_dir_all(dir.path().join("30_Synthesis")).expect("rm");
 
         let out = tool.execute(serde_json::json!({})).await?;
-        assert!(out.contains("sandbox (1)"), "expected stale cached entry, got: {out}");
+        assert!(
+            out.contains("sandbox (1)"),
+            "expected stale cached entry, got: {out}"
+        );
         Ok(())
     }
 
@@ -226,9 +232,7 @@ mod tests {
         let _ = tool.execute(serde_json::json!({})).await?;
         write_synth(dir.path(), "node-c", 1, "tags:\n  - newer");
 
-        let out = tool
-            .execute(serde_json::json!({ "refresh": true }))
-            .await?;
+        let out = tool.execute(serde_json::json!({ "refresh": true })).await?;
         assert!(out.contains("newer (1)"));
         Ok(())
     }
@@ -264,13 +268,8 @@ mod tests {
         assert!(out.contains("agent-self"));
         assert!(!out.contains("sandbox"));
 
-        let capped = tool
-            .execute(serde_json::json!({ "top_k": 1 }))
-            .await?;
-        let body = capped
-            .lines()
-            .filter(|l| l.starts_with("- "))
-            .count();
+        let capped = tool.execute(serde_json::json!({ "top_k": 1 })).await?;
+        let body = capped.lines().filter(|l| l.starts_with("- ")).count();
         assert_eq!(body, 1);
         Ok(())
     }

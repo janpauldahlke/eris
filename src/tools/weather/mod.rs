@@ -139,8 +139,15 @@ mod integration_tests {
                     ("latitude".into(), "{lat}".into()),
                     ("longitude".into(), "{lon}".into()),
                     ("current".into(), "temperature_2m,weather_code".into()),
-                    ("hourly".into(), "temperature_2m,precipitation,weather_code,is_day".into()),
-                    ("daily".into(), "temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code".into()),
+                    (
+                        "hourly".into(),
+                        "temperature_2m,precipitation,weather_code,is_day".into(),
+                    ),
+                    (
+                        "daily".into(),
+                        "temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code"
+                            .into(),
+                    ),
                     ("forecast_days".into(), "1".into()),
                     ("timezone".into(), "auto".into()),
                 ]

@@ -8,7 +8,9 @@ use serde_json::Value;
 
 use crate::config::AppConfig;
 use crate::executive::error::{FcpError, Result};
-use crate::media::{MediaMetaPatch, TagsPatch, UserNotesPatch, apply_meta_patch, card_to_tool_json};
+use crate::media::{
+    MediaMetaPatch, TagsPatch, UserNotesPatch, apply_meta_patch, card_to_tool_json,
+};
 use crate::tools::context_view_hint::ToolContextViewHint;
 use crate::tools::traits::Tool;
 
@@ -157,10 +159,7 @@ mod tests {
 
         let v: serde_json::Value = serde_json::from_str(&out).expect("json");
         assert_eq!(v.get("title").and_then(|x| x.as_str()), Some("After"));
-        let card_path = root
-            .join("40_MEDIA")
-            .join(&hash)
-            .join("media.json");
+        let card_path = root.join("40_MEDIA").join(&hash).join("media.json");
         let on_disk: crate::media::MediaCard =
             serde_json::from_str(&tokio::fs::read_to_string(&card_path).await.expect("read"))
                 .expect("card");

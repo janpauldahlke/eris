@@ -35,12 +35,12 @@ async fn probe_llama_health(base_url: String) -> String {
         Err(e) => return format!("unreachable: {e}"),
     };
     let health_url = format!("{}/health", base_url.trim_end_matches('/'));
-    let resp = match tokio::time::timeout(Duration::from_secs(4), client.get(health_url).send()).await
-    {
-        Ok(Ok(r)) => r,
-        Ok(Err(e)) => return format!("unreachable: {e}"),
-        Err(_) => return "unreachable: timeout".to_string(),
-    };
+    let resp =
+        match tokio::time::timeout(Duration::from_secs(4), client.get(health_url).send()).await {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => return format!("unreachable: {e}"),
+            Err(_) => return "unreachable: timeout".to_string(),
+        };
     if !resp.status().is_success() {
         return format!("unreachable: HTTP {}", resp.status());
     }
@@ -354,14 +354,21 @@ mod tests {
         let parsed: serde_json::Value =
             serde_json::from_str(&tool.execute(json!({})).await.expect("health")).expect("json");
         assert_eq!(parsed.get("llm_backend"), Some(&json!("Ollama")));
-        assert!(parsed.get("fcp").and_then(|f| f.get("ollama_host")).is_some());
+        assert!(
+            parsed
+                .get("fcp")
+                .and_then(|f| f.get("ollama_host"))
+                .is_some()
+        );
         assert!(parsed.get("llama_cpp_health").is_none());
         let ollama = parsed.get("ollama").expect("ollama");
-        assert!(!ollama
-            .get("cli_ps")
-            .and_then(|c| c.get("skipped"))
-            .and_then(|s| s.as_str())
-            .is_some_and(|t| t.contains("llama.cpp")));
+        assert!(
+            !ollama
+                .get("cli_ps")
+                .and_then(|c| c.get("skipped"))
+                .and_then(|s| s.as_str())
+                .is_some_and(|t| t.contains("llama.cpp"))
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -420,20 +427,35 @@ mod tests {
 
         assert_eq!(parsed.get("llm_backend"), Some(&json!("OpenRouter")));
         let fcp = parsed.get("fcp").expect("fcp");
-        assert_eq!(fcp.get("chat_model"), Some(&json!("google/gemini-2.5-flash")));
+        assert_eq!(
+            fcp.get("chat_model"),
+            Some(&json!("google/gemini-2.5-flash"))
+        );
         assert!(fcp.get("base_url").is_some());
         assert_eq!(fcp.get("embed_backend"), Some(&json!("Ollama")));
         assert_eq!(fcp.get("consent_acknowledged"), Some(&json!(true)));
 
         // No key material, header names, or key-shaped strings anywhere in the report.
         let lower = raw.to_lowercase();
-        assert!(!lower.contains("api_key"), "report must not mention key fields");
-        assert!(!lower.contains("authorization"), "report must not mention auth headers");
-        assert!(!lower.contains("sk-or-"), "report must not contain key-shaped strings");
+        assert!(
+            !lower.contains("api_key"),
+            "report must not mention key fields"
+        );
+        assert!(
+            !lower.contains("authorization"),
+            "report must not mention auth headers"
+        );
+        assert!(
+            !lower.contains("sk-or-"),
+            "report must not contain key-shaped strings"
+        );
         if let Ok(live_key) = std::env::var("OPENROUTER_API_KEY") {
             let live_key = live_key.trim();
             if !live_key.is_empty() {
-                assert!(!raw.contains(live_key), "report must not contain the live key");
+                assert!(
+                    !raw.contains(live_key),
+                    "report must not contain the live key"
+                );
             }
         }
     }

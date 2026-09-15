@@ -19,7 +19,9 @@ use crate::tools::vault::taglist_index::{
 };
 
 use super::WebAppState;
-use super::settings_merge::{SettingsUpdatePayload, build_settings_schema, merge_settings_into_toml};
+use super::settings_merge::{
+    SettingsUpdatePayload, build_settings_schema, merge_settings_into_toml,
+};
 use super::tools_config_merge::{ToolsUpdatePayload, merge_tools_into_toml};
 use super::tools_config_schema::build_tools_schema;
 
@@ -205,7 +207,9 @@ pub async fn put_identity(
     Json(body): Json<IdentityUpdateBody>,
 ) -> impl IntoResponse {
     if body.content.trim().is_empty() {
-        return api_error_response(FcpError::Config("identity content must not be empty".into()));
+        return api_error_response(FcpError::Config(
+            "identity content must not be empty".into(),
+        ));
     }
     let path = resolve_identity_path(&state.workspace_root, &state.config);
     if let Err(e) = fs::write(&path, body.content.as_bytes()).await {
@@ -219,7 +223,9 @@ pub async fn put_identity(
     Json(json!({ "ok": true })).into_response()
 }
 
-pub async fn get_settings(State(state): State<WebAppState>) -> Json<super::settings_merge::SettingsSchemaResponse> {
+pub async fn get_settings(
+    State(state): State<WebAppState>,
+) -> Json<super::settings_merge::SettingsSchemaResponse> {
     Json(build_settings_schema(&state.config))
 }
 
@@ -227,9 +233,7 @@ pub async fn put_settings(
     State(state): State<WebAppState>,
     Json(payload): Json<SettingsUpdatePayload>,
 ) -> impl IntoResponse {
-    if let Err(e) =
-        merge_settings_into_toml(&state.workspace_root, &state.config, &payload).await
-    {
+    if let Err(e) = merge_settings_into_toml(&state.workspace_root, &state.config, &payload).await {
         return api_error_response(e);
     }
     Json(json!({ "ok": true, "restart_required": true })).into_response()
@@ -248,9 +252,7 @@ pub async fn put_tools(
     State(state): State<WebAppState>,
     Json(payload): Json<ToolsUpdatePayload>,
 ) -> impl IntoResponse {
-    if let Err(e) =
-        merge_tools_into_toml(&state.workspace_root, &state.config, &payload).await
-    {
+    if let Err(e) = merge_tools_into_toml(&state.workspace_root, &state.config, &payload).await {
         return api_error_response(e);
     }
     Json(json!({ "ok": true, "restart_required": true })).into_response()
@@ -322,7 +324,10 @@ pub async fn get_skill_detail(
 }
 
 fn strip_frontmatter(raw: &str) -> String {
-    let rest = match raw.strip_prefix("---\n").or_else(|| raw.strip_prefix("---\r\n")) {
+    let rest = match raw
+        .strip_prefix("---\n")
+        .or_else(|| raw.strip_prefix("---\r\n"))
+    {
         Some(r) => r,
         None => return raw.to_string(),
     };
@@ -330,7 +335,10 @@ fn strip_frontmatter(raw: &str) -> String {
         return raw.to_string();
     };
     let after = &rest[end + 4..];
-    after.trim_start_matches('\n').trim_start_matches('\r').to_string()
+    after
+        .trim_start_matches('\n')
+        .trim_start_matches('\r')
+        .to_string()
 }
 
 pub async fn get_memory(State(state): State<WebAppState>) -> impl IntoResponse {
@@ -380,23 +388,17 @@ pub async fn get_uploads(State(state): State<WebAppState>) -> impl IntoResponse 
         .workspace_root
         .join(&cfg.web_ui.uploads.files.upload_dir);
 
-    let images = match list_upload_dir(
-        &state.workspace_root,
-        &images_dir,
-        "image",
-        |f| Some(format!("/api/vision/preview/{f}")),
-    )
+    let images = match list_upload_dir(&state.workspace_root, &images_dir, "image", |f| {
+        Some(format!("/api/vision/preview/{f}"))
+    })
     .await
     {
         Ok(v) => v,
         Err(e) => return api_error_response(e),
     };
-    let audio = match list_upload_dir(
-        &state.workspace_root,
-        &audio_dir,
-        "audio",
-        |f| Some(format!("/api/audio/preview/{f}")),
-    )
+    let audio = match list_upload_dir(&state.workspace_root, &audio_dir, "audio", |f| {
+        Some(format!("/api/audio/preview/{f}"))
+    })
     .await
     {
         Ok(v) => v,
@@ -581,14 +583,14 @@ pub async fn post_upload_file(
 
     let display_name = orig_name.as_deref().unwrap_or(&stored_name);
     let size_label = format_upload_bytes(raw.len());
-    let upload_notice = if state.config.document_rag.enabled && state.config.document_rag.auto_ingest {
+    let upload_notice = if state.config.document_rag.enabled
+        && state.config.document_rag.auto_ingest
+    {
         format!(
             "[doc] Uploaded {display_name} ({size_label}) — queued for ingest at {relative_path}"
         )
     } else {
-        format!(
-            "[doc] Uploaded {display_name} ({size_label}) at {relative_path}"
-        )
+        format!("[doc] Uploaded {display_name} ({size_label}) at {relative_path}")
     };
     let _ = state.events_tx.send(SessionEvent::UiNotice(upload_notice));
 
@@ -619,7 +621,10 @@ pub async fn post_upload_file(
         }
     }
 
-    let ingest_status = state.document_ingest_queue.as_ref().map(|queue| queue.status());
+    let ingest_status = state
+        .document_ingest_queue
+        .as_ref()
+        .map(|queue| queue.status());
 
     (
         StatusCode::OK,

@@ -107,10 +107,7 @@ impl MoltbookBrowseLedger {
                 "Engagement (conservative): after opening comments, run `moltbook:vote` or `memory:stage`. Autonomous `moltbook:comment` / `moltbook:post` require explicit human approval.",
             );
         }
-        if opened_thread
-            && (self.votes >= 1 || self.memory_stage >= 1)
-            && self.remind_ok == 0
-        {
+        if opened_thread && (self.votes >= 1 || self.memory_stage >= 1) && self.remind_ok == 0 {
             parts.push(
                 "Before wrapping this alarm cycle, schedule follow-up with `agenda:remind_at` unless the alarm is already expired.",
             );
@@ -118,10 +115,7 @@ impl MoltbookBrowseLedger {
         if parts.is_empty() {
             None
         } else {
-            Some(format!(
-                "[MOLTBOOK CYCLE — policy] {}",
-                parts.join(" ")
-            ))
+            Some(format!("[MOLTBOOK CYCLE — policy] {}", parts.join(" ")))
         }
     }
 }

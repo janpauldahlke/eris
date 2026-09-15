@@ -46,7 +46,13 @@ pub fn google_credentials_complete(config: &AppConfig, workspace_root: &Path) ->
     let Some(key_rel) = config.google.service_account_key.as_ref() else {
         return false;
     };
-    if config.google.impersonate_user.as_deref().unwrap_or("").is_empty() {
+    if config
+        .google
+        .impersonate_user
+        .as_deref()
+        .unwrap_or("")
+        .is_empty()
+    {
         return false;
     }
     workspace_root.join(key_rel).is_file()

@@ -2,7 +2,7 @@
 
 use crate::executive::error::{FcpError, Result};
 use crate::tools::web::fetcher::{
-    browser39_run_batch_blocking, parse_browser39_fetch_line, FetchedPage,
+    FetchedPage, browser39_run_batch_blocking, parse_browser39_fetch_line,
 };
 use crate::tools::web::ledger::normalize_host;
 use crate::vault_layout;
@@ -57,10 +57,7 @@ pub fn load_consent_profiles(vault_root: &Path) -> Result<Vec<HostConsentProfile
     }
     let raw = std::fs::read_to_string(&path).map_err(FcpError::Io)?;
     let file: ConsentProfilesFile = toml::from_str(&raw).map_err(|e| {
-        FcpError::Config(format!(
-            "invalid consent profiles {}: {e}",
-            path.display()
-        ))
+        FcpError::Config(format!("invalid consent profiles {}: {e}", path.display()))
     })?;
     if file.host.is_empty() {
         return Ok(default_profiles());
@@ -70,10 +67,19 @@ pub fn load_consent_profiles(vault_root: &Path) -> Result<Vec<HostConsentProfile
 
 fn default_profiles() -> Vec<HostConsentProfile> {
     vec![
-        profile("kicker.de", &["Alle akzeptieren", "Accept all", "Zustimmen", "Akzeptieren"]),
-        profile("gamestar.de", &["Alle akzeptieren", "Accept all", "Zustimmen", "I agree"]),
+        profile(
+            "kicker.de",
+            &["Alle akzeptieren", "Accept all", "Zustimmen", "Akzeptieren"],
+        ),
+        profile(
+            "gamestar.de",
+            &["Alle akzeptieren", "Accept all", "Zustimmen", "I agree"],
+        ),
         profile("bbc.com", &["Yes, I agree", "Allow all", "Accept"]),
-        profile("spiegel.de", &["Alle akzeptieren", "Akzeptieren", "Zustimmen"]),
+        profile(
+            "spiegel.de",
+            &["Alle akzeptieren", "Akzeptieren", "Zustimmen"],
+        ),
         profile("taz.de", &["Alle akzeptieren", "Akzeptieren", "Zustimmen"]),
     ]
 }
@@ -125,20 +131,10 @@ pub fn fetch_with_consent_blocking(
     let no_persist = !persist_sessions;
 
     let initial_cmds = vec![fetch_url_command(
-        "initial",
-        1,
-        url,
-        selector,
-        max_tokens,
-        offset,
+        "initial", 1, url, selector, max_tokens, offset,
     )];
-    let initial_lines = browser39_run_batch_blocking(
-        binary,
-        config_path,
-        session_dir,
-        no_persist,
-        &initial_cmds,
-    )?;
+    let initial_lines =
+        browser39_run_batch_blocking(binary, config_path, session_dir, no_persist, &initial_cmds)?;
     let initial = parse_first_fetch_line(&initial_lines)?;
     let initial_chars = initial.markdown.chars().count();
 
@@ -184,25 +180,21 @@ pub fn fetch_with_consent_blocking(
                 offset,
             ),
         ];
-        let lines = match browser39_run_batch_blocking(
-            binary,
-            config_path,
-            session_dir,
-            no_persist,
-            &cmds,
-        ) {
-            Ok(l) => l,
-            Err(e) => {
-                warn!(
-                    event = "web.consent.accept_failed",
-                    url = %url,
-                    label = %text,
-                    error = %e,
-                    "consent batch failed"
-                );
-                continue;
-            }
-        };
+        let lines =
+            match browser39_run_batch_blocking(binary, config_path, session_dir, no_persist, &cmds)
+            {
+                Ok(l) => l,
+                Err(e) => {
+                    warn!(
+                        event = "web.consent.accept_failed",
+                        url = %url,
+                        label = %text,
+                        error = %e,
+                        "consent batch failed"
+                    );
+                    continue;
+                }
+            };
         if !click_line_succeeded(lines.first()) {
             click_failures = click_failures.saturating_add(1);
             warn!(

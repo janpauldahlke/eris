@@ -55,11 +55,7 @@ pub async fn persist_content_addressed(
     }
     let content_hash = sha256_hex(bytes);
     let filename = format!("{content_hash}.{ext}");
-    let rel_path = format!(
-        "{}/{}",
-        upload_subdir.trim_end_matches('/'),
-        filename
-    );
+    let rel_path = format!("{}/{}", upload_subdir.trim_end_matches('/'), filename);
     let abs_path = workspace_root.join(&rel_path);
     if let Some(parent) = abs_path.parent() {
         fs::create_dir_all(parent).await.map_err(FcpError::Io)?;

@@ -9,7 +9,7 @@ pub use markers::{
 
 use crate::engine::Message;
 
-use super::stack_lines::try_parse_tool_success_line;
+use super::stack_lines::message_is_tool_success;
 use super::window::is_jit_system_message;
 
 /// Single-line system stub replacing omitted recovery transcript in the LLM view.
@@ -17,7 +17,7 @@ pub const OMIT_RESOLVED_TOOL_RECOVERY_PLACEHOLDER: &str =
     "[FCP] Resolved tool-recovery attempts omitted from LLM view; see telemetry.";
 
 fn is_tool_success_message(m: &Message) -> bool {
-    m.role == "system" && try_parse_tool_success_line(&m.content).is_some()
+    message_is_tool_success(m).is_some()
 }
 
 /// Indices strictly before `w` to remove when they form a recovery episode ending at winning assistant `w`.

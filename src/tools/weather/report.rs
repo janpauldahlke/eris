@@ -350,7 +350,9 @@ fn format_next_24h(data: &Value, out: &mut String) -> Result<()> {
     while h < TOTAL_HOURS && idx < times.len() && bucket_num < BUCKET_COUNT {
         let mut end_idx = idx;
         let mut hours_in_bucket = 0usize;
-        while hours_in_bucket < BUCKET_HOURS && end_idx < times.len() && h + hours_in_bucket < TOTAL_HOURS
+        while hours_in_bucket < BUCKET_HOURS
+            && end_idx < times.len()
+            && h + hours_in_bucket < TOTAL_HOURS
         {
             hours_in_bucket += 1;
             end_idx += 1;
@@ -577,9 +579,7 @@ fn format_daily_outlook(data: &Value, out: &mut String) {
         let code = codes.and_then(|a| a.get(i)).and_then(value_as_i64);
         let emoji = code.map(wmo_emoji).unwrap_or("🌡️");
         let cond = code.map(wmo_label).unwrap_or("n/a");
-        let rain_prob = rain_probs
-            .and_then(|a| a.get(i))
-            .and_then(value_as_f64);
+        let rain_prob = rain_probs.and_then(|a| a.get(i)).and_then(value_as_f64);
         let rain_part = match (precip, rain_prob) {
             (p, Some(prob)) if p > 0.0 || prob > 0.0 => {
                 format!("🌧️ {:.1} mm (up to {:.0}% chance)", p, prob)

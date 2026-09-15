@@ -10,7 +10,7 @@
 //! heisenbug is active on this host).
 
 use crate::orchestrator::routing::{
-    apply_routing_policy, RoutingOffer, RoutingPolicyKnobs, UnsureFallback,
+    RoutingOffer, RoutingPolicyKnobs, UnsureFallback, apply_routing_policy,
 };
 
 /// One golden case for pre-LLM offer policy.
@@ -398,7 +398,10 @@ pub fn eval_routing_offer_fixture(fx: &RoutingOfferFixture) -> Result<(), String
             return Err(format!("[{}] expected DomainCluster offer", fx.id));
         }
         if !names.iter().all(|n| n.starts_with("doc:")) {
-            return Err(format!("[{}] expected only doc:* tools, got {names:?}", fx.id));
+            return Err(format!(
+                "[{}] expected only doc:* tools, got {names:?}",
+                fx.id
+            ));
         }
     }
     Ok(())
