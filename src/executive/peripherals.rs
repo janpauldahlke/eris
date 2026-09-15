@@ -624,6 +624,7 @@ impl PeripheralLifecycle {
                 );
             }
             apply_unix_sidecar_process_group(&mut cmd);
+            sanitize_llama_server_child_env(&mut cmd);
 
             let chat_child = cmd.spawn().map_err(|e| {
                 FcpError::NetworkFault(format!(
@@ -697,6 +698,7 @@ impl PeripheralLifecycle {
             .stdout(Stdio::null())
             .stderr(Stdio::null());
             apply_unix_sidecar_process_group(&mut cmd);
+            sanitize_llama_server_child_env(&mut cmd);
 
             let embed_child = cmd.spawn().map_err(|e| {
                 FcpError::NetworkFault(format!(
@@ -932,6 +934,24 @@ fn apply_unix_sidecar_process_group(cmd: &mut Command) {
     {
         // New session leader: SIGTERM/SIGKILL on `-pid` reaches `ollama serve` and its runners.
         cmd.process_group(0);
+    }
+}
+
+/// Drop host `LLAMA_API_KEY` (and file variant) so managed `llama-server` stays open.
+///
+/// Operators often export `LLAMA_API_KEY=local` for DeepSeek Harness / llama-dsh.
+/// llama-server treats that env as `--api-key`, then Eris (no Bearer header) gets HTTP 401.
+fn sanitize_llama_server_child_env(cmd: &mut Command) {
+    let had_key = std::env::var_os("LLAMA_API_KEY").is_some();
+    let had_file = std::env::var_os("LLAMA_API_KEY_FILE").is_some();
+    cmd.env_remove("LLAMA_API_KEY");
+    cmd.env_remove("LLAMA_API_KEY_FILE");
+    if had_key || had_file {
+        tracing::info!(
+            had_LLAMA_API_KEY = had_key,
+            had_LLAMA_API_KEY_FILE = had_file,
+            "Stripped LLAMA_API_KEY* from managed llama-server env so local chat stays unauthenticated"
+        );
     }
 }
 
