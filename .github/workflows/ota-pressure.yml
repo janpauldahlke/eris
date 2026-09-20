@@ -1,0 +1,248 @@
+name: "Evidence: Ota adoption (non-blocking)"
+
+on:
+  push:
+    branches:
+      - bobai/**
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract-ci-drift:
+    name: Contract-to-CI comparison (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Check contract-owned CI truth
+        uses: ota-run/action@6bb5bf686df5a8385202c8c20b6f91c045e3c161 # v1.0.15
+        with:
+          command: doctor
+          source: contract
+          fail-on-error: false
+          fail-on-ci-drift: false
+          comment-pr: false
+
+  ota-contract:
+    name: Ota contract (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows cannot check out the current upstream tree because one tracked documentation
+        # filename contains double quotes. Keep that repository blocker explicit rather than
+        # weakening or rewriting source in this adoption workflow.
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921 # stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.1
+        with:
+          cache-directories: .ota/cache/cargo-native
+
+      - uses: ota-run/setup@493cba84bf7f7c11c9e8e996d832d93a89c62184 # v1.0.8
+        with:
+          source: contract
+          contract-path: ota.yaml
+
+      - name: Prepare retained evidence
+        shell: bash
+        run: mkdir -p ota-pressure
+
+      - name: Record exact toolchain posture
+        shell: bash
+        run: |
+          rustc --version --verbose > ota-pressure/rustc-version.txt
+          cargo --version --verbose > ota-pressure/cargo-version.txt
+          ota --version > ota-pressure/ota-version.txt
+
+      - name: Validate contract
+        id: validate
+        continue-on-error: true
+        shell: bash
+        run: ota validate . 2>&1 | tee ota-pressure/validate.txt
+
+      - name: Diagnose bounded readiness
+        id: doctor
+        continue-on-error: true
+        shell: bash
+        run: ota doctor . --json > ota-pressure/doctor.json
+
+      - name: Inspect agent-safe surface
+        id: tasks
+        continue-on-error: true
+        shell: bash
+        run: ota tasks --safe --use . 2>&1 | tee ota-pressure/tasks.txt
+
+      - name: Preview verification workflow
+        id: preview
+        continue-on-error: true
+        shell: bash
+        run: ota up --workflow verify --native --agent --dry-run . --json > ota-pressure/up-dry-run.json
+
+      - name: Observe existing formatting baseline
+        id: format
+        continue-on-error: true
+        shell: bash
+        run: ota run format --agent . > ota-pressure/format.txt 2>&1
+
+      - name: Run bounded verification
+        id: verify
+        continue-on-error: true
+        shell: bash
+        run: |
+          before_lock="$(git hash-object Cargo.lock)"
+          ota run verify --agent --stream . 2>&1 | tee ota-pressure/verify.txt
+          test "$(git hash-object Cargo.lock)" = "$before_lock"
+          git diff --exit-code -- Cargo.lock
+          git diff --exit-code
+
+      - name: Record exact lane outcomes
+        if: always()
+        shell: bash
+        run: |
+          cat > ota-pressure/outcomes.txt <<EOF
+          revision=${GITHUB_SHA}
+          os=${{ matrix.os }}
+          validate=${{ steps.validate.outcome }}
+          doctor=${{ steps.doctor.outcome }}
+          tasks=${{ steps.tasks.outcome }}
+          preview=${{ steps.preview.outcome }}
+          format_advisory=${{ steps.format.outcome }}
+          verify=${{ steps.verify.outcome }}
+          EOF
+
+      - name: Upload retained evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: eris-ota-${{ matrix.os }}
+          path: ota-pressure/
+          if-no-files-found: error
+
+      - name: Preserve truthful lane failure
+        if: always()
+        shell: bash
+        run: |
+          test "${{ steps.validate.outcome }}" = success
+          test "${{ steps.doctor.outcome }}" = success
+          test "${{ steps.tasks.outcome }}" = success
+          test "${{ steps.preview.outcome }}" = success
+          test "${{ steps.verify.outcome }}" = success
+
+  ota-container:
+    name: Ota portable controls (container)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - uses: ota-run/setup@493cba84bf7f7c11c9e8e996d832d93a89c62184 # v1.0.8
+        with:
+          source: contract
+          contract-path: ota.yaml
+
+      - name: Prepare retained container evidence
+        shell: bash
+        run: mkdir -p ota-pressure/container
+
+      - name: Record container engine posture
+        id: engine
+        continue-on-error: true
+        shell: bash
+        run: docker version --format '{{json .}}' > ota-pressure/container/docker-version.json
+
+      - name: Preview disposable-vault control
+        id: preview_vault
+        continue-on-error: true
+        shell: bash
+        run: |
+          ota run test:vault:read --mode container --agent --dry-run . --json \
+            > ota-pressure/container/vault-dry-run.json
+
+      - name: Run disposable-vault control through Ota container mode
+        id: vault
+        continue-on-error: true
+        shell: bash
+        run: |
+          before_lock="$(git hash-object Cargo.lock)"
+          ota run test:vault:read --mode container --agent --stream . \
+            > ota-pressure/container/vault.log 2>&1
+          test "$(git hash-object Cargo.lock)" = "$before_lock"
+          git diff --exit-code -- Cargo.lock
+
+      - name: Run Gatekeeper allowed control through Ota container mode
+        id: allowed
+        continue-on-error: true
+        shell: bash
+        run: |
+          before_lock="$(git hash-object Cargo.lock)"
+          ota run test:gatekeeper:allowed --mode container --agent --stream . \
+            > ota-pressure/container/gatekeeper-allowed.log 2>&1
+          test "$(git hash-object Cargo.lock)" = "$before_lock"
+          git diff --exit-code -- Cargo.lock
+
+      - name: Run Gatekeeper refused control through Ota container mode
+        id: refused
+        continue-on-error: true
+        shell: bash
+        run: |
+          before_lock="$(git hash-object Cargo.lock)"
+          ota run test:gatekeeper:refused --mode container --agent --stream . \
+            > ota-pressure/container/gatekeeper-refused.log 2>&1
+          test "$(git hash-object Cargo.lock)" = "$before_lock"
+          git diff --exit-code -- Cargo.lock
+
+      - name: Record resolved image
+        id: image
+        continue-on-error: true
+        shell: bash
+        run: |
+          docker image inspect \
+            'rust:1.95-bookworm@sha256:6258907abe69656e41cd992e0b705cdcfabcbbe3db374f92ed2d47121282d4a1' \
+            > ota-pressure/container/image.json
+
+      - name: Record exact container outcomes
+        if: always()
+        shell: bash
+        run: |
+          cat > ota-pressure/container/outcomes.txt <<EOF
+          revision=${GITHUB_SHA}
+          engine=${{ steps.engine.outcome }}
+          preview_vault=${{ steps.preview_vault.outcome }}
+          vault=${{ steps.vault.outcome }}
+          gatekeeper_allowed=${{ steps.allowed.outcome }}
+          gatekeeper_refused=${{ steps.refused.outcome }}
+          image=${{ steps.image.outcome }}
+          EOF
+          git diff --exit-code
+
+      - name: Upload retained container evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: eris-ota-container
+          path: ota-pressure/container/
+          if-no-files-found: error
+
+      - name: Preserve truthful container failure
+        if: always()
+        shell: bash
+        run: |
+          test "${{ steps.engine.outcome }}" = success
+          test "${{ steps.preview_vault.outcome }}" = success
+          test "${{ steps.vault.outcome }}" = success
+          test "${{ steps.allowed.outcome }}" = success
+          test "${{ steps.refused.outcome }}" = success
+          test "${{ steps.image.outcome }}" = success
