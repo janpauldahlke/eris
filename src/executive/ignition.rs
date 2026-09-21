@@ -303,6 +303,48 @@ pub async fn run_ignition_sequence(
                     )
                 })?;
 
+                let use_mtp_sidecar = inquire::Confirm::new(
+                    "Use MTP / FastMTP draft sidecar? (optional speculative decode)",
+                )
+                .with_default(false)
+                .prompt()
+                .map_err(prompt_err)?;
+
+                let (spec_draft_model_path, spec_type, spec_draft_n_max, spec_draft_n_gpu_layers) =
+                    if use_mtp_sidecar {
+                        let draft_path = loop {
+                            let raw = Text::new(
+                                "FastMTP / draft GGUF path (blank = skip sidecar):",
+                            )
+                            .prompt()
+                            .map_err(prompt_err)?;
+                            let trimmed = raw.trim();
+                            if trimmed.is_empty() {
+                                break None;
+                            }
+                            let expanded = shellexpand::tilde(trimmed).to_string();
+                            let path = PathBuf::from(&expanded);
+                            if path.exists() && path.extension().is_some_and(|e| e == "gguf") {
+                                break Some(path);
+                            }
+                            eprintln!(
+                                "  ✗ File not found or not a .gguf: {}",
+                                path.display()
+                            );
+                        };
+                        match draft_path {
+                            Some(path) => (
+                                Some(path),
+                                Some("draft-mtp".into()),
+                                Some(3u32),
+                                Some("all".into()),
+                            ),
+                            None => (None, None, None, None),
+                        }
+                    } else {
+                        (None, None, None, None)
+                    };
+
                 let llama_cpp_config = LlamaCppConfig {
                     home,
                     chat_server_url: "http://127.0.0.1:8090".into(),
@@ -310,6 +352,10 @@ pub async fn run_ignition_sequence(
                     chat_model_path,
                     embed_model_path,
                     n_gpu_layers,
+                    spec_type,
+                    spec_draft_n_max,
+                    spec_draft_model_path,
+                    spec_draft_n_gpu_layers,
                     ..Default::default()
                 };
 

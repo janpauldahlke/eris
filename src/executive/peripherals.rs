@@ -573,7 +573,18 @@ impl PeripheralLifecycle {
             if let Some(ref ctv) = lc.cache_type_v {
                 cmd.arg("--cache-type-v").arg(ctv);
             }
-            if let Some(ref spec) = lc.spec_type {
+            // Speculative / MTP: sidecar path enables FastMTP; embedded NextN uses spec_type alone.
+            let mut effective_spec_type = lc.spec_type.clone();
+            if lc.spec_draft_model_path.is_some() && effective_spec_type.is_none() {
+                effective_spec_type = Some("draft-mtp".into());
+            }
+            if let Some(ref draft) = lc.spec_draft_model_path {
+                cmd.arg("--spec-draft-model").arg(draft);
+            }
+            if let Some(ref ngl) = lc.spec_draft_n_gpu_layers {
+                cmd.arg("--spec-draft-ngl").arg(ngl);
+            }
+            if let Some(ref spec) = effective_spec_type {
                 cmd.arg("--spec-type").arg(spec);
             }
             if let Some(n) = lc.spec_draft_n_max {
@@ -615,11 +626,16 @@ impl PeripheralLifecycle {
                     "multimodal flags applied"
                 );
             }
-            if lc.spec_type.is_some() || lc.spec_draft_n_max.is_some() {
+            if effective_spec_type.is_some()
+                || lc.spec_draft_n_max.is_some()
+                || lc.spec_draft_model_path.is_some()
+            {
                 tracing::info!(
                     server = "llama-chat",
-                    spec_type = ?lc.spec_type,
+                    spec_type = ?effective_spec_type,
                     spec_draft_n_max = ?lc.spec_draft_n_max,
+                    spec_draft_model_path = ?lc.spec_draft_model_path,
+                    spec_draft_n_gpu_layers = ?lc.spec_draft_n_gpu_layers,
                     "speculative decoding flags applied"
                 );
             }
@@ -699,6 +715,16 @@ impl PeripheralLifecycle {
             .stderr(Stdio::null());
             apply_unix_sidecar_process_group(&mut cmd);
             sanitize_llama_server_child_env(&mut cmd);
+            // CPU-only embed still initializes the CUDA backend and can abort with
+            // `cudaSetDevice: out of memory` when chat already fills both GPUs.
+            // Hide devices so nomic stays on host RAM.
+            if embed_gpu_layers == 0 {
+                cmd.env("CUDA_VISIBLE_DEVICES", "");
+                tracing::info!(
+                    server = "llama-embed",
+                    "CUDA_VISIBLE_DEVICES cleared for CPU-only embed (avoid CUDA OOM beside full chat VRAM)"
+                );
+            }
 
             let embed_child = cmd.spawn().map_err(|e| {
                 FcpError::NetworkFault(format!(
