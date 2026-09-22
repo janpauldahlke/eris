@@ -548,6 +548,9 @@ impl PeripheralLifecycle {
                 port = chat_port,
                 model = %lc.chat_model_path.display(),
                 enable_reasoning_fsm = config.enable_reasoning_fsm,
+                kv_offload = ?lc.kv_offload,
+                cache_type_k = ?lc.cache_type_k,
+                cache_type_v = ?lc.cache_type_v,
                 "Spawning llama-server"
             );
             let mut cmd = Command::new(&binary);
@@ -572,6 +575,16 @@ impl PeripheralLifecycle {
             }
             if let Some(ref ctv) = lc.cache_type_v {
                 cmd.arg("--cache-type-v").arg(ctv);
+            }
+            // llama.cpp: --kv-offload = KV on GPU; --no-kv-offload = KV in system RAM.
+            match lc.kv_offload {
+                Some(true) => {
+                    cmd.arg("--kv-offload");
+                }
+                Some(false) => {
+                    cmd.arg("--no-kv-offload");
+                }
+                None => {}
             }
             // Speculative / MTP: sidecar path enables FastMTP; embedded NextN uses spec_type alone.
             let mut effective_spec_type = lc.spec_type.clone();

@@ -87,10 +87,10 @@ pub fn ensure_web_find_paired_with_fetch_tools(
     }
 }
 
-/// System line when every tool intent in a batch was duplicate-suppressed (no Recover hop).
-pub const DUPLICATE_SUPPRESS_IDLE_GUIDANCE: &str = r#"[FCP DUPLICATE TOOL — USER REPLY]
-All tool_calls in your last batch were skipped as duplicates of calls already made this turn. Do not repeat them. Reply with status Idle, a non-empty message_to_user summarizing prior tool results, and tool_calls [].
-[/FCP DUPLICATE TOOL — USER REPLY]"#;
+/// System line when every tool intent in a batch was suppressed (web cap or repeat-failure streak).
+pub const BATCH_SUPPRESS_IDLE_GUIDANCE: &str = r#"[FCP BATCH SUPPRESSED — USER REPLY]
+All tool_calls in your last batch were skipped (turn cap or repeated failure). Do not repeat them unchanged. Reply with status Idle, a non-empty message_to_user summarizing prior tool results, and tool_calls [].
+[/FCP BATCH SUPPRESSED — USER REPLY]"#;
 
 /// OpenRouter Chat: tools are omitted this hop. Answer from the results already on the stack.
 pub const POST_TOOL_TALK_NOW_GUIDANCE: &str = r#"[FCP POST-TOOL — ANSWER NOW]

@@ -21,8 +21,8 @@ use crate::executive::setup_welder::IgnitionWorkspaceHint;
 use crate::memory::ephemeral::EphemeralMemory;
 use crate::orchestrator::core::Orchestrator;
 use crate::presentation::{
-    InputSource, SYSTEM_ALARM_PREFIX, SYSTEM_SELF_REMINDER_PREFIX, SessionEvent, UserAction,
-    UserIngress,
+    InputSource, SYSTEM_ALARM_PREFIX, SYSTEM_PLAN_RESUME_PREFIX, SYSTEM_SELF_REMINDER_PREFIX,
+    SessionEvent, UserAction, UserIngress,
 };
 use crate::tools::Gatekeeper;
 use crate::ui::discord::DiscordTypingCtl;
@@ -580,6 +580,25 @@ pub async fn start_chat_session(
         workspace_root: workspace_root.clone(),
         reschedule_tx: alarm_reschedule_tx.clone(),
     }));
+    gatekeeper.register(Arc::new(crate::tools::working_plan::PlanReadTool {
+        workspace_root: workspace_root.clone(),
+    }));
+    gatekeeper.register(Arc::new(crate::tools::working_plan::PlanSetTool {
+        workspace_root: workspace_root.clone(),
+    }));
+    gatekeeper.register(Arc::new(crate::tools::working_plan::PlanUpdateTool {
+        workspace_root: workspace_root.clone(),
+    }));
+    gatekeeper.register(Arc::new(crate::tools::working_plan::PlanAdvanceTool {
+        workspace_root: workspace_root.clone(),
+    }));
+    gatekeeper.register(Arc::new(crate::tools::working_plan::PlanClearTool {
+        workspace_root: workspace_root.clone(),
+    }));
+    gatekeeper.register(Arc::new(crate::tools::working_plan::PlanDeferTool {
+        workspace_root: workspace_root.clone(),
+        reschedule_tx: alarm_reschedule_tx.clone(),
+    }));
     let _ = presentation_tx
         .send(SessionEvent::SystemError(
             "[startup] Preparing web stack (browser39, vault operator files)...".into(),
@@ -693,7 +712,7 @@ pub async fn start_chat_session(
     }));
     gatekeeper.register(Arc::new(crate::tools::clock::ClockWallAlarmTool {
         workspace_root: workspace_root.clone(),
-        reschedule_tx: alarm_reschedule_tx,
+        reschedule_tx: alarm_reschedule_tx.clone(),
     }));
 
     if crate::tools::registration::should_register_weather(&config) {
@@ -1001,6 +1020,7 @@ pub async fn start_chat_session(
         semantic_arc,
         document_store_arc.clone(),
     );
+    orchestrator.alarm_reschedule_tx = Some(alarm_reschedule_tx);
 
     tracing::info!(
         model = %config.model_name,
@@ -1199,6 +1219,74 @@ pub async fn start_chat_session(
                             if let Err(e) = orchestrator.step(None).await {
                                 if matches!(e, FcpError::Interrupted) {
                                     tracing::info!("Orchestrator interrupted during alarm turn");
+                                    continue;
+                                }
+                                let err_msg = format!("[FATAL ERROR] Orchestrator halted: {}", e);
+                                tracing::error!(error = %e, "Orchestrator fatal error");
+                                let _ = presentation_tx_err
+                                    .send(SessionEvent::SystemError(err_msg))
+                                    .await;
+                                break;
+                            }
+                            orchestrator.broadcast_state().await;
+                        }
+                        UserAction::PlanResume {
+                            label,
+                            alarm_record_id,
+                            seconds_late,
+                        } => {
+                            let trimmed = label.trim().to_string();
+                            if trimmed.is_empty() {
+                                continue;
+                            }
+                            let late_note = if seconds_late > 60 {
+                                format!(" (~{} min late)", seconds_late / 60)
+                            } else {
+                                String::new()
+                            };
+                            // Clear stale resume_alarm_id pointer (alarm row already fired/removed).
+                            let workspace = orchestrator.context_assembler.workspace_root.clone();
+                            if let Ok(Some(mut plan)) =
+                                crate::tools::working_plan::load(&workspace).await
+                            {
+                                if plan.resume_alarm_id.as_deref() == Some(alarm_record_id.as_str())
+                                {
+                                    plan.resume_alarm_id = None;
+                                    let _ = crate::tools::working_plan::save(&workspace, &plan).await;
+                                }
+                            }
+                            let content = format!(
+                                "{}{}{}\n\n\
+                                Continue the on-disk working plan autonomously now. \
+                                The [WORKING_PLAN] block in your system prompt is authoritative — \
+                                execute the CURRENT step only, then plan:advance (or plan:update). \
+                                Do not call plan:set unless the user changed the mission. \
+                                If you still need another cycle later, call plan:defer again.\n\n\
+                                [PLAN_RESUME alarm_id={} late_sec={}]",
+                                SYSTEM_PLAN_RESUME_PREFIX,
+                                trimmed,
+                                late_note,
+                                alarm_record_id,
+                                seconds_late
+                            );
+                            orchestrator.chat_stack.push(crate::engine::Message::user(content));
+                            orchestrator.state = crate::orchestrator::state::AgentState::Chat;
+                            last_input_time.store(
+                                std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_secs())
+                                    .unwrap_or(0),
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                            orchestrator.broadcast_state().await;
+                            tracing::info!(
+                                event = "orchestrator.plan.resume_wake",
+                                alarm_id = %alarm_record_id,
+                                "Working-plan resume alarm turn"
+                            );
+                            if let Err(e) = orchestrator.step(None).await {
+                                if matches!(e, FcpError::Interrupted) {
+                                    tracing::info!("Orchestrator interrupted during plan resume turn");
                                     continue;
                                 }
                                 let err_msg = format!("[FATAL ERROR] Orchestrator halted: {}", e);

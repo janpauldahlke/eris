@@ -55,9 +55,8 @@ impl Tool for AgendaRemindAtTool {
         schemars::schema_for!(AgendaRemindAtArgs)
     }
 
-    /// Same description often repeats across rounds while chaining Moltbook actions.
-    /// The tool replaces the prior alarm for that pending task; suppressing duplicates
-    /// looked like a missed reschedule and could trigger duplicate-only recovery batches.
+    /// Same description often repeats across Moltbook rounds while chaining actions.
+    /// The tool replaces the prior alarm for that pending task on reschedule.
     fn allow_repeat_in_turn(&self) -> bool {
         true
     }
@@ -235,6 +234,7 @@ impl Tool for AgendaRemindAtTool {
             label: label.clone(),
             agenda_task_id: Some(task_id.clone()),
             agenda_kind: Some("user".to_string()),
+            plan_resume: None,
         });
         save_alarms(&alarms_path, &alarms).await?;
 

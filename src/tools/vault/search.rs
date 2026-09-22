@@ -64,6 +64,12 @@ impl Tool for VaultSearchTool {
         "Recursively searches vault .md/.txt file contents for keywords or regex; returns top matching files with line excerpts for summarization. Complements memory:query (semantic) and vault:list (filenames only)."
     }
 
+    /// Idempotent read: same query may be useful again after a thin hit or a list/read hop.
+    /// Turn-level duplicate suppress otherwise blocks exploration mid-`step()`.
+    fn allow_repeat_in_turn(&self) -> bool {
+        true
+    }
+
     fn parameters_schema(&self) -> schemars::schema::RootSchema {
         schemars::schema_for!(VaultSearchArgs)
     }
@@ -620,5 +626,14 @@ mod tests {
         let err = t.execute(bad).await.unwrap_err();
         assert!(format!("{err}").contains("regex") || format!("{err}").contains("Invalid"));
         Ok(())
+    }
+
+    #[test]
+    fn vault_search_allows_identical_repeat_within_turn() {
+        let dir = tempdir().unwrap();
+        assert!(
+            tool(dir.path()).allow_repeat_in_turn(),
+            "vault:search must opt out of turn-level duplicate suppress so thin hits can be retried"
+        );
     }
 }

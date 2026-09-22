@@ -78,6 +78,8 @@ pub struct Orchestrator<E: LlmEngine> {
     pub interrupt_rx: tokio::sync::watch::Receiver<()>,
     /// Interactive chat must use `Some`; `None` drops outbound deck/state/telemetry (headless tests, batch).
     pub presentation_tx: Option<tokio::sync::mpsc::Sender<SessionEvent>>,
+    /// Wakes the alarm scheduler after writing a plan-resume (or other) alarm row. Set by chat session.
+    pub alarm_reschedule_tx: Option<tokio::sync::mpsc::UnboundedSender<()>>,
     pub queued_inputs: usize,
     pub last_router_ms: u64,
     pub last_llm_ms: u64,
@@ -148,13 +150,17 @@ impl<E: LlmEngine> Orchestrator<E> {
                 .as_ref()
                 .map(|rx| rx.borrow().clone())
                 .unwrap_or_default();
+            let active_task = crate::tools::working_plan::format_tui_summary(
+                &self.context_assembler.workspace_root,
+            )
+            .await;
             let update = AgentStateUpdate {
                 state: self.state,
                 tool_rounds: self.tool_rounds,
                 max_tool_rounds: self.max_tool_rounds,
                 recovery_count: self.recovery_count,
                 max_recovery_attempts: self.max_recovery_attempts,
-                active_task: None,
+                active_task,
                 activity_line: self.activity_line.clone(),
                 queued_inputs: self.queued_inputs,
                 router_ms: self.last_router_ms,
@@ -213,6 +219,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                 workspace,
                 identity,
                 config.staged_memory_prompt_max_chars,
+                config.working_plan_prompt_max_chars,
             )
             .with_grammar_constraint(config.is_llamacpp())
             .with_slim_tool_description_preview_chars(config.slim_tool_description_preview_chars),
@@ -227,6 +234,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             saved_chat_state: None,
             interrupt_rx,
             presentation_tx,
+            alarm_reschedule_tx: None,
             queued_inputs: 0,
             last_router_ms: 0,
             last_llm_ms: 0,

@@ -25,6 +25,16 @@ pub fn agenda_json(workspace_root: &Path) -> PathBuf {
     tools_dir(workspace_root).join("agenda.json")
 }
 
+/// Active mission state (goal, steps, scratch) re-injected each LLM turn.
+pub fn working_plan_json(workspace_root: &Path) -> PathBuf {
+    tools_dir(workspace_root).join("working_plan.json")
+}
+
+/// Directory for archived completed / cleared working plans.
+pub fn working_plan_archive_dir(workspace_root: &Path) -> PathBuf {
+    tools_dir(workspace_root).join("working_plan_archive")
+}
+
 pub fn alarms_json(workspace_root: &Path) -> PathBuf {
     tools_dir(workspace_root).join("alarms.json")
 }
