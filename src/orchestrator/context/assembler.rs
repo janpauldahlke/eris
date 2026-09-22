@@ -827,6 +827,8 @@ mod tests {
         gatekeeper.register(Arc::new(
             crate::tools::system::health::SystemHealthTool {
                 config: Arc::new(crate::config::AppConfig::default()),
+                token_metrics: None,
+                openrouter_mode: None,
             },
         ));
         gatekeeper

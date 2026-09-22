@@ -160,7 +160,7 @@ impl<E: LlmEngine> Orchestrator<E> {
                     intent_id = %intent_id,
                     "Duplicate tool call suppressed in current turn"
                 );
-                suppressed_duplicate_count += 1;
+                suppressed_batch_count += 1;
                 let msg = format!(
                     "[SYSTEM] Duplicate tool call suppressed for '{}'. Continue without repeating it.",
                     tool_name

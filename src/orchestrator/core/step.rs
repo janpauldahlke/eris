@@ -570,13 +570,25 @@ impl<E: LlmEngine> Orchestrator<E> {
                     Some(ToolChoice::Auto),
                 )
             } else if slim_assembly {
-                let offered = slim_offered_tool_names(
-                    &pre_llm_matched_tools,
-                    self.tool_map_offer_cap,
-                    moltbook_overlay_latched,
-                    &self.gatekeeper,
-                    &self.state,
-                );
+                let offered = match slim_offered_this_hop.as_ref() {
+                    Some(names) => names.clone(),
+                    None => {
+                        let (offer_seeds, plan_pin) = self
+                            .resolve_plan_scoped_offer_seeds(
+                                &pre_llm_matched_tools,
+                                chain_suggests_plan,
+                            )
+                            .await;
+                        slim_offered_tool_names(
+                            &offer_seeds,
+                            self.tool_map_offer_cap,
+                            moltbook_overlay_latched,
+                            &self.gatekeeper,
+                            &self.state,
+                            plan_pin,
+                        )
+                    }
+                };
                 if offered.is_empty() {
                     (None, None, None)
                 } else {
