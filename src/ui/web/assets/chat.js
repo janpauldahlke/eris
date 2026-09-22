@@ -485,6 +485,21 @@
   }
 
   const es = new EventSource("/api/events");
+  let sseEverOpened = false;
+  es.onopen = function () {
+    sseEverOpened = true;
+    // Don't clobber a live agent status row if metrics are already showing;
+    // only clear the scary plain "disconnected" banner.
+    if (
+      statusState &&
+      statusState.className.indexOf("state-plain") !== -1 &&
+      /SSE (disconnected|reconnecting)/i.test(statusState.textContent || "")
+    ) {
+      setStatusPlain("Connected");
+      showStatusMetricsRow();
+    }
+    appendTelemetry("[ui] SSE connected");
+  };
   es.onmessage = function (ev) {
     try {
       const data = JSON.parse(ev.data);
@@ -493,8 +508,20 @@
       appendLine("[ui] bad SSE payload", "system");
     }
   };
+  // EventSource fires onerror on every reconnect attempt (CONNECTING), not only
+  // when the stream is dead (CLOSED). Showing "refresh" on CONNECTING made brief
+  // blips look like permanent disconnects.
   es.onerror = function () {
-    setStatusPlain("SSE disconnected — refresh the page");
+    if (es.readyState === EventSource.CLOSED) {
+      setStatusPlain("SSE disconnected — refresh the page");
+      appendTelemetry("[ui] SSE closed");
+      return;
+    }
+    if (es.readyState === EventSource.CONNECTING) {
+      setStatusPlain(
+        sseEverOpened ? "SSE reconnecting…" : "SSE connecting…"
+      );
+    }
   };
 
   if (btnExit) {

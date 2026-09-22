@@ -30,6 +30,12 @@ impl Tool for PlanAdvanceTool {
          Prefer this over a partial plan:update when finishing a step. Auto-archives when the \
          mission has no open steps left."
     }
+
+    /// Same `{}` / empty args across hops: fingerprint would block a second advance mid-`step()`.
+    fn allow_repeat_in_turn(&self) -> bool {
+        true
+    }
+
     fn parameters_schema(&self) -> schemars::schema::RootSchema {
         schemars::schema_for!(PlanAdvanceArgs)
     }
@@ -121,6 +127,17 @@ mod tests {
         )
         .await
         .unwrap();
+    }
+
+    #[test]
+    fn plan_advance_allows_repeat_in_turn() {
+        let tool = PlanAdvanceTool {
+            workspace_root: PathBuf::from("/tmp"),
+        };
+        assert!(
+            tool.allow_repeat_in_turn(),
+            "plan:advance must opt out of turn-level duplicate suppress so mid-mission hops can advance again with the same empty args"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
