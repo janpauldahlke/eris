@@ -109,33 +109,72 @@ Optional sugar: **`plan:advance`** (mark current done + move pointer) if it redu
 - `plan:defer` schedules a `plan_resume` row in `.fcp/tools/alarms.json`; `WorkingPlan.resume_alarm_id` tracks it.
 - Scheduler emits `AlarmPayload::PlanResume` → chat injects `[SYSTEM OVERRIDE - PLAN RESUME]` with a **fresh tool-round budget**.
 - Config `working_plan_resume_on_tool_cap_secs` (default `60`, `0` disables): when `max_tool_rounds` is hit and an open plan exists, auto-arm a resume alarm (tools are unavailable on the final cap pass, so the model cannot call `plan:defer` itself).
-- Agenda self-loop (`agenda:remind_self`) remains for operator/self-driven todo loops.
-
-**Still open (Phase 2B):** deprecate agenda once reminder UX fully lives on plan (`reminder:*` or plan-step `remind_at`), then remove agenda tools / `AGENDA_CONFIRM`.
+- Agenda (`agenda:*` including `remind_self`) remains as-is until Phase 2B work is explicitly started.
 
 ---
 
-## Phase 2 — Deprecate agenda (after replacement) [historical]
+## Phase 2B — Addendum (planned; no code yet)
 
-**Blocker:** [`agenda:remind_at`](src/tools/agenda/remind_at.rs), [`alarms.json`](src/vault_layout.rs), [`turn_entry`](src/orchestrator/core/turn_entry.rs) `AGENDA_CONFIRM`, [`agenda:complete`](src/tools/agenda/complete.rs).
+**Status:** Design only. Do **not** remove or rename tools until a dedicated PR is greenlit. Wet feet on the full `agenda` → `reminder:*` blast radius (~20–40 files) are intentional — soak Phase 2A first.
 
-- **A.** Plan rows or top-level plan carry `remind_at` / `alarm_id`; generalize payload (`plan_step_id` or `task_id`); reuse [`src/orchestrator/alarms/`](src/orchestrator/alarms/) + [`src/executive/router.rs`](src/executive/router.rs). → **done as top-level `resume_alarm_id` + `plan:defer` / auto-cap resume**
-- **B.** Minimal `reminder:*` without `agenda.json`.
+### 2B-thin (optional first cut, when ready)
 
-Then remove agenda tools, grep targets, and UI strings in [`src/ui/app.rs`](src/ui/app.rs) as needed.
+- Remove `agenda:remind_self` only (historically unreliable).
+- Redirect mission self-continuation → **`plan:defer`**; operator timed nudge with Done/Snooze → **`agenda:remind_at`**.
+- Drop `AgendaSelfPrompt` / `[AGENDA_SELF]` / `agenda-self-loop` skill.
+- Keep `agenda:push` / `list` / `remind_at` / `complete` / `remove`.
+
+### 2B-full (later dedicated PR — rename domain)
+
+Full rename is a wide cut. Do not start until appetite exists for a dedicated PR after 2B-thin (or skip thin and do full in one go).
+
+**Why not fold operator todos into the working plan?** Mission (`plan:*` + MidMission pin) and operator errands are different jobs. Plan-step-only reminders fight step-scoped tool offers and Done/Snooze UX. Keep two domains:
+
+| Domain | Store | Wake |
+| --- | --- | --- |
+| Mission | `working_plan.json` | `plan:defer` → `PlanResume` (autonomous) |
+| Operator | today `agenda.json` → later `reminders.json` | `remind_at` → confirm (`AGENDA_CONFIRM` → later `REMINDER_CONFIRM`) |
+
+**Target API (when ready)** — mirror agenda CRUD under `reminder:*` (no `remind_self`):
+
+| Tool | Replaces |
+| --- | --- |
+| `reminder:push` | `agenda:push` |
+| `reminder:list` | `agenda:list` |
+| `reminder:remind_at` | `agenda:remind_at` |
+| `reminder:complete` | `agenda:complete` |
+| `reminder:remove` | `agenda:remove` |
+
+- Disk: `.fcp/tools/reminders.json`; `AlarmRecord.reminder_id` (migrate from `agenda_task_id`).
+- Presentation: `ReminderLinked` + `REMINDER_CONFIRM`; retire `AgendaAlarmPending` / `AGENDA_CONFIRM`.
+- One-shot migrate: pending `User` rows → reminders; rewrite linked alarms; archive/delete `agenda.json`; drop leftover `SelfDriven` rows (cancel alarms).
+- Then delete `src/tools/agenda/`, gatekeeper agenda arms, routing phrases, web “Agenda” group, leftover docs.
+
+### Explicitly out / separate
+
+- Plan-step `remind_at` as the only reminder store (rejected for now).
+- Optional `/plan` TUI flag and router-assisted `RUNTIME_HINT` (Phase 1 leftovers).
+- Arch note under `docs/updated_architecture/` still missing from Phase 1 §5 — small docs PR anytime.
+
+---
+
+## Phase 2 — Deprecate agenda [historical notes]
+
+**Blocker (until 2B full):** [`agenda:remind_at`](src/tools/agenda/remind_at.rs), [`alarms.json`](src/vault_layout.rs), [`turn_entry`](src/orchestrator/core/turn_entry.rs) `AGENDA_CONFIRM`, [`agenda:complete`](src/tools/agenda/complete.rs).
+
+- **A.** Mission resume on plan → **done** (`resume_alarm_id` + `plan:defer` / auto-cap).
+- **B.** Minimal `reminder:*` without `agenda.json` → **deferred** (this addendum).
 
 ---
 
 ## Implementation order (recommended)
 
-1. `vault_layout` + serde + `render_prompt_block` (+ optional `step.kind`)
-2. `plan:read` + `plan:update` / `plan:set` — vertical slice
-3. `workspace_root` on `ContextAssembler` + injection in all four assemble paths + NL policy in `build_tool_prompt`
-4. Remaining tools + gatekeeper + specs + routing_phrases
-5. Heuristic (+ optional router) `RUNTIME_HINT` + config
-6. Idle path in `step.rs`
-7. Tests + architecture doc
-8. Phase 2 per A or B
+1. ~~`vault_layout` + serde + `render_prompt_block`~~ shipped
+2. ~~`plan:read` / `set` / `update` / `clear` / `advance` + injection + hints + idle~~ shipped
+3. ~~Phase 2A `plan:defer` + auto-cap resume~~ shipped
+4. Phase 2B-thin: drop `agenda:remind_self` — **planned only**
+5. Docs: architecture note (anytime)
+6. Phase 2B-full: `reminder:*` + migrate + delete agenda — **planned only**
 
 ---
 
