@@ -29,6 +29,10 @@ pub struct AlarmRecord {
     /// (agent self-execution), anything else (or `None`) keeps the legacy user-confirm flow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agenda_kind: Option<String>,
+    /// When `Some(true)`, fire as [`crate::presentation::AlarmPayload::PlanResume`] to continue
+    /// `.fcp/tools/working_plan.json` (mission wake). Mutually exclusive with agenda linkage in practice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_resume: Option<bool>,
 }
 
 /// Next local wall-clock fire time for hour:minute (24h). If that time already passed today, tomorrow.

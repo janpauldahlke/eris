@@ -301,6 +301,23 @@ args = {}
 rationale = "Operator todo completion is agenda:complete, not plan:clear."
 "#,
     r#"descriptor_version = 1
+tool_name = "plan:defer"
+short_description = "Schedule a wake that resumes the on-disk working plan with a fresh tool-round budget."
+when_to_use = "Use when the mission must pause: approaching or hitting the per-turn tool budget, waiting on a human/external condition, or intentionally spacing long work. Prefer over agenda:remind_self for mission continuity — the working plan stays the source of truth."
+when_not_to_use = "Do not use for operator todos or user reminders (agenda:remind_at). Do not use when the mission is finished (plan:clear / auto-archive). Do not invent a new plan:set on wake."
+routing_hints = ["pause the mission", "resume later", "schedule plan resume", "wake me to continue the plan", "defer the working plan", "continue after budget", "long horizon pause", "come back to this plan"]
+
+[[examples_good]]
+name = "defer_two_minutes"
+args = { minutes = 2, note = "Retry weather then finish summary" }
+rationale = "Relative wake; note is shown on PlanResume."
+
+[[examples_bad]]
+name = "defer_without_time"
+args = { note = "later" }
+rationale = "Must provide minutes or hour+minute."
+"#,
+    r#"descriptor_version = 1
 tool_name = "memory:commit"
 short_description = "Commit one staged memory to vault and semantic index."
 when_to_use = "Use when the user asked to save permanently, keep in the vault, or finalize staged content to disk; or in a later turn after staging when they want it persisted."
@@ -1500,6 +1517,7 @@ mod tests {
             "plan:update",
             "plan:advance",
             "plan:clear",
+            "plan:defer",
         ] {
             let desc = registry
                 .get(name)

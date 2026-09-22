@@ -32,5 +32,14 @@ pub fn alarm_payload_to_user_action(payload: AlarmPayload) -> UserAction {
             alarm_record_id,
             seconds_late,
         },
+        AlarmPayload::PlanResume {
+            label,
+            alarm_record_id,
+            seconds_late,
+        } => UserAction::PlanResume {
+            label,
+            alarm_record_id,
+            seconds_late,
+        },
     }
 }

@@ -56,6 +56,7 @@ impl Tool for ClockWallAlarmTool {
             label: args.label.clone(),
             agenda_task_id: None,
             agenda_kind: None,
+            plan_resume: None,
         });
         save_alarms(&path, &alarms).await?;
         let _ = self.reschedule_tx.send(());

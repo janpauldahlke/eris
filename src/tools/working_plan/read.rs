@@ -79,6 +79,7 @@ mod tests {
                 }],
                 current_step_id: Some("a".into()),
                 scratch: "wip".into(),
+                resume_alarm_id: None,
                 updated_at: 1,
                 version: 1,
             },

@@ -203,6 +203,15 @@ impl TuiApp {
                                     alarm_record_id,
                                     seconds_late,
                                 },
+                                AlarmPayload::PlanResume {
+                                    label,
+                                    alarm_record_id,
+                                    seconds_late,
+                                } => UserAction::PlanResume {
+                                    label,
+                                    alarm_record_id,
+                                    seconds_late,
+                                },
                             };
                             if self.action_tx.try_send(action).is_err() {
                                 tracing::error!("Dropped alarm due to presentation→orchestrator action channel backpressure");

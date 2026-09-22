@@ -72,8 +72,11 @@ pub const SYSTEM_ALARM_PREFIX: &str = "[SYSTEM OVERRIDE - ALARM TRIGGERED]: ";
 /// The agent reads this as instruction to autonomously execute the stored plan + checklist (no Done/Snooze prompt).
 pub const SYSTEM_SELF_REMINDER_PREFIX: &str = "[SYSTEM OVERRIDE - SELF REMINDER]: ";
 
+/// Prefix for [`UserAction::PlanResume`] wakes — continue on-disk working plan (no Done/Snooze).
+pub const SYSTEM_PLAN_RESUME_PREFIX: &str = "[SYSTEM OVERRIDE - PLAN RESUME]: ";
+
 /// Alarm notification from the scheduler: plain timer/wall, agenda-linked (user Done/Snooze flow),
-/// or agent self-driven (the SELF_REMINDER protocol — agent executes plan + checklist autonomously).
+/// agent self-driven agenda loop, or working-plan mission resume.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AlarmPayload {
     Plain(String),
@@ -93,6 +96,13 @@ pub enum AlarmPayload {
         checklist: Vec<String>,
         alarm_record_id: String,
         /// Seconds after scheduled fire (e.g. app was offline).
+        seconds_late: u64,
+    },
+    /// Resume the on-disk working plan (`.fcp/tools/working_plan.json`). Mission state is not
+    /// duplicated here — load from disk on wake.
+    PlanResume {
+        label: String,
+        alarm_record_id: String,
         seconds_late: u64,
     },
 }
@@ -120,6 +130,12 @@ pub enum UserAction {
         label: String,
         plan: String,
         checklist: Vec<String>,
+        alarm_record_id: String,
+        seconds_late: u64,
+    },
+    /// Working-plan mission wake: continue current step with a fresh tool-round budget.
+    PlanResume {
+        label: String,
         alarm_record_id: String,
         seconds_late: u64,
     },
@@ -218,6 +234,11 @@ mod tests {
                 checklist: vec!["clock:now".into(), "moltbook:home".into()],
                 alarm_record_id: "a2".into(),
                 seconds_late: 3,
+            },
+            UserAction::PlanResume {
+                label: "Continue working plan".into(),
+                alarm_record_id: "a3".into(),
+                seconds_late: 0,
             },
         ];
         for a in cases {

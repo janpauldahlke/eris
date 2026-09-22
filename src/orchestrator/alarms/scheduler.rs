@@ -75,7 +75,13 @@ async fn fire_due_and_persist(
     }
     save_alarms(path, &remaining).await?;
     for a in due {
-        let payload = if let Some(tid) = a.agenda_task_id.clone() {
+        let payload = if a.plan_resume == Some(true) {
+            AlarmPayload::PlanResume {
+                label: a.label,
+                alarm_record_id: a.id,
+                seconds_late: now.saturating_sub(a.fire_at_unix),
+            }
+        } else if let Some(tid) = a.agenda_task_id.clone() {
             if a.agenda_kind.as_deref() == Some("self") {
                 if let Some(plan) = load_self_plan_for_task(workspace_root, &tid).await {
                     AlarmPayload::AgendaSelfPrompt {
@@ -212,5 +218,44 @@ mod tests {
             .await
             .expect("read alarms");
         assert_eq!(persisted.trim(), "[]");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn fire_due_plan_resume_alarm_emits_plan_resume() {
+        let dir = tempdir().expect("tmpdir");
+        let tools_dir = crate::vault_layout::tools_dir(dir.path());
+        tokio::fs::create_dir_all(&tools_dir)
+            .await
+            .expect("create tools dir");
+
+        let now = unix_now_secs();
+        let alarms_path = crate::vault_layout::alarms_json(dir.path());
+        tokio::fs::write(
+            &alarms_path,
+            format!(
+                r#"[{{"id":"palarm1","fire_at_unix":{},"label":"Continue working plan","plan_resume":true}}]"#,
+                now.saturating_sub(1)
+            ),
+        )
+        .await
+        .expect("seed alarms");
+
+        let (tx, mut rx) = mpsc::channel::<SessionEvent>(4);
+        fire_due_and_persist(dir.path(), &alarms_path, &tx)
+            .await
+            .expect("fire due");
+
+        let ev = rx.recv().await.expect("one session event");
+        match ev {
+            SessionEvent::SystemAlarm(AlarmPayload::PlanResume {
+                label,
+                alarm_record_id,
+                ..
+            }) => {
+                assert_eq!(alarm_record_id, "palarm1");
+                assert_eq!(label, "Continue working plan");
+            }
+            other => panic!("unexpected alarm payload: {other:?}"),
+        }
     }
 }

@@ -241,6 +241,7 @@ mod tests {
             ],
             current_step_id: Some("a".into()),
             scratch: "first note".into(),
+            resume_alarm_id: None,
             updated_at: 1,
             version: 3,
         };

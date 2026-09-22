@@ -277,16 +277,82 @@ impl<E: LlmEngine> Orchestrator<E> {
                         turn_seq,
                         "Max tool rounds reached; injecting final conversational pass (no tools / no JIT)"
                     );
+                    let mut resume_note = String::new();
+                    let resume_secs = self.config.working_plan_resume_on_tool_cap_secs;
+                    if resume_secs > 0 {
+                        if let Some(ref tx) = self.alarm_reschedule_tx {
+                            let workspace = self.context_assembler.workspace_root.clone();
+                            match crate::tools::working_plan::has_open_working_plan(&workspace).await
+                            {
+                                true => {
+                                    match crate::tools::working_plan::fire_at_from_secs(
+                                        resume_secs,
+                                    ) {
+                                        Ok(fire_at) => {
+                                            match crate::tools::working_plan::schedule_plan_resume(
+                                                &workspace,
+                                                fire_at,
+                                                "Auto-resume after tool-round budget",
+                                                tx,
+                                            )
+                                            .await
+                                            {
+                                                Ok(sched) => {
+                                                    resume_note = format!(
+                                                        " Plan resume armed in {resume_secs}s (alarm {}).",
+                                                        sched.alarm_id
+                                                    );
+                                                    tracing::info!(
+                                                        event = "orchestrator.plan.resume_on_tool_cap",
+                                                        alarm_id = %sched.alarm_id,
+                                                        resume_secs,
+                                                        "Auto-armed plan resume after tool-round cap"
+                                                    );
+                                                }
+                                                Err(e) => {
+                                                    tracing::warn!(
+                                                        error = %e,
+                                                        "Failed to auto-arm plan resume on tool-round cap"
+                                                    );
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                error = %e,
+                                                "Failed to compute plan-resume fire time"
+                                            );
+                                        }
+                                    }
+                                }
+                                false => {}
+                            }
+                        }
+                    }
                     let notice = format!(
-                        "[fcp] Per-turn tool budget exhausted ({} successful tool runs; max {}). Forcing one final reply without tools — say **continue** if you need more.",
-                        self.tool_rounds, self.max_tool_rounds
+                        "[fcp] Per-turn tool budget exhausted ({} successful tool runs; max {}). Forcing one final reply without tools — say **continue** if you need more.{}",
+                        self.tool_rounds, self.max_tool_rounds, resume_note
                     );
                     if let Some(tx) = &self.presentation_tx {
                         let _ = tx.send(SessionEvent::SystemError(notice)).await;
                     }
                     let guidance = format!(
-                        "{}\n\n(Current turn: {} successful tool executions; configured maximum per user turn is {}.)",
-                        TOOL_ROUND_CAP_SYSTEM_GUIDANCE, self.tool_rounds, self.max_tool_rounds
+                        "{}\n\n(Current turn: {} successful tool executions; configured maximum per user turn is {}.){}",
+                        TOOL_ROUND_CAP_SYSTEM_GUIDANCE,
+                        self.tool_rounds,
+                        self.max_tool_rounds,
+                        if resume_note.is_empty() {
+                            String::new()
+                        } else {
+                            format!(
+                                "\n\n[SYSTEM — PLAN RESUME] An open working plan was detected; a resume alarm was armed{}. When it fires you will wake with a fresh tool budget — continue the CURRENT step, do not plan:set from scratch.",
+                                if resume_secs > 0 {
+                                    format!(" (~{resume_secs}s)")
+                                } else {
+                                    String::new()
+                                }
+                            )
+                        }
                     );
                     self.chat_stack
                         .push(crate::engine::Message::system(guidance));

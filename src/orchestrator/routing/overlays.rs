@@ -115,9 +115,16 @@ fn pin_plan_domain_verbs(
             "plan:update",
             "plan:advance",
             "plan:clear",
+            "plan:defer",
         ],
         // Mid-mission: keep progress controls, drop plan:set so step tools keep slim seats.
-        PlanPinMode::MidMission => &["plan:read", "plan:update", "plan:advance", "plan:clear"],
+        PlanPinMode::MidMission => &[
+            "plan:read",
+            "plan:update",
+            "plan:advance",
+            "plan:clear",
+            "plan:defer",
+        ],
     };
     let mut pinned = Vec::new();
     for name in plan_verbs {

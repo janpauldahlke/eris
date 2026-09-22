@@ -261,6 +261,7 @@ impl Tool for AgendaRemindSelfTool {
             label: label.clone(),
             agenda_task_id: Some(task_id.clone()),
             agenda_kind: Some("self".to_string()),
+            plan_resume: None,
         });
         save_alarms(&alarms_path, &alarms).await?;
 

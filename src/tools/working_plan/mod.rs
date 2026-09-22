@@ -7,7 +7,9 @@
 pub mod advance;
 pub mod chain_hints;
 pub mod clear;
+pub mod defer;
 pub mod read;
+pub mod resume;
 pub mod set;
 pub mod update;
 
@@ -19,7 +21,9 @@ pub use chain_hints::{
 
 pub use advance::PlanAdvanceTool;
 pub use clear::PlanClearTool;
+pub use defer::PlanDeferTool;
 pub use read::PlanReadTool;
+pub use resume::{cancel_plan_resume_alarm, fire_at_from_secs, schedule_plan_resume};
 pub use set::PlanSetTool;
 pub use update::PlanUpdateTool;
 
@@ -116,6 +120,9 @@ pub struct WorkingPlan {
     pub current_step_id: Option<String>,
     #[serde(default)]
     pub scratch: String,
+    /// Alarm id in `.fcp/tools/alarms.json` for the next mission wake (`plan:defer` / tool-cap auto-resume).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_alarm_id: Option<String>,
     #[serde(default)]
     pub updated_at: u64,
     #[serde(default)]
@@ -308,6 +315,9 @@ pub async fn clear(workspace_root: &Path) -> Result<bool> {
     if !path.exists() {
         return Ok(false);
     }
+    if let Ok(Some(mut plan)) = load(workspace_root).await {
+        let _ = cancel_plan_resume_alarm(workspace_root, &mut plan).await;
+    }
     fs::remove_file(&path).await.map_err(FcpError::Io)?;
     Ok(true)
 }
@@ -323,6 +333,10 @@ pub async fn archive_and_clear(workspace_root: &Path) -> Result<Option<String>> 
     if content.trim().is_empty() {
         let _ = fs::remove_file(&path).await;
         return Ok(None);
+    }
+
+    if let Ok(mut plan) = serde_json::from_str::<WorkingPlan>(&content) {
+        let _ = cancel_plan_resume_alarm(workspace_root, &mut plan).await;
     }
 
     let archive_dir = crate::vault_layout::working_plan_archive_dir(workspace_root);
@@ -429,6 +443,7 @@ mod tests {
             ],
             current_step_id: Some("b".into()),
             scratch: "note one".into(),
+            resume_alarm_id: None,
             updated_at: 1,
             version: 1,
         };
@@ -451,6 +466,7 @@ mod tests {
             steps: vec![step("a", "A".into(), PlanStepStatus::Pending)],
             current_step_id: Some("a".into()),
             scratch: "x".repeat(5000),
+            resume_alarm_id: None,
             updated_at: 0,
             version: 0,
         };
@@ -488,6 +504,7 @@ mod tests {
             }],
             current_step_id: Some("a".into()),
             scratch: "s".into(),
+            resume_alarm_id: None,
             updated_at: 42,
             version: 7,
         };

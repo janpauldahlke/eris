@@ -986,6 +986,11 @@ pub struct AppConfig {
     /// When true, append `[RUNTIME_HINT]` on multi-step user text and/or open working-plan steps.
     #[serde(default = "default_working_plan_runtime_hints")]
     pub working_plan_runtime_hints: bool,
+    /// When the per-turn tool-round cap is hit and an open working plan exists, auto-arm a
+    /// plan-resume alarm after this many seconds (`0` disables). Gives long-horizon autonomy
+    /// without waiting for a human "continue" (tools are unavailable on the final cap pass).
+    #[serde(default = "default_working_plan_resume_on_tool_cap_secs")]
+    pub working_plan_resume_on_tool_cap_secs: u64,
     /// When false, `news:today` is not registered.
     #[serde(default = "default_news_today_enabled")]
     pub news_today_enabled: bool,
@@ -1380,6 +1385,11 @@ fn default_working_plan_prompt_max_chars() -> usize {
 
 fn default_working_plan_runtime_hints() -> bool {
     true
+}
+
+/// Default: 60s auto-resume after tool-round cap when a mission is open; `0` disables.
+fn default_working_plan_resume_on_tool_cap_secs() -> u64 {
+    60
 }
 
 /// When true, build a slimmer copy of history for the LLM via [`crate::orchestrator::context::build_llm_view`].
@@ -2033,6 +2043,7 @@ impl Default for AppConfig {
             staged_memory_prompt_max_chars: default_staged_memory_prompt_max_chars(),
             working_plan_prompt_max_chars: default_working_plan_prompt_max_chars(),
             working_plan_runtime_hints: default_working_plan_runtime_hints(),
+            working_plan_resume_on_tool_cap_secs: default_working_plan_resume_on_tool_cap_secs(),
             news_today_enabled: default_news_today_enabled(),
             weather_enabled: default_weather_enabled(),
             wiki_enabled: default_wiki_enabled(),

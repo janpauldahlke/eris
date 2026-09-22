@@ -78,6 +78,8 @@ pub struct Orchestrator<E: LlmEngine> {
     pub interrupt_rx: tokio::sync::watch::Receiver<()>,
     /// Interactive chat must use `Some`; `None` drops outbound deck/state/telemetry (headless tests, batch).
     pub presentation_tx: Option<tokio::sync::mpsc::Sender<SessionEvent>>,
+    /// Wakes the alarm scheduler after writing a plan-resume (or other) alarm row. Set by chat session.
+    pub alarm_reschedule_tx: Option<tokio::sync::mpsc::UnboundedSender<()>>,
     pub queued_inputs: usize,
     pub last_router_ms: u64,
     pub last_llm_ms: u64,
@@ -232,6 +234,7 @@ impl<E: LlmEngine> Orchestrator<E> {
             saved_chat_state: None,
             interrupt_rx,
             presentation_tx,
+            alarm_reschedule_tx: None,
             queued_inputs: 0,
             last_router_ms: 0,
             last_llm_ms: 0,

@@ -102,11 +102,24 @@ Optional sugar: **`plan:advance`** (mark current done + move pointer) if it redu
 
 ---
 
-## Phase 2 — Deprecate agenda (after replacement)
+## Phase 2 — Plan resume alarms (long horizon)
+
+**Shipped (Phase 2A — keep agenda):** Mission wake without killing agenda.
+
+- `plan:defer` schedules a `plan_resume` row in `.fcp/tools/alarms.json`; `WorkingPlan.resume_alarm_id` tracks it.
+- Scheduler emits `AlarmPayload::PlanResume` → chat injects `[SYSTEM OVERRIDE - PLAN RESUME]` with a **fresh tool-round budget**.
+- Config `working_plan_resume_on_tool_cap_secs` (default `60`, `0` disables): when `max_tool_rounds` is hit and an open plan exists, auto-arm a resume alarm (tools are unavailable on the final cap pass, so the model cannot call `plan:defer` itself).
+- Agenda self-loop (`agenda:remind_self`) remains for operator/self-driven todo loops.
+
+**Still open (Phase 2B):** deprecate agenda once reminder UX fully lives on plan (`reminder:*` or plan-step `remind_at`), then remove agenda tools / `AGENDA_CONFIRM`.
+
+---
+
+## Phase 2 — Deprecate agenda (after replacement) [historical]
 
 **Blocker:** [`agenda:remind_at`](src/tools/agenda/remind_at.rs), [`alarms.json`](src/vault_layout.rs), [`turn_entry`](src/orchestrator/core/turn_entry.rs) `AGENDA_CONFIRM`, [`agenda:complete`](src/tools/agenda/complete.rs).
 
-- **A.** Plan rows or top-level plan carry `remind_at` / `alarm_id`; generalize payload (`plan_step_id` or `task_id`); reuse [`src/orchestrator/alarms/`](src/orchestrator/alarms/) + [`src/executive/router.rs`](src/executive/router.rs).
+- **A.** Plan rows or top-level plan carry `remind_at` / `alarm_id`; generalize payload (`plan_step_id` or `task_id`); reuse [`src/orchestrator/alarms/`](src/orchestrator/alarms/) + [`src/executive/router.rs`](src/executive/router.rs). → **done as top-level `resume_alarm_id` + `plan:defer` / auto-cap resume**
 - **B.** Minimal `reminder:*` without `agenda.json`.
 
 Then remove agenda tools, grep targets, and UI strings in [`src/ui/app.rs`](src/ui/app.rs) as needed.

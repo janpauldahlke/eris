@@ -58,6 +58,9 @@ pub fn fallback_triggers(tool_name: &str) -> &'static str {
         "plan:clear" => {
             "clear the working plan, abandon the mission, cancel the plan, plan finished clear, reset working plan, done with the plan"
         }
+        "plan:defer" => {
+            "pause the mission, resume later, schedule plan resume, wake me to continue the plan, defer the working plan, continue after budget, long horizon pause, come back to this plan"
+        }
         "web:fetch" => {
             "fetching URLs, open this link, check this website, browse this page, read this article, get content from URL"
         }

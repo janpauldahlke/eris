@@ -816,6 +816,7 @@ mod tests {
                 UserAction::CancelCurrentTurn => {}
                 UserAction::AgendaAlarmPending { .. } => {}
                 UserAction::AgendaSelfPrompt { .. } => {}
+                UserAction::PlanResume { .. } => {}
             }
             while let Some(msg) = pending.pop_front() {
                 orchestrator.chat_stack.push(Message::user(msg));

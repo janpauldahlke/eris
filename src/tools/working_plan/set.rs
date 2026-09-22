@@ -70,6 +70,7 @@ impl PlanSetTool {
             steps,
             current_step_id,
             scratch: args.scratch.unwrap_or_default(),
+            resume_alarm_id: None,
             updated_at: now,
             version: 1,
         })
@@ -91,6 +92,10 @@ impl Tool for PlanSetTool {
 
     async fn execute(&self, args: Value) -> Result<String> {
         let args: PlanSetArgs = serde_json::from_value(args).map_err(FcpError::ParseFault)?;
+        // Drop any prior resume wake when replacing the mission.
+        if let Ok(Some(mut old)) = super::load(&self.workspace_root).await {
+            let _ = super::cancel_plan_resume_alarm(&self.workspace_root, &mut old).await;
+        }
         let plan = self.build_plan(args)?;
         save(&self.workspace_root, &plan).await?;
         let step_count = plan.steps.len();
