@@ -779,12 +779,21 @@ pub struct LlamaCppConfig {
     pub mmproj_offload: Option<bool>,
     /// Chat `llama-server --spec-type` (e.g. `draft-mtp` for Qwen3.8 native multi-token prediction).
     /// `None` = omit (server default `none`). Requires a recent llama-server that lists the type.
+    /// When [`Self::spec_draft_model_path`] is set and this is `None`, spawn uses `draft-mtp`.
     #[serde(default)]
     pub spec_type: Option<String>,
     /// Chat `llama-server --spec-draft-n-max` (tokens drafted per speculative step). `None` = omit
-    /// (server default is typically 3). Only meaningful when [`Self::spec_type`] is set.
+    /// (server default is typically 3). Only meaningful when speculative decoding is enabled.
     #[serde(default)]
     pub spec_draft_n_max: Option<u32>,
+    /// Optional FastMTP / speculative draft GGUF (`llama-server --spec-draft-model`). `None` = omit
+    /// (embedded NextN MTP still works via [`Self::spec_type`] alone when the main GGUF has it).
+    #[serde(default)]
+    pub spec_draft_model_path: Option<PathBuf>,
+    /// Chat `llama-server --spec-draft-ngl` (`all` / `auto` / layer count). `None` = omit (server
+    /// default `auto`). Ignition sets `all` when a sidecar path is chosen.
+    #[serde(default)]
+    pub spec_draft_n_gpu_layers: Option<String>,
 }
 
 pub(crate) fn default_llamacpp_ready_timeout() -> u64 {
@@ -831,6 +840,8 @@ impl Default for LlamaCppConfig {
             mmproj_offload: None,
             spec_type: None,
             spec_draft_n_max: None,
+            spec_draft_model_path: None,
+            spec_draft_n_gpu_layers: None,
         }
     }
 }
@@ -2755,6 +2766,8 @@ mod tests {
             mmproj_offload: Some(false),
             spec_type: Some("draft-mtp".into()),
             spec_draft_n_max: Some(3),
+            spec_draft_model_path: Some(PathBuf::from("/models/fastmtp.gguf")),
+            spec_draft_n_gpu_layers: Some("all".into()),
             ..Default::default()
         });
 
@@ -2763,12 +2776,20 @@ mod tests {
         assert!(toml_str.contains("spec_type"), "{toml_str}");
         assert!(toml_str.contains("draft-mtp"), "{toml_str}");
         assert!(toml_str.contains("spec_draft_n_max"), "{toml_str}");
+        assert!(toml_str.contains("spec_draft_model_path"), "{toml_str}");
+        assert!(toml_str.contains("fastmtp.gguf"), "{toml_str}");
+        assert!(toml_str.contains("spec_draft_n_gpu_layers"), "{toml_str}");
 
         let deserialized: AppConfig = toml::from_str(&toml_str).expect("deserialize");
         let lc = deserialized.llama_cpp.expect("llama_cpp section");
         assert_eq!(lc.mmproj_offload, Some(false));
         assert_eq!(lc.spec_type.as_deref(), Some("draft-mtp"));
         assert_eq!(lc.spec_draft_n_max, Some(3));
+        assert_eq!(
+            lc.spec_draft_model_path,
+            Some(PathBuf::from("/models/fastmtp.gguf"))
+        );
+        assert_eq!(lc.spec_draft_n_gpu_layers.as_deref(), Some("all"));
     }
 
     #[test]
